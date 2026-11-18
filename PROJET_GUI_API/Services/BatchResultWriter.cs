@@ -105,7 +105,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
 
                 var csvStream = new FileStream(csvPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, useAsync: true);
                 _csvWriter = new StreamWriter(csvStream, Utf8WithBom, bufferSize: 4096, leaveOpen: false);
-                await _csvWriter.WriteLineAsync("index;parametres;statut;duree_ms;taille_octets;fichier;erreur").ConfigureAwait(false);
+                await _csvWriter.WriteLineAsync("index;parametres;statut;duree_ms;taille_octets;fichier;erreur;rate_limited;tentatives").ConfigureAwait(false);
                 await _csvWriter.FlushAsync(ct).ConfigureAwait(false);
             }
 
@@ -270,7 +270,9 @@ public sealed class BatchResultWriter : IBatchResultWriter
                     item.DurationMs.ToString(CultureInfo.InvariantCulture),
                     item.SizeBytes.ToString(CultureInfo.InvariantCulture),
                     EscapeCsvField(savedFileName),
-                    EscapeCsvField(item.ErrorMessage ?? string.Empty));
+                    EscapeCsvField(item.ErrorMessage ?? string.Empty),
+                    item.WasRateLimited ? "true" : "false",
+                    item.RetryAttempts.ToString(CultureInfo.InvariantCulture));
 
                 await _csvWriter.WriteLineAsync(line).ConfigureAwait(false);
                 await _csvWriter.FlushAsync().ConfigureAwait(false);
@@ -395,6 +397,9 @@ public sealed class BatchResultWriter : IBatchResultWriter
                 writer.WriteString("body", body);
             }
         }
+
+        writer.WriteBoolean("rate_limited", item.WasRateLimited);
+        writer.WriteNumber("tentatives", item.RetryAttempts);
 
         writer.WriteEndObject();
     }

@@ -17,15 +17,18 @@ public sealed class BatchPlanResult
 public sealed class BatchRunOptions
 {
     public BatchMode Mode { get; set; } = BatchMode.Combinations;
-    public int DelayMs { get; set; } = 500;
+    public int DelayMs { get; set; } = RateLimitPolicy.DefaultPauseFloorMs;
     public bool StopOnFailure { get; set; }
     public bool KeepBodies { get; set; } = true;
+    public RateLimitPolicy RateLimitPolicy { get; set; } = new();
 }
 
 public sealed class BatchProgressReport
 {
     public int Index { get; set; }
     public int Total { get; set; }
+    public int RetryCount { get; set; }
+    public bool IsRetryUpdate { get; set; }
     public BatchResultItem Item { get; set; } = new();
 }
 

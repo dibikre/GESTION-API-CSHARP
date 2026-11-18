@@ -645,6 +645,21 @@
         <Setter Property="FontSize" Value="12" />
     </Style>
 
+    <Style Selector="Expander.sectionExpander">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Expander.sectionExpander /template/ ToggleButton">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0,4" />
+        <Setter Property="MinHeight" Value="24" />
+        <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+    </Style>
+
     <!-- Barre d'envoi unifiée -->
     <Style Selector="Border.sendBar">
         <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />

@@ -18,11 +18,16 @@ public class BatchRunner : IBatchRunner
 
     private readonly IHttpService _httpService;
     private readonly ITemplateEngine _templateEngine;
+    private readonly IRateLimitDetector _rateLimitDetector;
 
-    public BatchRunner(IHttpService httpService, ITemplateEngine templateEngine)
+    public BatchRunner(
+        IHttpService httpService,
+        ITemplateEngine templateEngine,
+        IRateLimitDetector? rateLimitDetector = null)
     {
         _httpService = httpService ?? throw new ArgumentNullException(nameof(httpService));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
+        _rateLimitDetector = rateLimitDetector ?? new RateLimitDetector();
     }
 
     public BatchPlanResult BuildPlan(
@@ -280,6 +285,13 @@ public class BatchRunner : IBatchRunner
 
         var total = plan.TotalRequests;
         var delayMs = Math.Max(0, options.DelayMs);
+        var policy = (options.RateLimitPolicy ?? new RateLimitPolicy()).Clone();
+        var policyEnabled = policy.IsEnabled;
+        var maxRetries = policyEnabled
+            ? Math.Clamp(policy.MaxRetriesPerRequest, RateLimitPolicy.MinRetries, RateLimitPolicy.MaxRetriesLimit)
+            : 0;
+        var consecutiveRateLimitFailures = 0;
+        var totalRetryCount = 0;
         var axisNames = axes.Select(a => a.DisplayName).ToArray();
         var fixedVariableValues = BuildFixedVariableDictionary(variables);
 
@@ -297,6 +309,9 @@ public class BatchRunner : IBatchRunner
 
             BatchResultItem item;
             bool isFailure;
+            var preemptiveWait = TimeSpan.Zero;
+            var nextRequestAdaptationWait = TimeSpan.Zero;
+            var usedSpecificWaitAfterExhaustion = false;
 
             if (!applyResult.IsSuccess || applyResult.Request is null)
             {
@@ -327,11 +342,102 @@ public class BatchRunner : IBatchRunner
                 var finalRequest = applyResult.Request;
                 var maskedUrl = BuildMaskedUrlWithTemplate(templateRequest, finalRequest.QueryParams, step.VariableDictionary, index);
 
-                var response = await _httpService.SendAsync(finalRequest, ct).ConfigureAwait(false);
-                if (ct.IsCancellationRequested)
+                var wasRateLimited = false;
+                var retryAttempts = 0;
+                long lastWaitMs = 0;
+                var finalRateLimitExhausted = false;
+                ResponseModel response;
+
+                while (true)
                 {
                     ct.ThrowIfCancellationRequested();
+                    response = await _httpService.SendAsync(finalRequest, ct).ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
+
+                    if (policyEnabled && _rateLimitDetector.IsRateLimited(response, policy))
+                    {
+                        wasRateLimited = true;
+
+                        if (retryAttempts < maxRetries)
+                        {
+                            var waitDelay = _rateLimitDetector.ComputeRateLimitDelay(
+                                response,
+                                policy,
+                                delayMs,
+                                ref consecutiveRateLimitFailures,
+                                out _);
+
+                            lastWaitMs = (long)Math.Round(waitDelay.TotalMilliseconds);
+                            retryAttempts++;
+                            totalRetryCount++;
+
+                            Log.Warning(
+                                "Limitation de débit HTTP {StatusCode} sur la requête {Index}/{Total}. Tentative {Attempt}/{MaxRetries} après {WaitMs} ms.",
+                                response.StatusCode, index, total, retryAttempts, maxRetries, lastWaitMs);
+
+                            progress.Report(new BatchProgressReport
+                            {
+                                Index = index - 1,
+                                Total = total,
+                                RetryCount = totalRetryCount,
+                                IsRetryUpdate = true
+                            });
+
+                            if (waitDelay > TimeSpan.Zero)
+                            {
+                                await Task.Delay(waitDelay, ct).ConfigureAwait(false);
+                            }
+
+                            continue;
+                        }
+
+                        finalRateLimitExhausted = true;
+                        if (retryAttempts == 0 && maxRetries == 0 && index < total && !options.StopOnFailure)
+                        {
+                            var waitDelay = _rateLimitDetector.ComputeRateLimitDelay(
+                                response,
+                                policy,
+                                normalDelayMs: 0,
+                                ref consecutiveRateLimitFailures,
+                                out var usedSpecific);
+
+                            if (usedSpecific)
+                            {
+                                usedSpecificWaitAfterExhaustion = true;
+                                nextRequestAdaptationWait = waitDelay;
+                                lastWaitMs = (long)Math.Round(waitDelay.TotalMilliseconds);
+                            }
+                        }
+
+                        break;
+                    }
+
+                    if (string.IsNullOrEmpty(response.ErrorMessage) && response.StatusCode is >= 200 and < 400)
+                    {
+                        consecutiveRateLimitFailures = 0;
+                    }
+
+                    if (policyEnabled &&
+                        response.IsSuccess &&
+                        string.IsNullOrEmpty(response.ErrorMessage) &&
+                        _rateLimitDetector.ShouldSlowDownPreemptively(response, policy, out var suggestedWait))
+                    {
+                        preemptiveWait = suggestedWait ??
+                                         TimeSpan.FromMilliseconds(Math.Max(policy.PauseFloorMs, policy.BackoffInitialMs));
+
+                        Log.Information(
+                            "Ralentissement préventif sur la requête {Index}/{Total} : attente de {WaitMs} ms avant la pause normale.",
+                            index, total, (long)Math.Round(preemptiveWait.TotalMilliseconds));
+                    }
+
+                    break;
                 }
+
+                var itemErrorMessage = finalRateLimitExhausted
+                    ? (maxRetries == 0
+                        ? $"Limitation de débit HTTP {response.StatusCode} (aucune nouvelle tentative configurée)."
+                        : $"Limitation de débit HTTP {response.StatusCode} : toutes les tentatives ({retryAttempts}) ont échoué.")
+                    : response.ErrorMessage;
 
                 item = new BatchResultItem
                 {
@@ -349,10 +455,13 @@ public class BatchRunner : IBatchRunner
                     OrderedAxisValues = step.OrderedAxisItems,
                     QueryParams = finalRequest.QueryParams,
                     TimestampUtc = DateTimeOffset.UtcNow,
-                    ErrorMessage = response.ErrorMessage,
-                    Response = response
+                    ErrorMessage = itemErrorMessage,
+                    Response = response,
+                    WasRateLimited = wasRateLimited,
+                    RetryAttempts = retryAttempts,
+                    FinalWaitMs = lastWaitMs
                 };
-                isFailure = response.StatusCode >= 400 || !string.IsNullOrEmpty(response.ErrorMessage);
+                isFailure = response.StatusCode >= 400 || !string.IsNullOrEmpty(itemErrorMessage);
             }
 
             if (onResultAsync is not null)
@@ -369,6 +478,8 @@ public class BatchRunner : IBatchRunner
             {
                 Index = index,
                 Total = total,
+                RetryCount = totalRetryCount,
+                IsRetryUpdate = false,
                 Item = item
             });
 
@@ -379,9 +490,27 @@ public class BatchRunner : IBatchRunner
                 break;
             }
 
-            if (index < total && delayMs > 0)
+            if (index < total)
             {
-                await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                if (usedSpecificWaitAfterExhaustion)
+                {
+                    if (nextRequestAdaptationWait > TimeSpan.Zero)
+                    {
+                        await Task.Delay(nextRequestAdaptationWait, ct).ConfigureAwait(false);
+                    }
+                }
+                else
+                {
+                    if (preemptiveWait > TimeSpan.Zero)
+                    {
+                        await Task.Delay(preemptiveWait, ct).ConfigureAwait(false);
+                    }
+
+                    if (delayMs > 0)
+                    {
+                        await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                    }
+                }
             }
         }
 

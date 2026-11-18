@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -32,6 +33,7 @@ public partial class BatchViewModel : ViewModelBase
     private int _parsedTimeoutSeconds = 30;
     private bool _isBulkUpdating;
     private CancellationTokenSource? _variableSyncCts;
+    private int _lastRateLimitedFailureRetries;
 
     public BatchViewModel(
         ICurlParser curlParser,
@@ -54,10 +56,15 @@ public partial class BatchViewModel : ViewModelBase
             OnPropertyChanged(nameof(HasWarnings));
             OnPropertyChanged(nameof(WarningsSummaryText));
         };
-        Results.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasResults));
+        Results.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasResults));
+            OnPropertyChanged(nameof(HasBatchStats));
+        };
         PreviewItems.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPreviewItems));
         Axes.CollectionChanged += (_, _) => NotifyOrderPanelStateChanged();
         OrderPreview.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasOrderPreview));
+        RateLimitPolicy.PropertyChanged += (_, _) => ValidateAndSyncRateLimitPolicy();
     }
 
     public static IReadOnlyList<BatchMode> BatchModes { get; } = Enum.GetValues<BatchMode>();
@@ -162,7 +169,48 @@ public partial class BatchViewModel : ViewModelBase
     public partial BatchMode SelectedMode { get; set; } = BatchMode.Combinations;
 
     [ObservableProperty]
-    public partial int DelayMs { get; set; } = 500;
+    [NotifyPropertyChangedFor(nameof(ShowLowPauseWarning))]
+    [NotifyPropertyChangedFor(nameof(NeedsLowPauseConfirmation))]
+    [NotifyCanExecuteChangedFor(nameof(RunCommand))]
+    public partial int DelayMs { get; set; } = RateLimitPolicy.DefaultPauseFloorMs;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunCommand))]
+    public partial bool IsLowPauseConfirmed { get; set; }
+
+    public bool ShowLowPauseWarning => DelayMs < RateLimitPolicy.LowPauseWarningThresholdMs;
+
+    public bool NeedsLowPauseConfirmation => DelayMs < RateLimitPolicy.LowPauseWarningThresholdMs;
+
+    public RateLimitPolicy RateLimitPolicy { get; } = new();
+
+    [ObservableProperty]
+    public partial string RateLimitMaxRetryAfterSecondsText { get; set; } = "120";
+
+    [ObservableProperty]
+    public partial string RateLimitBackoffInitialMsText { get; set; } = "500";
+
+    [ObservableProperty]
+    public partial string RateLimitBackoffMultiplierText { get; set; } = "2";
+
+    [ObservableProperty]
+    public partial string RateLimitBackoffMaxMsText { get; set; } = "30000";
+
+    [ObservableProperty]
+    public partial string RateLimitMaxRetriesText { get; set; } = "3";
+
+    [ObservableProperty]
+    public partial string RateLimitExtraStatusCodesText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string RateLimitQuotaThresholdText { get; set; } = "1";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRateLimitError))]
+    [NotifyCanExecuteChangedFor(nameof(RunCommand))]
+    public partial string? RateLimitValidationError { get; private set; }
+
+    public bool HasRateLimitError => !string.IsNullOrWhiteSpace(RateLimitValidationError);
 
     [ObservableProperty]
     public partial bool StopOnFailure { get; set; }
@@ -254,6 +302,7 @@ public partial class BatchViewModel : ViewModelBase
     public bool HasActiveOutputPath => !string.IsNullOrWhiteSpace(ActiveOutputPathText);
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasBatchStats))]
     [NotifyCanExecuteChangedFor(nameof(PreviewCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
     [NotifyCanExecuteChangedFor(nameof(BrowseFolderCommand))]
@@ -267,6 +316,61 @@ public partial class BatchViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ProgressText))]
     public partial int ProgressTotal { get; set; }
+
+    [ObservableProperty]
+    public partial int RetryCount { get; private set; }
+
+    [ObservableProperty]
+    public partial int SuccessCount { get; private set; }
+
+    [ObservableProperty]
+    public partial int RateLimitedCount { get; private set; }
+
+    [ObservableProperty]
+    public partial int RateLimitedFailedCount { get; private set; }
+
+    [ObservableProperty]
+    public partial int OtherErrorCount { get; private set; }
+
+    public bool HasBatchStats => IsRunning || Results.Count > 0;
+
+    public bool HasRateLimitOccurrences => RateLimitedCount > 0 || (IsRunning && RetryCount > 0);
+
+    public string SuccessSummaryPart =>
+        $"{SuccessCount} {(SuccessCount <= 1 ? "réussite" : "réussites")}, ";
+
+    public string RateLimitSummaryPart
+    {
+        get
+        {
+            if (RateLimitedCount == 0 && IsRunning && RetryCount > 0)
+            {
+                var retryLabel = RetryCount <= 1 ? "nouvelle tentative en cours" : "nouvelles tentatives en cours";
+                return $"{RetryCount} {retryLabel}";
+            }
+
+            var baseText = $"{RateLimitedCount} {(RateLimitedCount <= 1 ? "limitation de débit" : "limitations de débit")}";
+            if (RateLimitedFailedCount == 1)
+            {
+                var retryDetail = _lastRateLimitedFailureRetries == 0
+                    ? "sans nouvelle tentative"
+                    : $"après {_lastRateLimitedFailureRetries} {(_lastRateLimitedFailureRetries == 1 ? "tentative" : "tentatives")}";
+                return $"{baseText} (dont 1 échec {retryDetail})";
+            }
+
+            if (RateLimitedFailedCount > 1)
+            {
+                return $"{baseText} (dont {RateLimitedFailedCount} échecs)";
+            }
+
+            return baseText;
+        }
+    }
+
+    public string OtherErrorSummaryPart =>
+        $", {OtherErrorCount} {(OtherErrorCount <= 1 ? "autre erreur" : "autres erreurs")}";
+
+    public string RateLimitSummaryText => $"{SuccessSummaryPart}{RateLimitSummaryPart}{OtherErrorSummaryPart}";
 
     public string ProgressText => $"{ProgressCurrent} / {ProgressTotal}";
 
@@ -316,6 +420,26 @@ public partial class BatchViewModel : ViewModelBase
             ScheduleVariableSync();
         }
     }
+
+    partial void OnDelayMsChanged(int value)
+    {
+        IsLowPauseConfirmed = false;
+        RateLimitPolicy.PauseFloorMs = Math.Max(0, value);
+    }
+
+    partial void OnRateLimitMaxRetryAfterSecondsTextChanged(string value) => ValidateAndSyncRateLimitPolicy();
+
+    partial void OnRateLimitBackoffInitialMsTextChanged(string value) => ValidateAndSyncRateLimitPolicy();
+
+    partial void OnRateLimitBackoffMultiplierTextChanged(string value) => ValidateAndSyncRateLimitPolicy();
+
+    partial void OnRateLimitBackoffMaxMsTextChanged(string value) => ValidateAndSyncRateLimitPolicy();
+
+    partial void OnRateLimitMaxRetriesTextChanged(string value) => ValidateAndSyncRateLimitPolicy();
+
+    partial void OnRateLimitExtraStatusCodesTextChanged(string value) => ValidateAndSyncRateLimitPolicy();
+
+    partial void OnRateLimitQuotaThresholdTextChanged(string value) => ValidateAndSyncRateLimitPolicy();
 
     partial void OnSelectedModeChanged(BatchMode value)
     {
@@ -460,6 +584,7 @@ public partial class BatchViewModel : ViewModelBase
             PlanError = null;
             ProgressCurrent = 0;
             ProgressTotal = 0;
+            ResetRateLimitStats();
             LastOutputPath = string.Empty;
             SavedCount = 0;
             SaveErrorCount = 0;
@@ -641,13 +766,16 @@ public partial class BatchViewModel : ViewModelBase
         TotalRequests > 0 &&
         !ExceedsHardLimit &&
         !HasVariablesError &&
+        !HasRateLimitError &&
         string.IsNullOrEmpty(PlanError) &&
-        (!NeedsConfirmation || IsConfirmed);
+        (!NeedsConfirmation || IsConfirmed) &&
+        (!NeedsLowPauseConfirmation || IsLowPauseConfirmed);
 
     [RelayCommand(IncludeCancelCommand = true, CanExecute = nameof(CanRun))]
     private async Task RunAsync(CancellationToken ct)
     {
         SyncVariablesWithTemplate();
+        ValidateAndSyncRateLimitPolicy();
         if (!CanRun())
         {
             return;
@@ -656,6 +784,7 @@ public partial class BatchViewModel : ViewModelBase
         Results.Clear();
         SelectedResult = null;
         SelectedResponse.Clear();
+        ResetRateLimitStats();
         SaveError = null;
         SaveSummaryText = string.Empty;
         SavedCount = 0;
@@ -737,18 +866,30 @@ public partial class BatchViewModel : ViewModelBase
             Mode = SelectedMode,
             DelayMs = Math.Max(0, DelayMs),
             StopOnFailure = StopOnFailure,
-            KeepBodies = KeepBodies
+            KeepBodies = KeepBodies,
+            RateLimitPolicy = RateLimitPolicy.Clone()
         };
 
         ProgressCurrent = 0;
         ProgressTotal = TotalRequests;
         IsRunning = true;
+        NotifyRateLimitStatsChanged();
 
         var progress = new Progress<BatchProgressReport>(report =>
         {
             ProgressCurrent = report.Index;
             ProgressTotal = report.Total;
-            Results.Add(report.Item);
+            RetryCount = report.RetryCount;
+
+            if (!report.IsRetryUpdate)
+            {
+                Results.Add(report.Item);
+                RecordBatchItemStats(report.Item);
+            }
+            else
+            {
+                NotifyRateLimitStatsChanged();
+            }
         });
 
         Func<BatchResultItem, CancellationToken, Task>? onResultAsync = saveStarted
@@ -784,6 +925,7 @@ public partial class BatchViewModel : ViewModelBase
 
             ActiveOutputPathText = string.Empty;
             IsRunning = false;
+            NotifyRateLimitStatsChanged();
         }
     }
 
@@ -1536,6 +1678,111 @@ public partial class BatchViewModel : ViewModelBase
         {
             Warnings.Add(w);
         }
+    }
+
+    private void ValidateAndSyncRateLimitPolicy()
+    {
+        if (!int.TryParse(RateLimitMaxRetryAfterSecondsText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxRetryAfter))
+        {
+            RateLimitValidationError = "Plafond Retry-After : saisis un entier >= 0.";
+            return;
+        }
+
+        if (!int.TryParse(RateLimitBackoffInitialMsText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var initialMs))
+        {
+            RateLimitValidationError = "Délai initial de backoff : saisis un entier >= 0.";
+            return;
+        }
+
+        var normalizedMultiplierText = RateLimitBackoffMultiplierText.Trim().Replace(',', '.');
+        if (!double.TryParse(normalizedMultiplierText, NumberStyles.Float, CultureInfo.InvariantCulture, out var multiplier))
+        {
+            RateLimitValidationError = "Multiplicateur de backoff : saisis un nombre supérieur à 1.";
+            return;
+        }
+
+        if (!int.TryParse(RateLimitBackoffMaxMsText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxMs))
+        {
+            RateLimitValidationError = "Délai maximal de backoff : saisis un entier >= 0.";
+            return;
+        }
+
+        if (!int.TryParse(RateLimitMaxRetriesText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxRetries))
+        {
+            RateLimitValidationError = "Tentatives max par requête : saisis un entier entre 0 et 20.";
+            return;
+        }
+
+        if (!int.TryParse(RateLimitQuotaThresholdText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var quotaThreshold))
+        {
+            RateLimitValidationError = "Seuil de ralentissement préventif : saisis un entier >= 0.";
+            return;
+        }
+
+        if (!RateLimitPolicy.TryParseExtraStatusCodes(RateLimitExtraStatusCodesText, out var extraCodes, out var codesError))
+        {
+            RateLimitValidationError = codesError;
+            return;
+        }
+
+        RateLimitPolicy.MaxRetryAfterSeconds = maxRetryAfter;
+        RateLimitPolicy.BackoffInitialMs = initialMs;
+        RateLimitPolicy.BackoffMultiplier = multiplier;
+        RateLimitPolicy.BackoffMaxMs = maxMs;
+        RateLimitPolicy.MaxRetriesPerRequest = maxRetries;
+        RateLimitPolicy.QuotaThreshold = quotaThreshold;
+        RateLimitPolicy.ExtraStatusCodes = extraCodes;
+        RateLimitPolicy.PauseFloorMs = Math.Max(0, DelayMs);
+
+        RateLimitValidationError = RateLimitPolicy.TryValidate(out var policyError)
+            ? null
+            : policyError;
+    }
+
+    private void ResetRateLimitStats()
+    {
+        RetryCount = 0;
+        SuccessCount = 0;
+        RateLimitedCount = 0;
+        RateLimitedFailedCount = 0;
+        OtherErrorCount = 0;
+        _lastRateLimitedFailureRetries = 0;
+        NotifyRateLimitStatsChanged();
+    }
+
+    private void RecordBatchItemStats(BatchResultItem item)
+    {
+        var isSuccess = string.IsNullOrEmpty(item.ErrorMessage) && item.StatusCode is >= 200 and < 300;
+        if (isSuccess)
+        {
+            SuccessCount++;
+        }
+
+        if (item.WasRateLimited)
+        {
+            RateLimitedCount++;
+            if (!isSuccess)
+            {
+                RateLimitedFailedCount++;
+                _lastRateLimitedFailureRetries = item.RetryAttempts;
+            }
+        }
+        else if (!isSuccess)
+        {
+            OtherErrorCount++;
+        }
+
+        NotifyRateLimitStatsChanged();
+    }
+
+    private void NotifyRateLimitStatsChanged()
+    {
+        OnPropertyChanged(nameof(HasBatchStats));
+        OnPropertyChanged(nameof(HasRateLimitOccurrences));
+        OnPropertyChanged(nameof(SuccessSummaryPart));
+        OnPropertyChanged(nameof(RateLimitSummaryPart));
+        OnPropertyChanged(nameof(OtherErrorSummaryPart));
+        OnPropertyChanged(nameof(RateLimitSummaryText));
     }
 
     private static string GetDefaultOutputFolder()

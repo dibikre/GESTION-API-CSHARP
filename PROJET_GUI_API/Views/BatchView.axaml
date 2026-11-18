@@ -52,6 +52,24 @@
         <Style Selector="Border.batchStatusPill.error Ellipse.batchDot">
             <Setter Property="Fill" Value="{DynamicResource DangerBrush}" />
         </Style>
+
+        <Style Selector="Border.batchStatusPill.ratelimit">
+            <Setter Property="Background" Value="{DynamicResource WarningBadgeSoftBrush}" />
+        </Style>
+        <Style Selector="Border.batchStatusPill.ratelimit TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+        </Style>
+        <Style Selector="Border.batchStatusPill.ratelimit Ellipse.batchDot">
+            <Setter Property="Fill" Value="{DynamicResource WarningBrush}" />
+        </Style>
+
+        <Style Selector="TextBlock.rateLimitStat">
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        </Style>
+        <Style Selector="TextBlock.rateLimitStat.warning">
+            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+            <Setter Property="FontWeight" Value="Medium" />
+        </Style>
     </UserControl.Styles>
 
     <Grid RowDefinitions="Auto,*" RowSpacing="8">
@@ -531,6 +549,199 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Bandeau d'avertissement si pause globale < 100 ms -->
+                        <Border IsVisible="{Binding ShowLowPauseWarning}"
+                                Background="{DynamicResource WarningSoftBrush}"
+                                BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{DynamicResource ControlCornerRadius}"
+                                Padding="8,6">
+                            <StackPanel Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Path Classes="iconStroke"
+                                          Data="{StaticResource IconWarning}"
+                                          Stroke="{DynamicResource WarningBrush}"
+                                          VerticalAlignment="Center" />
+                                    <TextBlock Text="Pause inférieure à 100 ms : risque élevé de déclencher un rate limit sur l'API."
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               Foreground="{DynamicResource WarningBrush}"
+                                               TextWrapping="Wrap"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                                <CheckBox IsChecked="{Binding IsLowPauseConfirmed}"
+                                          Content="Je confirme vouloir continuer avec une pause aussi courte"
+                                          FontWeight="Medium"
+                                          AutomationProperties.Name="Je confirme vouloir continuer avec une pause aussi courte" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Troisième ligne : Gestion du rate limit (repliée par défaut) -->
+                        <Border BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,1,0,0"
+                                Padding="0,4,0,0">
+                            <Expander Classes="sectionExpander"
+                                      IsExpanded="False"
+                                      AutomationProperties.Name="Gestion du rate limit">
+                                <Expander.Header>
+                                    <TextBlock Text="Gestion du rate limit"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               Foreground="{DynamicResource TextMutedBrush}"
+                                               VerticalAlignment="Center" />
+                                </Expander.Header>
+
+                                <StackPanel IsEnabled="{Binding !IsRunning}"
+                                            Spacing="8"
+                                            Margin="0,6,0,2">
+                                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <CheckBox IsChecked="{Binding RateLimitPolicy.IsEnabled}"
+                                                  Content="Activer la gestion du rate limit"
+                                                  Margin="0,0,14,4"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.Name="Activer la gestion du rate limit" />
+
+                                        <CheckBox IsChecked="{Binding RateLimitPolicy.RespectRetryAfter}"
+                                                  Content="Respecter Retry-After"
+                                                  Margin="0,0,14,4"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.Name="Respecter Retry-After" />
+
+                                        <StackPanel Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    Margin="0,0,14,4"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="Plafond Retry-After (s)"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitMaxRetryAfterSecondsText}"
+                                                     Width="68"
+                                                     AutomationProperties.Name="Plafond Retry-After en secondes" />
+                                        </StackPanel>
+
+                                        <StackPanel IsVisible="{Binding !RateLimitPolicy.EnableBackoff}"
+                                                    Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    Margin="0,0,0,4"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="Tentatives max par requête"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitMaxRetriesText}"
+                                                     Width="56"
+                                                     AutomationProperties.Name="Tentatives max par requête" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <CheckBox IsChecked="{Binding RateLimitPolicy.EnableBackoff}"
+                                              Content="Ralentissement progressif (backoff) en l'absence de Retry-After"
+                                              AutomationProperties.Name="Ralentissement progressif en l'absence de Retry-After" />
+
+                                    <WrapPanel IsVisible="{Binding RateLimitPolicy.EnableBackoff}"
+                                               Orientation="Horizontal">
+                                        <StackPanel Spacing="3" Margin="0,0,12,4">
+                                            <TextBlock Text="Délai initial (ms)"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitBackoffInitialMsText}"
+                                                     Width="96"
+                                                     AutomationProperties.Name="Délai initial de backoff en millisecondes" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="3" Margin="0,0,12,4">
+                                            <TextBlock Text="Multiplicateur"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitBackoffMultiplierText}"
+                                                     Width="84"
+                                                     AutomationProperties.Name="Multiplicateur de backoff" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="3" Margin="0,0,12,4">
+                                            <TextBlock Text="Délai maximal (ms)"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitBackoffMaxMsText}"
+                                                     Width="104"
+                                                     AutomationProperties.Name="Délai maximal de backoff en millisecondes" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="3" Margin="0,0,0,4">
+                                            <TextBlock Text="Tentatives max par requête"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitMaxRetriesText}"
+                                                     Width="84"
+                                                     AutomationProperties.Name="Tentatives max par requête" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <WrapPanel Orientation="Horizontal">
+                                        <StackPanel Spacing="3" Margin="0,0,12,4">
+                                            <TextBlock Text="Codes HTTP supplémentaires traités comme rate limit"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitExtraStatusCodesText}"
+                                                     MinWidth="200"
+                                                     PlaceholderText="ex. 503"
+                                                     AutomationProperties.Name="Codes HTTP supplémentaires traités comme rate limit" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="3" Margin="0,0,12,4">
+                                            <TextBlock Text="En-tête de quota restant"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitPolicy.QuotaRemainingHeader}"
+                                                     MinWidth="190"
+                                                     PlaceholderText="ex. X-RateLimit-Remaining"
+                                                     AutomationProperties.Name="En-tête de quota restant" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="3" Margin="0,0,12,4">
+                                            <TextBlock Text="En-tête de réinitialisation du quota"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitPolicy.QuotaResetHeader}"
+                                                     MinWidth="190"
+                                                     PlaceholderText="ex. X-RateLimit-Reset"
+                                                     AutomationProperties.Name="En-tête de réinitialisation du quota" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="3" Margin="0,0,0,4">
+                                            <TextBlock Text="Seuil de ralentissement préventif"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding RateLimitQuotaThresholdText}"
+                                                     Width="96"
+                                                     AutomationProperties.Name="Seuil de ralentissement préventif" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <TextBlock Text="Laisse vide si l'API n'en fournit pas."
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource TextFaintBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <TextBlock IsVisible="{Binding HasRateLimitError}"
+                                               Text="{Binding RateLimitValidationError}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               FontWeight="Medium"
+                                               Foreground="{DynamicResource DangerBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Expander>
+                        </Border>
+
                         <TextBlock IsVisible="{Binding HasPlanError}"
                                    Text="{Binding PlanError}"
                                    Foreground="{DynamicResource DangerBrush}"
@@ -580,25 +791,43 @@
                         CornerRadius="{DynamicResource PanelCornerRadius}"
                         Padding="10">
                     <Grid RowDefinitions="Auto,Auto,*" RowSpacing="6">
-                        <!-- Barre de progression fine visible UNIQUEMENT pendant l'exécution -->
-                        <Grid Grid.Row="0"
-                              IsVisible="{Binding IsRunning}"
-                              ColumnDefinitions="*,Auto"
-                              ColumnSpacing="10">
-                            <ProgressBar Grid.Column="0"
-                                         Minimum="0"
-                                         Maximum="{Binding ProgressTotal}"
-                                         Value="{Binding ProgressCurrent}"
-                                         Height="2"
-                                         VerticalAlignment="Center"
-                                         AutomationProperties.Name="Progression du lot" />
-                            <TextBlock Grid.Column="1"
-                                       Text="{Binding ProgressText}"
-                                       FontFamily="{DynamicResource MonoFontFamily}"
-                                       FontSize="12"
-                                       Foreground="{DynamicResource TextMutedBrush}"
-                                       VerticalAlignment="Center" />
-                        </Grid>
+                        <!-- Barre de progression fine (pendant exécution) + synthèse rate limit (pendant et après) -->
+                        <StackPanel Grid.Row="0"
+                                    IsVisible="{Binding HasBatchStats}"
+                                    Spacing="4">
+                            <Grid IsVisible="{Binding IsRunning}"
+                                  ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="10">
+                                <ProgressBar Grid.Column="0"
+                                             Minimum="0"
+                                             Maximum="{Binding ProgressTotal}"
+                                             Value="{Binding ProgressCurrent}"
+                                             Height="2"
+                                             VerticalAlignment="Center"
+                                             AutomationProperties.Name="Progression du lot" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding ProgressText}"
+                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+
+                            <WrapPanel Orientation="Horizontal"
+                                       ToolTip.Tip="{Binding RateLimitSummaryText}"
+                                       AutomationProperties.Name="{Binding RateLimitSummaryText}">
+                                <TextBlock Text="{Binding SuccessSummaryPart}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource TextMutedBrush}" />
+                                <TextBlock Text="{Binding RateLimitSummaryPart}"
+                                           Classes="rateLimitStat"
+                                           Classes.warning="{Binding HasRateLimitOccurrences}"
+                                           FontSize="{DynamicResource FontSizeSmall}" />
+                                <TextBlock Text="{Binding OtherErrorSummaryPart}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource TextMutedBrush}" />
+                            </WrapPanel>
+                        </StackPanel>
 
                         <!-- En-tête fixe -->
                         <Border Grid.Row="1"
@@ -606,7 +835,7 @@
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,0,0,1"
                                 Padding="8,0,20,4">
-                            <Grid ColumnDefinitions="40,*,84,68,68" ColumnSpacing="8">
+                            <Grid ColumnDefinitions="40,*,160,68,68" ColumnSpacing="8">
                                 <TextBlock Grid.Column="0"
                                            Text="#"
                                            FontSize="11"
@@ -654,7 +883,7 @@
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="models:BatchResultItem">
                                     <StackPanel Spacing="2" Margin="0,0,8,0">
-                                        <Grid ColumnDefinitions="40,*,84,68,68"
+                                        <Grid ColumnDefinitions="40,*,160,68,68"
                                               ColumnSpacing="8"
                                               MinHeight="28">
                                             <TextBlock Grid.Column="0"
@@ -678,6 +907,7 @@
                                                     Classes.success="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsSuccess}}"
                                                     Classes.redirect="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsRedirect}}"
                                                     Classes.error="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsError}}"
+                                                    Classes.ratelimit="{Binding WasRateLimited}"
                                                     HorizontalAlignment="Left"
                                                     VerticalAlignment="Center">
                                                 <StackPanel Orientation="Horizontal" Spacing="5">
@@ -688,13 +918,18 @@
                                                     <TextBlock Text="{Binding StatusCode}"
                                                                IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsPositiveInt}}"
                                                                FontFamily="{DynamicResource MonoFontFamily}"
-                                                               FontSize="11.5"
+                                                               FontSize="{DynamicResource FontSizeCaption}"
                                                                FontWeight="SemiBold"
                                                                VerticalAlignment="Center" />
                                                     <TextBlock Text="Erreur"
                                                                IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsZeroInt}}"
-                                                               FontSize="11.5"
+                                                               FontSize="{DynamicResource FontSizeCaption}"
                                                                FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding RateLimitSuffixText}"
+                                                               IsVisible="{Binding WasRateLimited}"
+                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                               FontWeight="Medium"
                                                                VerticalAlignment="Center" />
                                                 </StackPanel>
                                             </Border>
@@ -715,9 +950,16 @@
                                         </Grid>
 
                                         <TextBlock Text="{Binding ErrorMessage}"
-                                                   IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                                   IsVisible="{Binding HasStandardErrorMessage}"
                                                    Foreground="{DynamicResource DangerBrush}"
-                                                   FontSize="11"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Margin="0,0,0,4" />
+
+                                        <TextBlock Text="{Binding ErrorMessage}"
+                                                   IsVisible="{Binding HasRateLimitErrorMessage}"
+                                                   Foreground="{DynamicResource WarningBrush}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
                                                    TextTrimming="CharacterEllipsis"
                                                    Margin="0,0,0,4" />
                                     </StackPanel>

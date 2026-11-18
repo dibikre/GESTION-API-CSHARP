@@ -22,4 +22,20 @@ public class BatchResultItem
     public DateTimeOffset TimestampUtc { get; set; } = DateTimeOffset.UtcNow;
     public string? ErrorMessage { get; set; }
     public ResponseModel? Response { get; set; }
+    public bool WasRateLimited { get; set; }
+    public int RetryAttempts { get; set; }
+    public long FinalWaitMs { get; set; }
+
+    public string RateLimitSuffixText => !WasRateLimited
+        ? string.Empty
+        : RetryAttempts switch
+        {
+            0 => "(rate limit)",
+            1 => "(1 tentative)",
+            _ => $"({RetryAttempts} tentatives)"
+        };
+
+    public bool HasStandardErrorMessage => !WasRateLimited && !string.IsNullOrEmpty(ErrorMessage);
+
+    public bool HasRateLimitErrorMessage => WasRateLimited && !string.IsNullOrEmpty(ErrorMessage);
 }

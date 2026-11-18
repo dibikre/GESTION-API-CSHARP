@@ -67,7 +67,7 @@ public sealed class DelayMsToDecimalConverter : IValueConverter
             return (decimal)intValue;
         }
 
-        return 500m;
+        return (decimal)RateLimitPolicy.DefaultPauseFloorMs;
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
@@ -77,7 +77,7 @@ public sealed class DelayMsToDecimalConverter : IValueConverter
             return Math.Clamp((int)decValue, 0, 60_000);
         }
 
-        return 500;
+        return RateLimitPolicy.DefaultPauseFloorMs;
     }
 }
 

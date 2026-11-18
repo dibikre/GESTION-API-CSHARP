@@ -60,6 +60,7 @@ public partial class App : Application
         services.AddSingleton<IHttpService, HttpService>();
         services.AddSingleton<ICurlParser, CurlParser>();
         services.AddSingleton<ITemplateEngine, TemplateEngine>();
+        services.AddSingleton<IRateLimitDetector, RateLimitDetector>();
         services.AddSingleton<IBatchRunner, BatchRunner>();
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
         services.AddSingleton<IBatchResultWriter, BatchResultWriter>();
