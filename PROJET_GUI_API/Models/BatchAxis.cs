@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
+using System.Numerics;
+using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace ApiTester.Models;
@@ -14,10 +15,13 @@ public enum BatchAxisKind
 public partial class BatchAxis : ObservableObject
 {
     private bool _isRange;
-    private long _rangeStart;
-    private long _rangeEnd;
-    private long _rangeStep = 1;
-    private int _zeroPad;
+    private BigInteger _rangeStart;
+    private BigInteger _rangeEnd;
+    private BigInteger _rangeStep = BigInteger.One;
+    private NumberBase _rangeBase = NumberBase.Decimal;
+    private int _rangeWidth;
+    private bool _rangeUppercaseHex = true;
+    private bool _rangeUsePrefix;
     private IReadOnlyList<string> _listValues = [];
 
     [ObservableProperty]
@@ -76,10 +80,13 @@ public partial class BatchAxis : ObservableObject
     public static BatchAxis CreateRange(
         BatchAxisKind kind,
         string name,
-        long start,
-        long end,
-        long step,
-        int zeroPad = 0)
+        BigInteger start,
+        BigInteger end,
+        BigInteger step,
+        NumberBase numberBase = NumberBase.Decimal,
+        int width = 0,
+        bool uppercaseHex = true,
+        bool usePrefix = false)
     {
         var axis = new BatchAxis
         {
@@ -87,7 +94,7 @@ public partial class BatchAxis : ObservableObject
             Name = name,
             DisplayName = name
         };
-        axis.ConfigureRange(start, end, step, zeroPad);
+        axis.ConfigureRange(start, end, step, numberBase, width, uppercaseHex, usePrefix);
         return axis;
     }
 
@@ -108,9 +115,21 @@ public partial class BatchAxis : ObservableObject
         return axis;
     }
 
-    public void ConfigureRange(long start, long end, long step, int zeroPad = 0)
+    public void ConfigureRange(
+        BigInteger start,
+        BigInteger end,
+        BigInteger step,
+        NumberBase numberBase = NumberBase.Decimal,
+        int width = 0,
+        bool uppercaseHex = true,
+        bool usePrefix = false)
     {
-        if (!TryComputeRangeCount(start, end, step, zeroPad, out var count, out var error))
+        if (width < 0 || width > BatchVariable.MaxWidth)
+        {
+            throw new ArgumentException($"La largeur doit être comprise entre 0 et {BatchVariable.MaxWidth}.", nameof(width));
+        }
+
+        if (!NumberCodec.TryComputeRangeCount(start, end, step, out var count, out _, out var error))
         {
             throw new ArgumentException(error ?? "Plage numérique invalide.");
         }
@@ -119,7 +138,10 @@ public partial class BatchAxis : ObservableObject
         _rangeStart = start;
         _rangeEnd = end;
         _rangeStep = step;
-        _zeroPad = zeroPad;
+        _rangeBase = numberBase;
+        _rangeWidth = width;
+        _rangeUppercaseHex = uppercaseHex;
+        _rangeUsePrefix = usePrefix;
         _listValues = [];
 
         ValueCount = count;
@@ -136,10 +158,13 @@ public partial class BatchAxis : ObservableObject
         }
 
         _isRange = false;
-        _rangeStart = 0;
-        _rangeEnd = 0;
-        _rangeStep = 1;
-        _zeroPad = 0;
+        _rangeStart = BigInteger.Zero;
+        _rangeEnd = BigInteger.Zero;
+        _rangeStep = BigInteger.One;
+        _rangeBase = NumberBase.Decimal;
+        _rangeWidth = 0;
+        _rangeUppercaseHex = true;
+        _rangeUsePrefix = false;
         _listValues = values is string[] arr ? arr : [.. values];
 
         ValueCount = _listValues.Count;
@@ -166,7 +191,7 @@ public partial class BatchAxis : ObservableObject
 
         if (_isRange)
         {
-            clone.ConfigureRange(_rangeStart, _rangeEnd, _rangeStep, _zeroPad);
+            clone.ConfigureRange(_rangeStart, _rangeEnd, _rangeStep, _rangeBase, _rangeWidth, _rangeUppercaseHex, _rangeUsePrefix);
         }
         else
         {
@@ -191,72 +216,29 @@ public partial class BatchAxis : ObservableObject
             return _listValues[(int)index];
         }
 
-        var value = (Int128)_rangeStart + ((Int128)index * (Int128)_rangeStep);
-        return FormatRangeValue(value, _zeroPad);
+        var value = _rangeStart + ((BigInteger)index * _rangeStep);
+        return NumberCodec.Format(value, _rangeBase, _rangeWidth, _rangeUppercaseHex, _rangeUsePrefix);
     }
 
     public static bool TryComputeRangeCount(
         long start,
         long end,
         long step,
-        int zeroPad,
+        int width,
         out long count,
         out string? error)
     {
-        count = 0;
-        error = null;
-
-        if (step == 0)
+        if (width < 0 || width > BatchVariable.MaxWidth)
         {
-            error = "Le pas ne peut pas être 0.";
+            count = 0;
+            error = $"La largeur doit être comprise entre 0 et {BatchVariable.MaxWidth}.";
             return false;
         }
 
-        if (start <= end && step < 0)
-        {
-            error = "Le pas doit être positif lorsque Début <= Fin.";
-            return false;
-        }
-
-        if (start > end && step > 0)
-        {
-            error = "Le pas doit être négatif lorsque Début > Fin.";
-            return false;
-        }
-
-        if (zeroPad < 0 || zeroPad > 12)
-        {
-            error = "Le remplissage par zéros doit être compris entre 0 et 12.";
-            return false;
-        }
-
-        var diff = (Int128)end - (Int128)start;
-        var count128 = (diff / (Int128)step) + 1;
-        count = count128 > long.MaxValue ? long.MaxValue : (long)count128;
-        return true;
+        return NumberCodec.TryComputeRangeCount(start, end, step, out count, out _, out error);
     }
 
-    public static List<string> ParseListValues(string? rawText)
-    {
-        if (string.IsNullOrEmpty(rawText))
-        {
-            return [];
-        }
-
-        var lines = rawText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        var values = new List<string>(lines.Length);
-
-        foreach (var line in lines)
-        {
-            var trimmed = line.Trim();
-            if (trimmed.Length > 0)
-            {
-                values.Add(trimmed);
-            }
-        }
-
-        return values;
-    }
+    public static List<string> ParseListValues(string? rawText) => BatchVariable.ParseListValues(rawText);
 
     private string BuildPreview()
     {
@@ -271,22 +253,6 @@ public partial class BatchAxis : ObservableObject
         return ValueCount > 3
             ? $"{string.Join(", ", parts)} …"
             : string.Join(", ", parts);
-    }
-
-    private static string FormatRangeValue(Int128 value, int zeroPad)
-    {
-        if (zeroPad <= 0)
-        {
-            return value.ToString(CultureInfo.InvariantCulture);
-        }
-
-        if (value >= 0)
-        {
-            return value.ToString(CultureInfo.InvariantCulture).PadLeft(zeroPad, '0');
-        }
-
-        var positive = (-value).ToString(CultureInfo.InvariantCulture).PadLeft(zeroPad, '0');
-        return $"-{positive}";
     }
 }
 

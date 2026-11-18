@@ -217,17 +217,42 @@ public class HttpService : IHttpService
 
     private static HttpContent? BuildContent(RequestModel request)
     {
-        return request.BodyType switch
+        switch (request.BodyType)
         {
-            BodyType.None => null,
-            BodyType.Json => new StringContent(request.Body ?? string.Empty, Encoding.UTF8, "application/json"),
-            BodyType.Text => new StringContent(request.Body ?? string.Empty, Encoding.UTF8, "text/plain"),
-            BodyType.FormUrlEncoded => new FormUrlEncodedContent(
-                request.FormFields
-                    .Where(f => f.IsEnabled && !string.IsNullOrWhiteSpace(f.Key))
-                    .Select(f => new KeyValuePair<string, string>(f.Key.Trim(), f.Value ?? string.Empty))),
-            _ => null
-        };
+            case BodyType.None:
+                return null;
+
+            case BodyType.Json:
+                return new StringContent(request.Body ?? string.Empty, Encoding.UTF8, "application/json");
+
+            case BodyType.Text:
+            {
+                var body = request.Body ?? string.Empty;
+                var contentType = request.Headers
+                    .LastOrDefault(h => h.IsEnabled && h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
+                    ?.Value;
+
+                if (contentType is not null &&
+                    contentType.Contains("multipart/form-data", StringComparison.OrdinalIgnoreCase))
+                {
+                    body = body
+                        .Replace("\r\n", "\n", StringComparison.Ordinal)
+                        .Replace("\r", "\n", StringComparison.Ordinal)
+                        .Replace("\n", "\r\n", StringComparison.Ordinal);
+                }
+
+                return new StringContent(body, Encoding.UTF8, "text/plain");
+            }
+
+            case BodyType.FormUrlEncoded:
+                return new FormUrlEncodedContent(
+                    request.FormFields
+                        .Where(f => f.IsEnabled && !string.IsNullOrWhiteSpace(f.Key))
+                        .Select(f => new KeyValuePair<string, string>(f.Key.Trim(), f.Value ?? string.Empty)));
+
+            default:
+                return null;
+        }
     }
 
     private static void ApplyHeaders(HttpRequestMessage httpRequest, IEnumerable<KeyValueItem> headers)
@@ -240,6 +265,11 @@ public class HttpService : IHttpService
             }
 
             var key = header.Key.Trim();
+            if (key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             var value = header.Value ?? string.Empty;
 
             try

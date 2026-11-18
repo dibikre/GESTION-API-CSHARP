@@ -59,9 +59,21 @@ public class BatchRunner : IBatchRunner
 
         foreach (var variable in activeVariables)
         {
-            if (!variable.IsConfigured || variable.HasError || variable.ValueCount <= 0)
+            if (!variable.IsConfigured || variable.HasError)
             {
-                plan.ValidationError = variable.ErrorText ?? $"La variable « {variable.Name} » n'est pas valide.";
+                plan.ValidationError = variable.ErrorText ?? $"La variable « {variable.Name} » n'est pas configurée.";
+                plan.TotalRequests = 0;
+                return plan;
+            }
+
+            if (!variable.IsVarying)
+            {
+                continue;
+            }
+
+            if (variable.ValueCount <= 0)
+            {
+                plan.ValidationError = $"La variable « {variable.Name} » ne contient aucune valeur.";
                 plan.TotalRequests = 0;
                 return plan;
             }
@@ -191,6 +203,7 @@ public class BatchRunner : IBatchRunner
         var enabledParams = parameters
             .Where(p => p.IsEnabled && !string.IsNullOrWhiteSpace(p.Name))
             .ToList();
+        var fixedVariableValues = BuildFixedVariableDictionary(variables);
 
         var take = Math.Clamp(Math.Min(maxCount, plan.TotalRequests), 0, 10);
         var previewList = new List<BatchPreviewItem>(take);
@@ -198,7 +211,7 @@ public class BatchRunner : IBatchRunner
         for (var i = 0; i < take; i++)
         {
             var index = i + 1;
-            var step = BuildPreviewStep(enabledParams, axes, mode, i);
+            var step = BuildPreviewStep(enabledParams, axes, fixedVariableValues, mode, i);
             var requestWithQuery = CloneRequestWithQuery(templateRequest, step.QueryItems);
             var applyResult = _templateEngine.ApplyDetailed(requestWithQuery, step.VariableDictionary, index);
 
@@ -268,12 +281,13 @@ public class BatchRunner : IBatchRunner
         var total = plan.TotalRequests;
         var delayMs = Math.Max(0, options.DelayMs);
         var axisNames = axes.Select(a => a.DisplayName).ToArray();
+        var fixedVariableValues = BuildFixedVariableDictionary(variables);
 
         Log.Information("Démarrage du lot : {TotalRequests} requêtes (mode: {Mode}, pause: {DelayMs}ms, axes: {@Axes}).",
             total, options.Mode, delayMs, axisNames);
 
         var index = 0;
-        foreach (var step in EnumerateExecutionSteps(parameters, axes, options.Mode, total))
+        foreach (var step in EnumerateExecutionSteps(parameters, axes, fixedVariableValues, options.Mode, total))
         {
             ct.ThrowIfCancellationRequested();
             index++;
@@ -387,6 +401,7 @@ public class BatchRunner : IBatchRunner
     private BatchExecutionStep BuildPreviewStep(
         IReadOnlyList<VaryingParam> enabledParams,
         IReadOnlyList<BatchAxis> axes,
+        IReadOnlyDictionary<string, string> fixedVariableValues,
         BatchMode mode,
         long stepIndex)
     {
@@ -402,7 +417,7 @@ public class BatchRunner : IBatchRunner
                 VaryingItems = [],
                 VariableItems = [],
                 OrderedAxisItems = [],
-                VariableDictionary = new Dictionary<string, string>(StringComparer.Ordinal),
+                VariableDictionary = new Dictionary<string, string>(fixedVariableValues, StringComparer.Ordinal),
                 ParamsText = FormatStaticParamsText(staticQuery)
             };
         }
@@ -422,12 +437,13 @@ public class BatchRunner : IBatchRunner
             selected = GetCombination(axes, stepIndex);
         }
 
-        return BuildStepFromAxisValues(enabledParams, axes, selected);
+        return BuildStepFromAxisValues(enabledParams, axes, fixedVariableValues, selected);
     }
 
     private static IEnumerable<BatchExecutionStep> EnumerateExecutionSteps(
         IReadOnlyList<VaryingParam> parameters,
         IReadOnlyList<BatchAxis> axes,
+        IReadOnlyDictionary<string, string> fixedVariableValues,
         BatchMode mode,
         int maxCount)
     {
@@ -452,7 +468,7 @@ public class BatchRunner : IBatchRunner
                 VaryingItems = [],
                 VariableItems = [],
                 OrderedAxisItems = [],
-                VariableDictionary = new Dictionary<string, string>(StringComparer.Ordinal),
+                VariableDictionary = new Dictionary<string, string>(fixedVariableValues, StringComparer.Ordinal),
                 ParamsText = FormatStaticParamsText(staticQuery)
             };
             yield break;
@@ -473,7 +489,7 @@ public class BatchRunner : IBatchRunner
                     selected[i] = axes[i].GetValue(stepIndex);
                 }
 
-                yield return BuildStepFromAxisValues(enabledParams, axes, selected);
+                yield return BuildStepFromAxisValues(enabledParams, axes, fixedVariableValues, selected);
             }
 
             yield break;
@@ -500,7 +516,7 @@ public class BatchRunner : IBatchRunner
             }
 
             produced++;
-            yield return BuildStepFromAxisValues(enabledParams, axes, selected);
+            yield return BuildStepFromAxisValues(enabledParams, axes, fixedVariableValues, selected);
 
             if (produced >= maxCount)
             {
@@ -530,6 +546,7 @@ public class BatchRunner : IBatchRunner
     private static BatchExecutionStep BuildStepFromAxisValues(
         IReadOnlyList<VaryingParam> enabledParams,
         IReadOnlyList<BatchAxis> axes,
+        IReadOnlyDictionary<string, string> fixedVariableValues,
         IReadOnlyList<string> selectedValues)
     {
         var varyingValueByParamIndex = new Dictionary<int, string>();
@@ -537,7 +554,7 @@ public class BatchRunner : IBatchRunner
         var varyingItems = new List<KeyValueItem>();
         var variableItems = new List<KeyValueItem>();
         var orderedAxisItems = new List<KeyValueItem>(axes.Count);
-        var variableDictionary = new Dictionary<string, string>(StringComparer.Ordinal);
+        var variableDictionary = new Dictionary<string, string>(fixedVariableValues, StringComparer.Ordinal);
         var displayLabels = new List<string>(axes.Count);
 
         for (var i = 0; i < axes.Count; i++)
@@ -587,6 +604,24 @@ public class BatchRunner : IBatchRunner
             VariableDictionary = variableDictionary,
             ParamsText = string.Join(", ", displayLabels)
         };
+    }
+
+    private static Dictionary<string, string> BuildFixedVariableDictionary(IReadOnlyList<BatchVariable> variables)
+    {
+        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var variable in variables)
+        {
+            if (variable.IsUsed &&
+                !variable.IsVarying &&
+                variable.IsConfigured &&
+                !variable.HasError &&
+                !string.IsNullOrWhiteSpace(variable.Name))
+            {
+                dict[variable.Name] = variable.FixedValue;
+            }
+        }
+
+        return dict;
     }
 
     private static int ResolveParamIndex(

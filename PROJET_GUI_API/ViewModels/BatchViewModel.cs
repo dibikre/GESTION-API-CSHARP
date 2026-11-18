@@ -64,6 +64,8 @@ public partial class BatchViewModel : ViewModelBase
     public static IReadOnlyList<SaveMode> SaveModes { get; } = Enum.GetValues<SaveMode>();
     public static IReadOnlyList<GroupedFormat> GroupedFormats { get; } = Enum.GetValues<GroupedFormat>();
     public static IReadOnlyList<VariableMode> VariableModes { get; } = Enum.GetValues<VariableMode>();
+    public static IReadOnlyList<NumberBase> NumberBases { get; } = Enum.GetValues<NumberBase>();
+    public static IReadOnlyList<RandomKind> RandomKinds { get; } = Enum.GetValues<RandomKind>();
     public static IReadOnlyList<BodyType> BodyTypes { get; } = RequestViewModel.BodyTypes;
 
     public Action<RequestModel>? OpenInSingleRequestCallback { get; set; }
@@ -713,19 +715,7 @@ public partial class BatchViewModel : ViewModelBase
         var variablesSnapshot = new List<BatchVariable>(Variables.Count);
         foreach (var v in Variables)
         {
-            var cloned = new BatchVariable
-            {
-                Name = v.Name,
-                Mode = v.Mode,
-                RangeStart = v.RangeStart,
-                RangeEnd = v.RangeEnd,
-                RangeStep = v.RangeStep,
-                ZeroPad = v.ZeroPad,
-                ListText = v.ListText,
-                UsedIn = v.UsedIn,
-                IsUsed = v.IsUsed,
-                IsConfigured = v.IsConfigured
-            };
+            var cloned = v.Clone();
             variableMap[v] = cloned;
             variablesSnapshot.Add(cloned);
         }
@@ -910,15 +900,34 @@ public partial class BatchViewModel : ViewModelBase
 
     private void OnBatchVariablePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(BatchVariable.Mode)
-            or nameof(BatchVariable.RangeStart)
-            or nameof(BatchVariable.RangeEnd)
-            or nameof(BatchVariable.RangeStep)
-            or nameof(BatchVariable.ZeroPad)
+        if (e.PropertyName is nameof(BatchVariable.IsVarying)
+            or nameof(BatchVariable.FixedValue)
+            or nameof(BatchVariable.Mode)
+            or nameof(BatchVariable.Base)
+            or nameof(BatchVariable.StartText)
+            or nameof(BatchVariable.EndText)
+            or nameof(BatchVariable.StepText)
+            or nameof(BatchVariable.Width)
+            or nameof(BatchVariable.UppercaseHex)
+            or nameof(BatchVariable.UsePrefix)
             or nameof(BatchVariable.ListText)
+            or nameof(BatchVariable.RandomKind)
+            or nameof(BatchVariable.RandomCount)
+            or nameof(BatchVariable.IsUnique)
+            or nameof(BatchVariable.SeedText)
+            or nameof(BatchVariable.SeedUsed)
+            or nameof(BatchVariable.MinText)
+            or nameof(BatchVariable.MaxText)
+            or nameof(BatchVariable.ByteCount)
+            or nameof(BatchVariable.TextLength)
+            or nameof(BatchVariable.IncludeLowercase)
+            or nameof(BatchVariable.IncludeUppercase)
+            or nameof(BatchVariable.IncludeDigits)
+            or nameof(BatchVariable.IncludeDashUnderscore)
             or nameof(BatchVariable.IsConfigured)
             or nameof(BatchVariable.IsUsed)
             or nameof(BatchVariable.ValueCount)
+            or nameof(BatchVariable.ValuesPreview)
             or nameof(BatchVariable.ErrorText))
         {
             IsConfirmed = false;
@@ -1150,8 +1159,8 @@ public partial class BatchViewModel : ViewModelBase
 
         foreach (var variable in Variables)
         {
-            if (!variable.IsUsed || !variable.IsConfigured || variable.HasError || variable.ValueCount <= 0 ||
-                string.IsNullOrWhiteSpace(variable.Name))
+            if (!variable.IsUsed || !variable.IsVarying || !variable.IsConfigured || variable.HasError ||
+                variable.ValueCount <= 0 || string.IsNullOrWhiteSpace(variable.Name))
             {
                 continue;
             }
@@ -1159,10 +1168,13 @@ public partial class BatchViewModel : ViewModelBase
             var name = variable.Name;
             if (variable.Mode == VariableMode.Range)
             {
-                var capturedStart = variable.RangeStart;
-                var capturedEnd = variable.RangeEnd;
-                var capturedStep = variable.RangeStep;
-                var capturedZeroPad = variable.ZeroPad;
+                var capturedStart = variable.ParsedStart;
+                var capturedEnd = variable.ParsedEnd;
+                var capturedStep = variable.ParsedStep;
+                var capturedBase = variable.Base;
+                var capturedWidth = variable.Width;
+                var capturedUpper = variable.UppercaseHex;
+                var capturedPrefix = variable.UsePrefix;
 
                 candidates.Add(new AxisCandidate
                 {
@@ -1170,12 +1182,36 @@ public partial class BatchViewModel : ViewModelBase
                     Kind = BatchAxisKind.Variable,
                     Name = name,
                     SourceVariable = variable,
-                    ApplyConfig = axis => axis.ConfigureRange(capturedStart, capturedEnd, capturedStep, capturedZeroPad)
+                    ApplyConfig = axis => axis.ConfigureRange(
+                        capturedStart,
+                        capturedEnd,
+                        capturedStep,
+                        capturedBase,
+                        capturedWidth,
+                        capturedUpper,
+                        capturedPrefix)
                 });
             }
-            else
+            else if (variable.Mode == VariableMode.List)
             {
-                var values = BatchAxis.ParseListValues(variable.ListText);
+                var values = BatchVariable.ParseListValues(variable.ListText);
+                if (values.Count == 0)
+                {
+                    continue;
+                }
+
+                candidates.Add(new AxisCandidate
+                {
+                    Identity = new AxisIdentity(BatchAxisKind.Variable, name, 0),
+                    Kind = BatchAxisKind.Variable,
+                    Name = name,
+                    SourceVariable = variable,
+                    ApplyConfig = axis => axis.ConfigureList(values)
+                });
+            }
+            else if (variable.Mode == VariableMode.Random)
+            {
+                var values = variable.GetRandomValuesSnapshot();
                 if (values.Count == 0)
                 {
                     continue;
@@ -1444,7 +1480,7 @@ public partial class BatchViewModel : ViewModelBase
             }
             else if (!variable.IsConfigured)
             {
-                errors.Add($"{{{{{ext.Name}}}}} : variable non configurée.");
+                errors.Add($"{{{{{ext.Name}}}}} : saisis une valeur ou coche « Faire varier ».");
             }
             else if (variable.HasError)
             {

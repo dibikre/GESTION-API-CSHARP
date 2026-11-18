@@ -179,10 +179,77 @@ public static class VariableModeConverters
     public static readonly IValueConverter ToLabel =
         new FuncValueConverter<VariableMode, string>(mode => mode switch
         {
-            VariableMode.Range => "Plage numérique",
+            VariableMode.Range => "Plage (incrément)",
             VariableMode.List => "Liste de valeurs",
+            VariableMode.Random => "Aléatoire",
             _ => mode.ToString()
         });
+}
+
+public static class NumberBaseConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<NumberBase, string>(numberBase => numberBase switch
+        {
+            NumberBase.Binary => "Binaire (2)",
+            NumberBase.Octal => "Octal (8)",
+            NumberBase.Decimal => "Décimal (10)",
+            NumberBase.Hexadecimal => "Hexadécimal (16)",
+            _ => numberBase.ToString()
+        });
+}
+
+public static class RandomKindConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<RandomKind, string>(kind => kind switch
+        {
+            RandomKind.Integer => "Entier",
+            RandomKind.HexBytes => "Hexadécimal (octets)",
+            RandomKind.Text => "Texte",
+            RandomKind.Guid => "GUID",
+            RandomKind.PickFromList => "Choix dans une liste",
+            _ => kind.ToString()
+        });
+}
+
+public sealed class BoundedIntToDecimalConverter : IValueConverter
+{
+    public static readonly BoundedIntToDecimalConverter Width = new(0, BatchVariable.MaxWidth, 0);
+    public static readonly BoundedIntToDecimalConverter RandomCount = new(1, BatchVariable.MaxRandomCount, 10);
+    public static readonly BoundedIntToDecimalConverter ByteCount = new(1, BatchVariable.MaxByteCount, 4);
+    public static readonly BoundedIntToDecimalConverter TextLength = new(1, BatchVariable.MaxTextLength, 8);
+
+    private readonly int _min;
+    private readonly int _max;
+    private readonly int _fallback;
+
+    public BoundedIntToDecimalConverter(int min, int max, int fallback)
+    {
+        _min = min;
+        _max = max;
+        _fallback = fallback;
+    }
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int intValue)
+        {
+            return (decimal)intValue;
+        }
+
+        return (decimal)_fallback;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is decimal decValue)
+        {
+            return Math.Clamp((int)decValue, _min, _max);
+        }
+
+        return _fallback;
+    }
 }
 
 public sealed class ZeroPadToDecimalConverter : IValueConverter
@@ -209,5 +276,3 @@ public sealed class ZeroPadToDecimalConverter : IValueConverter
         return 0;
     }
 }
-
-

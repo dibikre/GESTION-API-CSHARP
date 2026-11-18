@@ -341,7 +341,8 @@
                                                    Maximum="60000"
                                                    Increment="100"
                                                    FormatString="0"
-                                                   Width="104"
+                                                   MinWidth="148"
+                                                   Width="148"
                                                    AutomationProperties.Name="Pause entre requêtes en millisecondes" />
                                 </StackPanel>
 

@@ -5,7 +5,7 @@
              xmlns:conv="using:ApiTester.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="220"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="260"
              x:Class="ApiTester.Views.BatchVariableEditor"
              x:Name="Root"
              x:DataType="x:Object">
@@ -42,9 +42,9 @@
                                 Classes.unused="{Binding !IsUsed}"
                                 BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,0,0,1"
-                                Padding="6,6">
+                                Padding="6,8">
                             <StackPanel Spacing="6">
-                                <!-- En-tête de variable : nom, localisation, mode, compteur et aperçu -->
+                                <!-- En-tête de variable : nom, localisation, case Faire varier, aperçu, compteur -->
                                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
                                     <StackPanel Grid.Column="0"
                                                 Orientation="Horizontal"
@@ -80,16 +80,11 @@
                                                        Foreground="{DynamicResource TextMutedBrush}" />
                                         </Border>
 
-                                        <ComboBox ItemsSource="{x:Static vm:BatchViewModel.VariableModes}"
-                                                  SelectedItem="{Binding Mode}"
-                                                  MinWidth="140"
-                                                  AutomationProperties.Name="Mode de la variable">
-                                            <ComboBox.ItemTemplate>
-                                                <DataTemplate x:DataType="models:VariableMode">
-                                                    <TextBlock Text="{Binding Converter={x:Static conv:VariableModeConverters.ToLabel}}" />
-                                                </DataTemplate>
-                                            </ComboBox.ItemTemplate>
-                                        </ComboBox>
+                                        <CheckBox IsChecked="{Binding IsVarying}"
+                                                  Content="Faire varier"
+                                                  Margin="4,0,0,0"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.Name="Faire varier cette variable" />
                                     </StackPanel>
 
                                     <TextBlock Grid.Column="1"
@@ -109,90 +104,380 @@
                                                VerticalAlignment="Center" />
                                 </Grid>
 
-                                <!-- Paramètres selon le mode -->
-                                <WrapPanel IsVisible="{Binding IsRangeMode}"
-                                           Orientation="Horizontal"
-                                           VerticalAlignment="Center">
-                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
-                                        <TextBlock Text="Début"
+                                <!-- Mode valeur fixe -->
+                                <StackPanel IsVisible="{Binding IsFixedMode}" Spacing="4">
+                                    <TextBox Classes="mono"
+                                             Text="{Binding FixedValue}"
+                                             PlaceholderText="Valeur fixe"
+                                             AutomationProperties.Name="Valeur fixe de la variable" />
+
+                                    <TextBlock IsVisible="{Binding ShowFixedUnconfiguredHint}"
+                                               Text="Saisis une valeur ou coche « Faire varier »"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource TextMutedBrush}" />
+                                </StackPanel>
+
+                                <!-- Mode variable (Plage / Liste / Aléatoire) -->
+                                <StackPanel IsVisible="{Binding IsVarying}" Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <TextBlock Text="Générateur"
                                                    FontSize="{DynamicResource FontSizeSmall}"
                                                    Foreground="{DynamicResource TextMutedBrush}"
                                                    VerticalAlignment="Center" />
-                                        <NumericUpDown Value="{Binding RangeStart, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
-                                                       FormatString="0"
-                                                       Increment="1"
-                                                       ShowButtonSpinner="False"
-                                                       Width="84"
-                                                       Height="24"
-                                                       MinHeight="24"
-                                                       AutomationProperties.Name="Début de la plage" />
+
+                                        <ComboBox ItemsSource="{x:Static vm:BatchViewModel.VariableModes}"
+                                                  SelectedItem="{Binding Mode}"
+                                                  MinWidth="172"
+                                                  AutomationProperties.Name="Mode du générateur">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="models:VariableMode">
+                                                    <TextBlock Text="{Binding Converter={x:Static conv:VariableModeConverters.ToLabel}}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
                                     </StackPanel>
 
-                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
-                                        <TextBlock Text="Fin"
-                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                    <!-- Plage (incrément) multi-base -->
+                                    <WrapPanel IsVisible="{Binding IsRangeMode}"
+                                               Orientation="Horizontal"
+                                               VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                            <TextBlock Text="Base"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <ComboBox ItemsSource="{x:Static vm:BatchViewModel.NumberBases}"
+                                                      SelectedItem="{Binding Base}"
+                                                      MinWidth="148"
+                                                      AutomationProperties.Name="Base numérique de la plage">
+                                                <ComboBox.ItemTemplate>
+                                                    <DataTemplate x:DataType="models:NumberBase">
+                                                        <TextBlock Text="{Binding Converter={x:Static conv:NumberBaseConverters.ToLabel}}" />
+                                                    </DataTemplate>
+                                                </ComboBox.ItemTemplate>
+                                            </ComboBox>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                            <TextBlock Text="Début"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding StartText}"
+                                                     Width="112"
+                                                     PlaceholderText="1"
+                                                     AutomationProperties.Name="Début de la plage" />
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                            <TextBlock Text="Fin"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding EndText}"
+                                                     Width="112"
+                                                     PlaceholderText="10"
+                                                     AutomationProperties.Name="Fin de la plage" />
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                            <TextBlock Text="Pas"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding StepText}"
+                                                     Width="84"
+                                                     PlaceholderText="1"
+                                                     AutomationProperties.Name="Pas de la plage" />
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                            <TextBlock Text="Largeur"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <NumericUpDown Value="{Binding Width, Converter={x:Static conv:BoundedIntToDecimalConverter.Width}, Mode=TwoWay}"
+                                                           Minimum="0"
+                                                           Maximum="128"
+                                                           FormatString="0"
+                                                           Increment="1"
+                                                           ShowButtonSpinner="False"
+                                                           Width="64"
+                                                           AutomationProperties.Name="Largeur en chiffres (0 = aucune)" />
+                                            <TextBlock Text="0 = aucune (8 en binaire = 1 octet)"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+
+                                        <CheckBox IsVisible="{Binding IsHexBase}"
+                                                  IsChecked="{Binding UppercaseHex}"
+                                                  Content="Majuscules"
+                                                  Margin="0,0,12,4"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.Name="Afficher l'hexadécimal en majuscules" />
+
+                                        <CheckBox IsVisible="{Binding IsNonDecimalBase}"
+                                                  IsChecked="{Binding UsePrefix}"
+                                                  Content="Préfixe (0x, 0b, 0o)"
+                                                  Margin="0,0,0,4"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.Name="Ajouter le préfixe de base" />
+                                    </WrapPanel>
+
+                                    <!-- Liste de valeurs -->
+                                    <TextBox IsVisible="{Binding IsListMode}"
+                                             Classes="mono"
+                                             Text="{Binding ListText}"
+                                             AcceptsReturn="True"
+                                             TextWrapping="NoWrap"
+                                             Height="68"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                             PlaceholderText="Une valeur par ligne (ex. valeur1, valeur2)"
+                                             AutomationProperties.Name="Liste des valeurs de la variable" />
+
+                                    <!-- Générateur aléatoire -->
+                                    <StackPanel IsVisible="{Binding IsRandomMode}" Spacing="6">
+                                        <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Type"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <ComboBox ItemsSource="{x:Static vm:BatchViewModel.RandomKinds}"
+                                                          SelectedItem="{Binding RandomKind}"
+                                                          MinWidth="172"
+                                                          AutomationProperties.Name="Type de génération aléatoire">
+                                                    <ComboBox.ItemTemplate>
+                                                        <DataTemplate x:DataType="models:RandomKind">
+                                                            <TextBlock Text="{Binding Converter={x:Static conv:RandomKindConverters.ToLabel}}" />
+                                                        </DataTemplate>
+                                                    </ComboBox.ItemTemplate>
+                                                </ComboBox>
+                                            </StackPanel>
+
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Nombre de valeurs"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <NumericUpDown Value="{Binding RandomCount, Converter={x:Static conv:BoundedIntToDecimalConverter.RandomCount}, Mode=TwoWay}"
+                                                               Minimum="1"
+                                                               Maximum="10000"
+                                                               FormatString="0"
+                                                               Increment="1"
+                                                               ShowButtonSpinner="False"
+                                                               Width="78"
+                                                               AutomationProperties.Name="Nombre de valeurs aléatoires" />
+                                            </StackPanel>
+
+                                            <CheckBox IsChecked="{Binding IsUnique}"
+                                                      Content="Sans doublon"
+                                                      Margin="0,0,12,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Générer des valeurs sans doublon" />
+
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,8,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Graine (facultatif)"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBox Classes="mono"
+                                                         Text="{Binding SeedText}"
+                                                         Width="112"
+                                                         PlaceholderText="auto"
+                                                         AutomationProperties.Name="Graine aléatoire facultative" />
+                                            </StackPanel>
+
+                                            <Button Classes="ghost"
+                                                    Content="Nouvelle graine"
+                                                    Command="{Binding NewSeedCommand}"
+                                                    Margin="0,0,8,4"
+                                                    VerticalAlignment="Center"
+                                                    AutomationProperties.Name="Générer une nouvelle graine" />
+
+                                            <TextBlock IsVisible="{Binding HasSeedUsed}"
+                                                       Text="{Binding SeedUsedText}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       Margin="0,0,0,4"
+                                                       VerticalAlignment="Center" />
+                                        </WrapPanel>
+
+                                        <!-- Aléatoire : Entier -->
+                                        <WrapPanel IsVisible="{Binding IsRandomInteger}"
+                                                   Orientation="Horizontal"
+                                                   VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Base"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <ComboBox ItemsSource="{x:Static vm:BatchViewModel.NumberBases}"
+                                                          SelectedItem="{Binding Base}"
+                                                          MinWidth="148"
+                                                          AutomationProperties.Name="Base numérique de l'entier aléatoire">
+                                                    <ComboBox.ItemTemplate>
+                                                        <DataTemplate x:DataType="models:NumberBase">
+                                                            <TextBlock Text="{Binding Converter={x:Static conv:NumberBaseConverters.ToLabel}}" />
+                                                        </DataTemplate>
+                                                    </ComboBox.ItemTemplate>
+                                                </ComboBox>
+                                            </StackPanel>
+
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Minimum"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBox Classes="mono"
+                                                         Text="{Binding MinText}"
+                                                         Width="112"
+                                                         PlaceholderText="1"
+                                                         AutomationProperties.Name="Minimum de l'entier aléatoire" />
+                                            </StackPanel>
+
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Maximum"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBox Classes="mono"
+                                                         Text="{Binding MaxText}"
+                                                         Width="112"
+                                                         PlaceholderText="100"
+                                                         AutomationProperties.Name="Maximum de l'entier aléatoire" />
+                                            </StackPanel>
+
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Largeur"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <NumericUpDown Value="{Binding Width, Converter={x:Static conv:BoundedIntToDecimalConverter.Width}, Mode=TwoWay}"
+                                                               Minimum="0"
+                                                               Maximum="128"
+                                                               FormatString="0"
+                                                               Increment="1"
+                                                               ShowButtonSpinner="False"
+                                                               Width="64"
+                                                               AutomationProperties.Name="Largeur en chiffres" />
+                                            </StackPanel>
+
+                                            <CheckBox IsVisible="{Binding IsHexBase}"
+                                                      IsChecked="{Binding UppercaseHex}"
+                                                      Content="Majuscules"
+                                                      Margin="0,0,12,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Afficher l'hexadécimal en majuscules" />
+
+                                            <CheckBox IsVisible="{Binding IsNonDecimalBase}"
+                                                      IsChecked="{Binding UsePrefix}"
+                                                      Content="Préfixe (0x, 0b, 0o)"
+                                                      Margin="0,0,0,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Ajouter le préfixe de base" />
+                                        </WrapPanel>
+
+                                        <!-- Aléatoire : Hexadécimal (octets) -->
+                                        <WrapPanel IsVisible="{Binding IsRandomHexBytes}"
+                                                   Orientation="Horizontal"
+                                                   VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Octets"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <NumericUpDown Value="{Binding ByteCount, Converter={x:Static conv:BoundedIntToDecimalConverter.ByteCount}, Mode=TwoWay}"
+                                                               Minimum="1"
+                                                               Maximum="64"
+                                                               FormatString="0"
+                                                               Increment="1"
+                                                               ShowButtonSpinner="False"
+                                                               Width="64"
+                                                               AutomationProperties.Name="Nombre d'octets hexadécimaux" />
+                                            </StackPanel>
+
+                                            <CheckBox IsChecked="{Binding UppercaseHex}"
+                                                      Content="Majuscules"
+                                                      Margin="0,0,0,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Octets hexadécimaux en majuscules" />
+                                        </WrapPanel>
+
+                                        <!-- Aléatoire : Texte -->
+                                        <WrapPanel IsVisible="{Binding IsRandomText}"
+                                                   Orientation="Horizontal"
+                                                   VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Longueur"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <NumericUpDown Value="{Binding TextLength, Converter={x:Static conv:BoundedIntToDecimalConverter.TextLength}, Mode=TwoWay}"
+                                                               Minimum="1"
+                                                               Maximum="256"
+                                                               FormatString="0"
+                                                               Increment="1"
+                                                               ShowButtonSpinner="False"
+                                                               Width="68"
+                                                               AutomationProperties.Name="Longueur du texte aléatoire" />
+                                            </StackPanel>
+
+                                            <CheckBox IsChecked="{Binding IncludeLowercase}"
+                                                      Content="Minuscules"
+                                                      Margin="0,0,12,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Inclure les lettres minuscules" />
+
+                                            <CheckBox IsChecked="{Binding IncludeUppercase}"
+                                                      Content="Majuscules"
+                                                      Margin="0,0,12,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Inclure les lettres majuscules" />
+
+                                            <CheckBox IsChecked="{Binding IncludeDigits}"
+                                                      Content="Chiffres"
+                                                      Margin="0,0,12,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Inclure les chiffres" />
+
+                                            <CheckBox IsChecked="{Binding IncludeDashUnderscore}"
+                                                      Content="- _"
+                                                      Margin="0,0,0,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Inclure tiret et souligné" />
+                                        </WrapPanel>
+
+                                        <!-- Aléatoire : Choix dans une liste -->
+                                        <TextBox IsVisible="{Binding IsRandomPickFromList}"
+                                                 Classes="mono"
+                                                 Text="{Binding ListText}"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="NoWrap"
+                                                 Height="68"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                 PlaceholderText="Une valeur par ligne pour le tirage aléatoire"
+                                                 AutomationProperties.Name="Liste source du tirage aléatoire" />
+
+                                        <TextBlock Text="Aléatoire non cryptographique : sert à varier les requêtes, pas à produire des secrets."
+                                                   FontSize="{DynamicResource FontSizeCaption}"
                                                    Foreground="{DynamicResource TextMutedBrush}"
-                                                   VerticalAlignment="Center" />
-                                        <NumericUpDown Value="{Binding RangeEnd, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
-                                                       FormatString="0"
-                                                       Increment="1"
-                                                       ShowButtonSpinner="False"
-                                                       Width="84"
-                                                       Height="24"
-                                                       MinHeight="24"
-                                                       AutomationProperties.Name="Fin de la plage" />
+                                                   TextWrapping="Wrap" />
                                     </StackPanel>
-
-                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
-                                        <TextBlock Text="Pas"
-                                                   FontSize="{DynamicResource FontSizeSmall}"
-                                                   Foreground="{DynamicResource TextMutedBrush}"
-                                                   VerticalAlignment="Center" />
-                                        <NumericUpDown Value="{Binding RangeStep, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
-                                                       FormatString="0"
-                                                       Increment="1"
-                                                       ShowButtonSpinner="False"
-                                                       Width="68"
-                                                       Height="24"
-                                                       MinHeight="24"
-                                                       AutomationProperties.Name="Pas de la plage" />
-                                    </StackPanel>
-
-                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                        <TextBlock Text="Zéros"
-                                                   FontSize="{DynamicResource FontSizeSmall}"
-                                                   Foreground="{DynamicResource TextMutedBrush}"
-                                                   VerticalAlignment="Center" />
-                                        <NumericUpDown Value="{Binding ZeroPad, Converter={x:Static conv:ZeroPadToDecimalConverter.Instance}, Mode=TwoWay}"
-                                                       Minimum="0"
-                                                       Maximum="12"
-                                                       FormatString="0"
-                                                       Increment="1"
-                                                       ShowButtonSpinner="False"
-                                                       Width="60"
-                                                       Height="24"
-                                                       MinHeight="24"
-                                                       AutomationProperties.Name="Remplissage par zéros" />
-                                    </StackPanel>
-                                </WrapPanel>
-
-                                <TextBox IsVisible="{Binding IsListMode}"
-                                         Classes="mono"
-                                         Text="{Binding ListText}"
-                                         AcceptsReturn="True"
-                                         TextWrapping="NoWrap"
-                                         Height="64"
-                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                         PlaceholderText="Une valeur par ligne (ex. valeur1, valeur2)"
-                                         AutomationProperties.Name="Liste des valeurs de la variable" />
+                                </StackPanel>
 
                                 <!-- Erreur sur une ligne -->
                                 <TextBlock IsVisible="{Binding HasError}"
                                            Text="{Binding ErrorText}"
                                            FontSize="{DynamicResource FontSizeCaption}"
                                            Foreground="{DynamicResource DangerBrush}"
-                                           TextTrimming="CharacterEllipsis" />
+                                           TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
                     </DataTemplate>
