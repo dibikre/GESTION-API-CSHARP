@@ -289,6 +289,114 @@
                                FontWeight="SemiBold"
                                TextWrapping="Wrap" />
 
+                    <!-- Section Enregistrement des réponses -->
+                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="0,6,0,0">
+                        <StackPanel Spacing="6">
+                            <StackPanel IsEnabled="{Binding !IsRunning}" Spacing="6">
+                                <WrapPanel Orientation="Horizontal">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,14,4" VerticalAlignment="Center">
+                                        <TextBlock Text="Enregistrement des réponses :"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center" />
+                                        <ComboBox ItemsSource="{x:Static vm:BatchViewModel.SaveModes}"
+                                                  SelectedItem="{Binding SaveMode}"
+                                                  MinWidth="195"
+                                                  AutomationProperties.Name="Mode d'enregistrement des réponses">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="models:SaveMode">
+                                                    <TextBlock Text="{Binding Converter={x:Static conv:SaveModeConverters.ToLabel}}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <CheckBox IsVisible="{Binding CanChooseFolder}"
+                                              IsChecked="{Binding CreateTimestampSubfolder}"
+                                              Content="Créer un sous-dossier horodaté"
+                                              Margin="0,0,14,4"
+                                              VerticalAlignment="Center"
+                                              AutomationProperties.Name="Créer un sous-dossier horodaté" />
+
+                                    <CheckBox IsVisible="{Binding ShowPerRequestOptions}"
+                                              IsChecked="{Binding IncludeSummaryCsv}"
+                                              Content="Inclure un fichier _resume.csv"
+                                              Margin="0,0,14,4"
+                                              VerticalAlignment="Center"
+                                              AutomationProperties.Name="Inclure un fichier _resume.csv" />
+
+                                    <StackPanel IsVisible="{Binding ShowGroupedOptions}"
+                                                Orientation="Horizontal"
+                                                Spacing="6"
+                                                Margin="0,0,0,4"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="Format groupé :" VerticalAlignment="Center" />
+                                        <ComboBox ItemsSource="{x:Static vm:BatchViewModel.GroupedFormats}"
+                                                  SelectedItem="{Binding GroupedFormat}"
+                                                  MinWidth="230"
+                                                  AutomationProperties.Name="Format du fichier groupé">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="models:GroupedFormat">
+                                                    <TextBlock Text="{Binding Converter={x:Static conv:GroupedFormatConverters.ToLabel}}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+                                </WrapPanel>
+
+                                <Grid IsVisible="{Binding CanChooseFolder}"
+                                      ColumnDefinitions="Auto,*,Auto"
+                                      ColumnSpacing="8">
+                                    <TextBlock Grid.Column="0"
+                                               Text="Dossier :"
+                                               VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="1"
+                                             Text="{Binding OutputFolder}"
+                                             PlaceholderText="Chemin du dossier de destination"
+                                             AutomationProperties.Name="Dossier d'enregistrement des réponses" />
+                                    <Button Grid.Column="2"
+                                            Content="Choisir…"
+                                            Command="{Binding BrowseFolderCommand}"
+                                            MinWidth="95"
+                                            HorizontalContentAlignment="Center"
+                                            AutomationProperties.Name="Choisir le dossier d'enregistrement" />
+                                </Grid>
+                            </StackPanel>
+
+                            <TextBlock IsVisible="{Binding CanChooseFolder}"
+                                       Text="Les réponses sont enregistrées en clair sur ton disque. Elles peuvent contenir des données personnelles."
+                                       FontSize="11"
+                                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                       TextWrapping="Wrap" />
+
+                            <TextBlock IsVisible="{Binding HasSaveError}"
+                                       Text="{Binding SaveError}"
+                                       Foreground="{DynamicResource BatchErrorForeground}"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="Wrap" />
+
+                            <TextBlock IsVisible="{Binding HasActiveOutputPath}"
+                                       Text="{Binding ActiveOutputPathText}"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource SystemControlForegroundBaseMediumHighBrush}"
+                                       TextTrimming="CharacterEllipsis" />
+
+                            <StackPanel IsVisible="{Binding HasSaveSummary}"
+                                        Orientation="Horizontal"
+                                        Spacing="10"
+                                        VerticalAlignment="Center">
+                                <TextBlock Text="{Binding SaveSummaryText}"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Button Content="Ouvrir le dossier"
+                                        Command="{Binding OpenOutputFolderCommand}"
+                                        Padding="10,4"
+                                        AutomationProperties.Name="Ouvrir le dossier d'enregistrement" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
                         <ProgressBar Grid.Column="0"
                                      Minimum="0"

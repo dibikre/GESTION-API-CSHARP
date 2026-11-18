@@ -116,3 +116,27 @@ public static class BatchModeConverters
             _ => mode.ToString()
         });
 }
+
+public static class SaveModeConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<SaveMode, string>(mode => mode switch
+        {
+            SaveMode.None => "Ne pas enregistrer",
+            SaveMode.PerRequest => "Un fichier par requête",
+            SaveMode.Grouped => "Un seul fichier groupé",
+            SaveMode.Both => "Les deux",
+            _ => mode.ToString()
+        });
+}
+
+public static class GroupedFormatConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<GroupedFormat, string>(format => format switch
+        {
+            GroupedFormat.Json => "JSON (un tableau)",
+            GroupedFormat.JsonLines => "JSON Lines (une ligne par requête)",
+            _ => format.ToString()
+        });
+}

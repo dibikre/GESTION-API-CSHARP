@@ -38,5 +38,6 @@ public interface IBatchRunner
         IReadOnlyList<VaryingParam> parameters,
         BatchRunOptions options,
         IProgress<BatchProgressReport> progress,
+        Func<BatchResultItem, CancellationToken, Task>? onResultAsync = null,
         CancellationToken ct = default);
 }

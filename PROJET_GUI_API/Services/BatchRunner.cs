@@ -111,6 +111,7 @@ public class BatchRunner : IBatchRunner
         IReadOnlyList<VaryingParam> parameters,
         BatchRunOptions options,
         IProgress<BatchProgressReport> progress,
+        Func<BatchResultItem, CancellationToken, Task>? onResultAsync = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(templateRequest);
@@ -135,8 +136,9 @@ public class BatchRunner : IBatchRunner
         {
             ct.ThrowIfCancellationRequested();
 
-            var (queryItems, paramsText) = combinations[i];
+            var (queryItems, varyingItems, paramsText) = combinations[i];
             var requestCopy = CloneRequestWithQuery(templateRequest, queryItems);
+            var maskedUrl = BuildMaskedFinalUrl(templateRequest.Url, queryItems);
 
             var response = await _httpService.SendAsync(requestCopy, ct).ConfigureAwait(false);
 
@@ -153,9 +155,25 @@ public class BatchRunner : IBatchRunner
                 StatusCategory = DetermineStatusCategory(response),
                 DurationMs = response.DurationMs,
                 SizeText = FormatSize(response.SizeBytes),
+                SizeBytes = response.SizeBytes,
+                ContentType = response.ContentType,
+                RequestUrl = maskedUrl,
+                VaryingParams = varyingItems,
+                QueryParams = queryItems,
+                TimestampUtc = DateTimeOffset.UtcNow,
                 ErrorMessage = response.ErrorMessage,
-                Response = options.KeepBodies ? response : null
+                Response = response
             };
+
+            if (onResultAsync is not null)
+            {
+                await onResultAsync(item, ct).ConfigureAwait(false);
+            }
+
+            if (!options.KeepBodies)
+            {
+                item.Response = null;
+            }
 
             progress.Report(new BatchProgressReport
             {
@@ -219,7 +237,7 @@ public class BatchRunner : IBatchRunner
         }
     }
 
-    private static List<(List<KeyValueItem> QueryItems, string ParamsText)> GenerateQueryCombinations(
+    private static List<(List<KeyValueItem> QueryItems, List<KeyValueItem> VaryingItems, string ParamsText)> GenerateQueryCombinations(
         IReadOnlyList<VaryingParam> parameters,
         BatchMode mode,
         int maxCount)
@@ -240,12 +258,12 @@ public class BatchRunner : IBatchRunner
             }
         }
 
-        var combinations = new List<(List<KeyValueItem>, string)>(maxCount);
+        var combinations = new List<(List<KeyValueItem>, List<KeyValueItem>, string)>(maxCount);
 
         if (varyingIndices.Count == 0)
         {
             var items = enabledParams.Select(p => new KeyValueItem(p.Name.Trim(), p.Value, true)).ToList();
-            combinations.Add((items, FormatParamsText(items)));
+            combinations.Add((items, [], FormatParamsText(items)));
             return combinations;
         }
 
@@ -254,26 +272,30 @@ public class BatchRunner : IBatchRunner
             for (var row = 0; row < maxCount; row++)
             {
                 var items = new List<KeyValueItem>(enabledParams.Count);
+                var varyingItems = new List<KeyValueItem>(varyingIndices.Count);
                 var varyingLabels = new List<string>(varyingIndices.Count);
                 var seqCursor = 0;
 
                 for (var pIdx = 0; pIdx < enabledParams.Count; pIdx++)
                 {
                     var p = enabledParams[pIdx];
+                    var trimmedName = p.Name.Trim();
                     if (p.IsVarying)
                     {
                         var val = sequences[seqCursor][row];
-                        items.Add(new KeyValueItem(p.Name.Trim(), val, true));
-                        varyingLabels.Add($"{p.Name.Trim()}={val}");
+                        var kv = new KeyValueItem(trimmedName, val, true);
+                        items.Add(kv);
+                        varyingItems.Add(kv);
+                        varyingLabels.Add($"{trimmedName}={val}");
                         seqCursor++;
                     }
                     else
                     {
-                        items.Add(new KeyValueItem(p.Name.Trim(), p.Value, true));
+                        items.Add(new KeyValueItem(trimmedName, p.Value, true));
                     }
                 }
 
-                combinations.Add((items, string.Join(", ", varyingLabels)));
+                combinations.Add((items, varyingItems, string.Join(", ", varyingLabels)));
             }
 
             return combinations;
@@ -294,26 +316,30 @@ public class BatchRunner : IBatchRunner
             if (depth == varyingIndices.Count)
             {
                 var items = new List<KeyValueItem>(enabledParams.Count);
+                var varyingItems = new List<KeyValueItem>(varyingIndices.Count);
                 var varyingLabels = new List<string>(varyingIndices.Count);
                 var seqCursor = 0;
 
                 for (var pIdx = 0; pIdx < enabledParams.Count; pIdx++)
                 {
                     var p = enabledParams[pIdx];
+                    var trimmedName = p.Name.Trim();
                     if (p.IsVarying)
                     {
                         var val = selectedValues[seqCursor];
-                        items.Add(new KeyValueItem(p.Name.Trim(), val, true));
-                        varyingLabels.Add($"{p.Name.Trim()}={val}");
+                        var kv = new KeyValueItem(trimmedName, val, true);
+                        items.Add(kv);
+                        varyingItems.Add(kv);
+                        varyingLabels.Add($"{trimmedName}={val}");
                         seqCursor++;
                     }
                     else
                     {
-                        items.Add(new KeyValueItem(p.Name.Trim(), p.Value, true));
+                        items.Add(new KeyValueItem(trimmedName, p.Value, true));
                     }
                 }
 
-                combinations.Add((items, string.Join(", ", varyingLabels)));
+                combinations.Add((items, varyingItems, string.Join(", ", varyingLabels)));
                 return;
             }
 
@@ -436,5 +462,75 @@ public class BatchRunner : IBatchRunner
         }
 
         return string.Create(CultureInfo.InvariantCulture, $"{bytes / gb:0.##} GB");
+    }
+
+    private static string BuildMaskedFinalUrl(string rawUrl, IReadOnlyList<KeyValueItem> queryItems)
+    {
+        var trimmedUrl = rawUrl?.Trim() ?? string.Empty;
+        if (!Uri.TryCreate(trimmedUrl, UriKind.Absolute, out var baseUri))
+        {
+            return trimmedUrl;
+        }
+
+        try
+        {
+            var uriBuilder = new UriBuilder(baseUri);
+            var queryParts = new List<string>();
+
+            var existingQuery = uriBuilder.Query.TrimStart('?');
+            if (!string.IsNullOrEmpty(existingQuery))
+            {
+                foreach (var segment in existingQuery.Split('&', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var eqIndex = segment.IndexOf('=');
+                    if (eqIndex < 0)
+                    {
+                        queryParts.Add(segment);
+                        continue;
+                    }
+
+                    var encodedKey = segment[..eqIndex];
+                    var decodedKey = Uri.UnescapeDataString(encodedKey.Replace('+', ' '));
+                    queryParts.Add(IsSensitiveParamName(decodedKey) ? $"{encodedKey}=***" : segment);
+                }
+            }
+
+            foreach (var param in queryItems)
+            {
+                if (!param.IsEnabled || string.IsNullOrWhiteSpace(param.Key))
+                {
+                    continue;
+                }
+
+                var key = param.Key.Trim();
+                var encodedKey = Uri.EscapeDataString(key);
+                var encodedValue = IsSensitiveParamName(key)
+                    ? "***"
+                    : Uri.EscapeDataString(param.Value ?? string.Empty);
+
+                queryParts.Add($"{encodedKey}={encodedValue}");
+            }
+
+            uriBuilder.Query = queryParts.Count > 0 ? string.Join("&", queryParts) : string.Empty;
+            return uriBuilder.Uri.ToString();
+        }
+        catch (UriFormatException)
+        {
+            return trimmedUrl;
+        }
+    }
+
+    private static bool IsSensitiveParamName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        return name.Contains("token", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("key", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("secret", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("password", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("auth", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,20 +18,30 @@ public partial class BatchViewModel : ViewModelBase
 {
     private readonly ICurlParser _curlParser;
     private readonly IBatchRunner _batchRunner;
+    private readonly IFolderPickerService _folderPickerService;
+    private readonly IBatchResultWriter _batchResultWriter;
     private readonly List<string> _parseWarnings = [];
     private AuthConfig _parsedAuth = new();
     private int _parsedTimeoutSeconds = 30;
 
-    public BatchViewModel(ICurlParser curlParser, IBatchRunner batchRunner)
+    public BatchViewModel(
+        ICurlParser curlParser,
+        IBatchRunner batchRunner,
+        IFolderPickerService folderPickerService,
+        IBatchResultWriter batchResultWriter)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _batchRunner = batchRunner ?? throw new ArgumentNullException(nameof(batchRunner));
+        _folderPickerService = folderPickerService ?? throw new ArgumentNullException(nameof(folderPickerService));
+        _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
 
         VaryingParams.CollectionChanged += OnVaryingParamsCollectionChanged;
         Warnings.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasWarnings));
     }
 
     public static IReadOnlyList<BatchMode> BatchModes { get; } = Enum.GetValues<BatchMode>();
+    public static IReadOnlyList<SaveMode> SaveModes { get; } = Enum.GetValues<SaveMode>();
+    public static IReadOnlyList<GroupedFormat> GroupedFormats { get; } = Enum.GetValues<GroupedFormat>();
 
     public Action<RequestModel>? OpenInSingleRequestCallback { get; set; }
 
@@ -103,7 +114,61 @@ public partial class BatchViewModel : ViewModelBase
     public string TotalRequestsText => $"{TotalRequests} requêtes seront envoyées";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowPerRequestOptions))]
+    [NotifyPropertyChangedFor(nameof(ShowGroupedOptions))]
+    [NotifyPropertyChangedFor(nameof(CanChooseFolder))]
+    public partial SaveMode SaveMode { get; set; } = SaveMode.None;
+
+    [ObservableProperty]
+    public partial string OutputFolder { get; set; } = GetDefaultOutputFolder();
+
+    [ObservableProperty]
+    public partial GroupedFormat GroupedFormat { get; set; } = GroupedFormat.JsonLines;
+
+    [ObservableProperty]
+    public partial bool CreateTimestampSubfolder { get; set; } = true;
+
+    [ObservableProperty]
+    public partial bool IncludeSummaryCsv { get; set; } = true;
+
+    public bool ShowPerRequestOptions => SaveMode is SaveMode.PerRequest or SaveMode.Both;
+
+    public bool ShowGroupedOptions => SaveMode is SaveMode.Grouped or SaveMode.Both;
+
+    public bool CanChooseFolder => SaveMode != SaveMode.None;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(OpenOutputFolderCommand))]
+    public partial string LastOutputPath { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial int SavedCount { get; set; }
+
+    [ObservableProperty]
+    public partial int SaveErrorCount { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSaveSummary))]
+    public partial string SaveSummaryText { get; set; } = string.Empty;
+
+    public bool HasSaveSummary => !string.IsNullOrWhiteSpace(SaveSummaryText);
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSaveError))]
+    public partial string? SaveError { get; set; }
+
+    public bool HasSaveError => !string.IsNullOrWhiteSpace(SaveError);
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasActiveOutputPath))]
+    public partial string ActiveOutputPathText { get; set; } = string.Empty;
+
+    public bool HasActiveOutputPath => !string.IsNullOrWhiteSpace(ActiveOutputPathText);
+
+    [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BrowseFolderCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenOutputFolderCommand))]
     public partial bool IsRunning { get; set; }
 
     [ObservableProperty]
@@ -223,6 +288,12 @@ public partial class BatchViewModel : ViewModelBase
         PlanError = null;
         ProgressCurrent = 0;
         ProgressTotal = 0;
+        LastOutputPath = string.Empty;
+        SavedCount = 0;
+        SaveErrorCount = 0;
+        SaveSummaryText = string.Empty;
+        SaveError = null;
+        ActiveOutputPathText = string.Empty;
         Results.Clear();
         SelectedResult = null;
         SelectedResponse.Clear();
@@ -267,6 +338,35 @@ public partial class BatchViewModel : ViewModelBase
         }
     }
 
+    private bool CanBrowseFolder() => !IsRunning;
+
+    [RelayCommand(CanExecute = nameof(CanBrowseFolder))]
+    private async Task BrowseFolderAsync()
+    {
+        var selected = await _folderPickerService.PickFolderAsync(OutputFolder);
+        if (!string.IsNullOrWhiteSpace(selected))
+        {
+            OutputFolder = selected;
+            SaveError = null;
+        }
+    }
+
+    private bool CanOpenOutputFolder() =>
+        !IsRunning &&
+        !string.IsNullOrWhiteSpace(LastOutputPath) &&
+        Directory.Exists(LastOutputPath);
+
+    [RelayCommand(CanExecute = nameof(CanOpenOutputFolder))]
+    private async Task OpenOutputFolderAsync()
+    {
+        if (string.IsNullOrWhiteSpace(LastOutputPath))
+        {
+            return;
+        }
+
+        await _folderPickerService.OpenFolderAsync(LastOutputPath);
+    }
+
     private bool CanRun() =>
         HasParsed &&
         !IsRunning &&
@@ -287,6 +387,41 @@ public partial class BatchViewModel : ViewModelBase
         Results.Clear();
         SelectedResult = null;
         SelectedResponse.Clear();
+        SaveError = null;
+        SaveSummaryText = string.Empty;
+        SavedCount = 0;
+        SaveErrorCount = 0;
+        LastOutputPath = string.Empty;
+        ActiveOutputPathText = string.Empty;
+
+        var saveStarted = false;
+        if (SaveMode != SaveMode.None)
+        {
+            var saveOptions = new BatchSaveOptions
+            {
+                SaveMode = SaveMode,
+                OutputFolder = OutputFolder,
+                GroupedFormat = GroupedFormat,
+                CreateTimestampSubfolder = CreateTimestampSubfolder,
+                IncludeSummaryCsv = IncludeSummaryCsv
+            };
+
+            try
+            {
+                await _batchResultWriter.BeginAsync(saveOptions, TotalRequests, ct);
+                saveStarted = true;
+                ActiveOutputPathText = $"Enregistrement dans : {_batchResultWriter.OutputPath}";
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                SaveError = $"Impossible de préparer le dossier d'enregistrement : {ex.Message}";
+                return;
+            }
+        }
 
         var templateRequest = BuildTemplateRequest();
         var paramsSnapshot = VaryingParams
@@ -321,9 +456,13 @@ public partial class BatchViewModel : ViewModelBase
             Results.Add(report.Item);
         });
 
+        Func<BatchResultItem, CancellationToken, Task>? onResultAsync = saveStarted
+            ? (item, token) => _batchResultWriter.WriteAsync(item, token)
+            : null;
+
         try
         {
-            await _batchRunner.RunAsync(templateRequest, paramsSnapshot, options, progress, ct);
+            await _batchRunner.RunAsync(templateRequest, paramsSnapshot, options, progress, onResultAsync, ct);
         }
         catch (OperationCanceledException)
         {
@@ -331,6 +470,16 @@ public partial class BatchViewModel : ViewModelBase
         }
         finally
         {
+            if (saveStarted)
+            {
+                await _batchResultWriter.CompleteAsync();
+                LastOutputPath = _batchResultWriter.OutputPath;
+                SavedCount = _batchResultWriter.SavedCount;
+                SaveErrorCount = _batchResultWriter.ErrorCount;
+                SaveSummaryText = $"{SavedCount} enregistrées, {SaveErrorCount} en échec";
+            }
+
+            ActiveOutputPathText = string.Empty;
             IsRunning = false;
         }
     }
@@ -427,5 +576,16 @@ public partial class BatchViewModel : ViewModelBase
         {
             Warnings.Add(w);
         }
+    }
+
+    private static string GetDefaultOutputFolder()
+    {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        if (string.IsNullOrWhiteSpace(documents))
+        {
+            documents = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        return Path.Combine(documents, "ApiTester", "lots");
     }
 }
