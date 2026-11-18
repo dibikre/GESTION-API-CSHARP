@@ -302,8 +302,12 @@
                           Classes="horizontal"
                           ResizeDirection="Rows" />
 
-            <!-- Barre d'exécution compacte + erreur variables + aperçu -->
+            <!-- Ordre d'imbrication des boucles + barre d'exécution compacte + erreur variables + aperçu -->
             <StackPanel Grid.Row="3" Spacing="6">
+                <views:BatchOrderPanel IsVisible="{Binding HasMultipleAxes}"
+                                       MoveUpCommand="{Binding MoveAxisUpCommand}"
+                                       MoveDownCommand="{Binding MoveAxisDownCommand}" />
+
                 <Border Background="{DynamicResource SurfaceBrush}"
                         CornerRadius="{DynamicResource PanelCornerRadius}"
                         Padding="10,8">

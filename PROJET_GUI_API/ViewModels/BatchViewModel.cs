@@ -17,6 +17,9 @@ namespace ApiTester.ViewModels;
 public partial class BatchViewModel : ViewModelBase
 {
     private const int VariableSyncDebounceMs = 250;
+    private const int OrderPreviewLimit = 12;
+
+    private readonly record struct AxisIdentity(BatchAxisKind Kind, string Name, int Occurrence);
 
     private readonly ICurlParser _curlParser;
     private readonly ITemplateEngine _templateEngine;
@@ -24,6 +27,7 @@ public partial class BatchViewModel : ViewModelBase
     private readonly IFolderPickerService _folderPickerService;
     private readonly IBatchResultWriter _batchResultWriter;
     private readonly List<string> _parseWarnings = [];
+    private readonly List<AxisIdentity> _rememberedAxisOrder = [];
     private AuthConfig _parsedAuth = new();
     private int _parsedTimeoutSeconds = 30;
     private bool _isBulkUpdating;
@@ -52,6 +56,8 @@ public partial class BatchViewModel : ViewModelBase
         };
         Results.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasResults));
         PreviewItems.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPreviewItems));
+        Axes.CollectionChanged += (_, _) => NotifyOrderPanelStateChanged();
+        OrderPreview.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasOrderPreview));
     }
 
     public static IReadOnlyList<BatchMode> BatchModes { get; } = Enum.GetValues<BatchMode>();
@@ -101,6 +107,27 @@ public partial class BatchViewModel : ViewModelBase
     public ObservableCollection<VaryingParam> VaryingParams { get; } = [];
 
     public ObservableCollection<BatchVariable> Variables { get; } = [];
+
+    public ObservableCollection<BatchAxis> Axes { get; } = [];
+
+    public bool HasMultipleAxes => Axes.Count >= 2;
+
+    public bool ShowOrderPanel => Axes.Count >= 2 && SelectedMode == BatchMode.Combinations;
+
+    public bool IsOrderIgnored => Axes.Count >= 2 && SelectedMode == BatchMode.Parallel;
+
+    [ObservableProperty]
+    public partial string OrderSummaryText { get; private set; } = string.Empty;
+
+    public ObservableCollection<BatchOrderPreviewRow> OrderPreview { get; } = [];
+
+    public bool HasOrderPreview => OrderPreview.Count > 0;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasOrderPreviewOverflow))]
+    public partial string OrderPreviewOverflowText { get; private set; } = string.Empty;
+
+    public bool HasOrderPreviewOverflow => !string.IsNullOrWhiteSpace(OrderPreviewOverflowText);
 
     [ObservableProperty]
     public partial int UsedVariablesCount { get; private set; }
@@ -292,6 +319,8 @@ public partial class BatchViewModel : ViewModelBase
     {
         IsConfirmed = false;
         RecalculatePlan();
+        RefreshAxesMetadataAndOrderPreview();
+        NotifyOrderPanelStateChanged();
     }
 
     partial void OnSelectedResultChanged(BatchResultItem? value)
@@ -363,6 +392,12 @@ public partial class BatchViewModel : ViewModelBase
                 VaryingParams.Add(new VaryingParam(queryParam.Key, queryParam.Value, queryParam.IsEnabled));
             }
 
+            _rememberedAxisOrder.Clear();
+            Axes.Clear();
+            OrderPreview.Clear();
+            OrderSummaryText = string.Empty;
+            OrderPreviewOverflowText = string.Empty;
+
             HasParsed = !string.IsNullOrWhiteSpace(Url);
             IsConfirmed = false;
             OpenInSingleRequestWarning = null;
@@ -403,6 +438,12 @@ public partial class BatchViewModel : ViewModelBase
                 variable.PropertyChanged -= OnBatchVariablePropertyChanged;
             }
             Variables.Clear();
+            _rememberedAxisOrder.Clear();
+            Axes.Clear();
+            OrderSummaryText = string.Empty;
+            OrderPreview.Clear();
+            OrderPreviewOverflowText = string.Empty;
+
             UsedVariablesCount = 0;
             HasVariables = false;
             VariablesError = null;
@@ -490,6 +531,46 @@ public partial class BatchViewModel : ViewModelBase
         }
     }
 
+    private bool CanMoveAxisUp(BatchAxis? axis) =>
+        axis is not null && !IsOrderIgnored && axis.CanMoveUp;
+
+    [RelayCommand(CanExecute = nameof(CanMoveAxisUp))]
+    private void MoveAxisUp(BatchAxis? axis)
+    {
+        if (axis is null || IsOrderIgnored)
+        {
+            return;
+        }
+
+        var index = Axes.IndexOf(axis);
+        if (index <= 0)
+        {
+            return;
+        }
+
+        SwapAxesAt(index, index - 1);
+    }
+
+    private bool CanMoveAxisDown(BatchAxis? axis) =>
+        axis is not null && !IsOrderIgnored && axis.CanMoveDown;
+
+    [RelayCommand(CanExecute = nameof(CanMoveAxisDown))]
+    private void MoveAxisDown(BatchAxis? axis)
+    {
+        if (axis is null || IsOrderIgnored)
+        {
+            return;
+        }
+
+        var index = Axes.IndexOf(axis);
+        if (index < 0 || index >= Axes.Count - 1)
+        {
+            return;
+        }
+
+        SwapAxesAt(index, index + 1);
+    }
+
     private bool CanBrowseFolder() => !IsRunning;
 
     [RelayCommand(CanExecute = nameof(CanBrowseFolder))]
@@ -539,6 +620,7 @@ public partial class BatchViewModel : ViewModelBase
             BuildTemplateRequest(),
             VaryingParams.ToList(),
             Variables.ToList(),
+            Axes.ToList(),
             SelectedMode,
             maxCount: 3);
 
@@ -609,8 +691,11 @@ public partial class BatchViewModel : ViewModelBase
         }
 
         var templateRequest = BuildTemplateRequest();
-        var paramsSnapshot = VaryingParams
-            .Select(p => new VaryingParam
+        var paramMap = new Dictionary<VaryingParam, VaryingParam>(VaryingParams.Count);
+        var paramsSnapshot = new List<VaryingParam>(VaryingParams.Count);
+        foreach (var p in VaryingParams)
+        {
+            var cloned = new VaryingParam
             {
                 Name = p.Name,
                 Value = p.Value,
@@ -619,11 +704,16 @@ public partial class BatchViewModel : ViewModelBase
                 Start = p.Start,
                 End = p.End,
                 Step = p.Step
-            })
-            .ToList();
+            };
+            paramMap[p] = cloned;
+            paramsSnapshot.Add(cloned);
+        }
 
-        var variablesSnapshot = Variables
-            .Select(v => new BatchVariable
+        var variableMap = new Dictionary<BatchVariable, BatchVariable>(Variables.Count);
+        var variablesSnapshot = new List<BatchVariable>(Variables.Count);
+        foreach (var v in Variables)
+        {
+            var cloned = new BatchVariable
             {
                 Name = v.Name,
                 Mode = v.Mode,
@@ -635,8 +725,22 @@ public partial class BatchViewModel : ViewModelBase
                 UsedIn = v.UsedIn,
                 IsUsed = v.IsUsed,
                 IsConfigured = v.IsConfigured
-            })
-            .ToList();
+            };
+            variableMap[v] = cloned;
+            variablesSnapshot.Add(cloned);
+        }
+
+        var axesSnapshot = new List<BatchAxis>(Axes.Count);
+        foreach (var axis in Axes)
+        {
+            VaryingParam? snapParam = axis.SourceParam is not null && paramMap.TryGetValue(axis.SourceParam, out var sp)
+                ? sp
+                : null;
+            BatchVariable? snapVar = axis.SourceVariable is not null && variableMap.TryGetValue(axis.SourceVariable, out var sv)
+                ? sv
+                : null;
+            axesSnapshot.Add(axis.CloneWithSources(snapParam, snapVar));
+        }
 
         var options = new BatchRunOptions
         {
@@ -663,7 +767,15 @@ public partial class BatchViewModel : ViewModelBase
 
         try
         {
-            await _batchRunner.RunAsync(templateRequest, paramsSnapshot, variablesSnapshot, options, progress, onResultAsync, ct);
+            await _batchRunner.RunAsync(
+                templateRequest,
+                paramsSnapshot,
+                variablesSnapshot,
+                axesSnapshot,
+                options,
+                progress,
+                onResultAsync,
+                ct);
         }
         catch (OperationCanceledException)
         {
@@ -782,7 +894,13 @@ public partial class BatchViewModel : ViewModelBase
         }
 
         IsConfirmed = false;
-        if (e.PropertyName is nameof(VaryingParam.Value) or nameof(VaryingParam.IsEnabled) or nameof(VaryingParam.Name))
+        if (e.PropertyName is nameof(VaryingParam.Value)
+            or nameof(VaryingParam.IsEnabled)
+            or nameof(VaryingParam.IsVarying)
+            or nameof(VaryingParam.Name)
+            or nameof(VaryingParam.Start)
+            or nameof(VaryingParam.End)
+            or nameof(VaryingParam.Step))
         {
             ScheduleVariableSync();
         }
@@ -806,6 +924,7 @@ public partial class BatchViewModel : ViewModelBase
             IsConfirmed = false;
             UpdateVariablesValidation();
             RecalculatePlan();
+            ScheduleVariableSync();
         }
     }
 
@@ -895,7 +1014,413 @@ public partial class BatchViewModel : ViewModelBase
         UsedVariablesCount = Variables.Count(v => v.IsUsed);
         HasVariables = Variables.Count > 0;
         UpdateVariablesValidation();
+        SyncAxes();
         RecalculatePlan();
+    }
+
+    private sealed class AxisCandidate
+    {
+        public required AxisIdentity Identity { get; init; }
+        public required BatchAxisKind Kind { get; init; }
+        public required string Name { get; init; }
+        public VaryingParam? SourceParam { get; init; }
+        public BatchVariable? SourceVariable { get; init; }
+        public required Action<BatchAxis> ApplyConfig { get; init; }
+    }
+
+    private void SyncAxes()
+    {
+        var candidates = BuildAxisCandidates();
+
+        // Associer d'abord les axes existants à leurs candidats par référence source puis par identité
+        var remainingCandidates = new List<AxisCandidate>(candidates);
+        var matchedAxes = new Dictionary<BatchAxis, AxisCandidate>();
+
+        foreach (var existing in Axes)
+        {
+            AxisCandidate? match = null;
+
+            if (existing.Kind == BatchAxisKind.UrlParam && existing.SourceParam is not null)
+            {
+                match = remainingCandidates.FirstOrDefault(c =>
+                    c.Kind == BatchAxisKind.UrlParam && ReferenceEquals(c.SourceParam, existing.SourceParam));
+            }
+            else if (existing.Kind == BatchAxisKind.Variable && existing.SourceVariable is not null)
+            {
+                match = remainingCandidates.FirstOrDefault(c =>
+                    c.Kind == BatchAxisKind.Variable && ReferenceEquals(c.SourceVariable, existing.SourceVariable));
+            }
+
+            match ??= remainingCandidates.FirstOrDefault(c =>
+                c.Kind == existing.Kind && string.Equals(c.Name, existing.Name, StringComparison.Ordinal));
+
+            if (match is not null)
+            {
+                remainingCandidates.Remove(match);
+                matchedAxes[existing] = match;
+            }
+        }
+
+        // Retirer les axes disparus (tout en conservant leur identité dans _rememberedAxisOrder)
+        for (var i = Axes.Count - 1; i >= 0; i--)
+        {
+            var existing = Axes[i];
+            if (!matchedAxes.TryGetValue(existing, out var match))
+            {
+                Axes.RemoveAt(i);
+                continue;
+            }
+
+            var oldIdentity = new AxisIdentity(existing.Kind, existing.Name, GetIdentityOccurrence(existing));
+            if (oldIdentity != match.Identity)
+            {
+                ReplaceIdentityInRememberedOrder(oldIdentity, match.Identity);
+            }
+
+            existing.Name = match.Name;
+            existing.SourceParam = match.SourceParam;
+            existing.SourceVariable = match.SourceVariable;
+            match.ApplyConfig(existing);
+        }
+
+        // Ajouter les axes réapparus à leur position précédente ou les nouveaux axes à la fin
+        foreach (var candidate in remainingCandidates)
+        {
+            var newAxis = new BatchAxis
+            {
+                Kind = candidate.Kind,
+                Name = candidate.Name,
+                DisplayName = candidate.Name,
+                SourceParam = candidate.SourceParam,
+                SourceVariable = candidate.SourceVariable
+            };
+            candidate.ApplyConfig(newAxis);
+
+            var rememberedIndex = _rememberedAxisOrder.IndexOf(candidate.Identity);
+            if (rememberedIndex < 0)
+            {
+                _rememberedAxisOrder.Add(candidate.Identity);
+                Axes.Add(newAxis);
+            }
+            else
+            {
+                var insertIndex = FindInsertIndexFromRememberedOrder(rememberedIndex);
+                Axes.Insert(insertIndex, newAxis);
+            }
+        }
+
+        RefreshAxesMetadataAndOrderPreview();
+        NotifyOrderPanelStateChanged();
+    }
+
+    private List<AxisCandidate> BuildAxisCandidates()
+    {
+        var candidates = new List<AxisCandidate>();
+        var urlOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var param in VaryingParams)
+        {
+            if (!param.IsEnabled || !param.IsVarying || string.IsNullOrWhiteSpace(param.Name))
+            {
+                continue;
+            }
+
+            var name = param.Name.Trim();
+            if (!BatchAxis.TryComputeRangeCount(param.Start, param.End, param.Step, 0, out var count, out _) || count <= 0)
+            {
+                continue;
+            }
+
+            urlOccurrences.TryGetValue(name, out var occ);
+            urlOccurrences[name] = occ + 1;
+
+            var capturedStart = param.Start;
+            var capturedEnd = param.End;
+            var capturedStep = param.Step;
+
+            candidates.Add(new AxisCandidate
+            {
+                Identity = new AxisIdentity(BatchAxisKind.UrlParam, name, occ),
+                Kind = BatchAxisKind.UrlParam,
+                Name = name,
+                SourceParam = param,
+                ApplyConfig = axis => axis.ConfigureRange(capturedStart, capturedEnd, capturedStep, 0)
+            });
+        }
+
+        foreach (var variable in Variables)
+        {
+            if (!variable.IsUsed || !variable.IsConfigured || variable.HasError || variable.ValueCount <= 0 ||
+                string.IsNullOrWhiteSpace(variable.Name))
+            {
+                continue;
+            }
+
+            var name = variable.Name;
+            if (variable.Mode == VariableMode.Range)
+            {
+                var capturedStart = variable.RangeStart;
+                var capturedEnd = variable.RangeEnd;
+                var capturedStep = variable.RangeStep;
+                var capturedZeroPad = variable.ZeroPad;
+
+                candidates.Add(new AxisCandidate
+                {
+                    Identity = new AxisIdentity(BatchAxisKind.Variable, name, 0),
+                    Kind = BatchAxisKind.Variable,
+                    Name = name,
+                    SourceVariable = variable,
+                    ApplyConfig = axis => axis.ConfigureRange(capturedStart, capturedEnd, capturedStep, capturedZeroPad)
+                });
+            }
+            else
+            {
+                var values = BatchAxis.ParseListValues(variable.ListText);
+                if (values.Count == 0)
+                {
+                    continue;
+                }
+
+                candidates.Add(new AxisCandidate
+                {
+                    Identity = new AxisIdentity(BatchAxisKind.Variable, name, 0),
+                    Kind = BatchAxisKind.Variable,
+                    Name = name,
+                    SourceVariable = variable,
+                    ApplyConfig = axis => axis.ConfigureList(values)
+                });
+            }
+        }
+
+        return candidates;
+    }
+
+    private int FindInsertIndexFromRememberedOrder(int rememberedIndex)
+    {
+        for (var i = 0; i < Axes.Count; i++)
+        {
+            var axisIdentity = GetIdentityForAxis(Axes[i]);
+            var axisRememberedIdx = _rememberedAxisOrder.IndexOf(axisIdentity);
+            if (axisRememberedIdx > rememberedIndex)
+            {
+                return i;
+            }
+        }
+
+        return Axes.Count;
+    }
+
+    private AxisIdentity GetIdentityForAxis(BatchAxis axis) =>
+        new(axis.Kind, axis.Name, GetIdentityOccurrence(axis));
+
+    private int GetIdentityOccurrence(BatchAxis targetAxis)
+    {
+        var occurrence = 0;
+        foreach (var axis in Axes)
+        {
+            if (ReferenceEquals(axis, targetAxis))
+            {
+                return occurrence;
+            }
+
+            if (axis.Kind == targetAxis.Kind && string.Equals(axis.Name, targetAxis.Name, StringComparison.Ordinal))
+            {
+                occurrence++;
+            }
+        }
+
+        return 0;
+    }
+
+    private void ReplaceIdentityInRememberedOrder(AxisIdentity oldIdentity, AxisIdentity newIdentity)
+    {
+        var idx = _rememberedAxisOrder.IndexOf(oldIdentity);
+        if (idx >= 0 && !_rememberedAxisOrder.Contains(newIdentity))
+        {
+            _rememberedAxisOrder[idx] = newIdentity;
+        }
+    }
+
+    private void SwapAxesAt(int firstIndex, int secondIndex)
+    {
+        var firstIdentity = GetIdentityForAxis(Axes[firstIndex]);
+        var secondIdentity = GetIdentityForAxis(Axes[secondIndex]);
+
+        Axes.Move(firstIndex, secondIndex);
+
+        var idxA = _rememberedAxisOrder.IndexOf(firstIdentity);
+        var idxB = _rememberedAxisOrder.IndexOf(secondIdentity);
+        if (idxA >= 0 && idxB >= 0)
+        {
+            (_rememberedAxisOrder[idxA], _rememberedAxisOrder[idxB]) =
+                (_rememberedAxisOrder[idxB], _rememberedAxisOrder[idxA]);
+        }
+
+        RefreshAxesMetadataAndOrderPreview();
+        NotifyOrderPanelStateChanged();
+    }
+
+    private void RefreshAxesMetadataAndOrderPreview()
+    {
+        var urlNames = new HashSet<string>(StringComparer.Ordinal);
+        var varNames = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var axis in Axes)
+        {
+            if (axis.Kind == BatchAxisKind.UrlParam)
+            {
+                urlNames.Add(axis.Name);
+            }
+            else
+            {
+                varNames.Add(axis.Name);
+            }
+        }
+
+        var ignored = IsOrderIgnored;
+        var count = Axes.Count;
+
+        for (var i = 0; i < count; i++)
+        {
+            var axis = Axes[i];
+            var isDuplicateName = axis.Kind == BatchAxisKind.UrlParam
+                ? varNames.Contains(axis.Name)
+                : urlNames.Contains(axis.Name);
+
+            axis.DisplayName = isDuplicateName
+                ? (axis.Kind == BatchAxisKind.UrlParam ? $"{axis.Name} (URL)" : $"{axis.Name} (variable)")
+                : axis.Name;
+
+            axis.Rank = i + 1;
+            axis.CanMoveUp = i > 0 && !ignored;
+            axis.CanMoveDown = i < count - 1 && !ignored;
+
+            if (count == 1)
+            {
+                axis.RoleText = "Axe unique";
+                axis.IsOuterRole = false;
+                axis.IsInnerRole = false;
+            }
+            else if (i == 0)
+            {
+                axis.RoleText = "Boucle externe";
+                axis.IsOuterRole = true;
+                axis.IsInnerRole = false;
+            }
+            else if (i == count - 1)
+            {
+                axis.RoleText = "Boucle interne";
+                axis.IsOuterRole = false;
+                axis.IsInnerRole = true;
+            }
+            else
+            {
+                axis.RoleText = string.Empty;
+                axis.IsOuterRole = false;
+                axis.IsInnerRole = false;
+            }
+        }
+
+        OrderSummaryText = BuildOrderSummaryText();
+        RebuildOrderPreview();
+
+        MoveAxisUpCommand.NotifyCanExecuteChanged();
+        MoveAxisDownCommand.NotifyCanExecuteChanged();
+    }
+
+    private string BuildOrderSummaryText()
+    {
+        if (Axes.Count < 2)
+        {
+            return string.Empty;
+        }
+
+        if (Axes.Count == 2)
+        {
+            return $"Pour chaque valeur de {Axes[0].DisplayName}, toutes les valeurs de {Axes[1].DisplayName} sont parcourues avant de passer à la valeur suivante de {Axes[0].DisplayName}.";
+        }
+
+        var clauses = string.Join(", ", Axes
+            .Take(Axes.Count - 1)
+            .Select((a, idx) => idx == 0
+                ? $"Pour chaque valeur de {a.DisplayName}"
+                : $"pour chaque valeur de {a.DisplayName}"));
+
+        var innermost = Axes[^1].DisplayName;
+        var parent = Axes[^2].DisplayName;
+        return $"{clauses}, toutes les valeurs de {innermost} sont parcourues avant de passer à la valeur suivante de {parent}.";
+    }
+
+    private void RebuildOrderPreview()
+    {
+        OrderPreview.Clear();
+        OrderPreviewOverflowText = string.Empty;
+
+        if (!ShowOrderPanel)
+        {
+            return;
+        }
+
+        long totalCombinations = 1;
+        foreach (var axis in Axes)
+        {
+            if (axis.ValueCount <= 0)
+            {
+                return;
+            }
+
+            var product = (Int128)totalCombinations * (Int128)axis.ValueCount;
+            totalCombinations = product >= long.MaxValue ? long.MaxValue : (long)product;
+        }
+
+        var take = (int)Math.Min(OrderPreviewLimit, totalCombinations);
+        IReadOnlyList<string>? previousValues = null;
+
+        for (var n = 0; n < take; n++)
+        {
+            var values = _batchRunner.GetCombination(Axes, n);
+            var cells = new List<BatchOrderPreviewCell>(Axes.Count);
+
+            for (var col = 0; col < Axes.Count; col++)
+            {
+                var full = values[col];
+                var display = full.Length > 40 ? $"{full[..40]}…" : full;
+                var changed = previousValues is not null &&
+                              !string.Equals(full, previousValues[col], StringComparison.Ordinal);
+
+                cells.Add(new BatchOrderPreviewCell
+                {
+                    DisplayValue = display,
+                    FullValue = full,
+                    HasChanged = changed
+                });
+            }
+
+            OrderPreview.Add(new BatchOrderPreviewRow
+            {
+                Index = n + 1,
+                Cells = cells
+            });
+
+            previousValues = values;
+        }
+
+        if (totalCombinations > OrderPreviewLimit)
+        {
+            var remaining = totalCombinations - OrderPreviewLimit;
+            OrderPreviewOverflowText = totalCombinations == long.MaxValue
+                ? "… et de nombreuses autres"
+                : remaining == 1
+                    ? "… et 1 autre"
+                    : $"… et {remaining:N0} autres";
+        }
+    }
+
+    private void NotifyOrderPanelStateChanged()
+    {
+        OnPropertyChanged(nameof(HasMultipleAxes));
+        OnPropertyChanged(nameof(ShowOrderPanel));
+        OnPropertyChanged(nameof(IsOrderIgnored));
     }
 
     private void UpdateVariablesValidation()

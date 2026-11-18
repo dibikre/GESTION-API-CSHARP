@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ApiTester.Models;
@@ -124,16 +123,64 @@ public class BatchRunner : IBatchRunner
         return plan;
     }
 
+    public IReadOnlyList<string> GetCombination(IReadOnlyList<BatchAxis> axes, long n)
+    {
+        ArgumentNullException.ThrowIfNull(axes);
+        if (n < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(n), n, "L'index de combinaison doit être positif ou nul.");
+        }
+
+        if (axes.Count == 0)
+        {
+            if (n == 0)
+            {
+                return [];
+            }
+
+            throw new ArgumentOutOfRangeException(nameof(n), n, "Une seule requête est disponible sans axe de variation.");
+        }
+
+        var totalSaturated = ComputeSaturatingProduct(axes, long.MaxValue);
+        if (n >= totalSaturated)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(n),
+                n,
+                $"L'index {n} dépasse le nombre total de combinaisons ({totalSaturated}).");
+        }
+
+        var values = new string[axes.Count];
+        var remainder = n;
+
+        for (var i = axes.Count - 1; i >= 0; i--)
+        {
+            var count = axes[i].ValueCount;
+            if (count <= 0)
+            {
+                throw new InvalidOperationException($"L'axe « {axes[i].Name} » ne contient aucune valeur.");
+            }
+
+            var axisIndex = remainder % count;
+            remainder /= count;
+            values[i] = axes[i].GetValue(axisIndex);
+        }
+
+        return values;
+    }
+
     public IReadOnlyList<BatchPreviewItem> GeneratePreview(
         RequestModel templateRequest,
         IReadOnlyList<VaryingParam> parameters,
         IReadOnlyList<BatchVariable> variables,
+        IReadOnlyList<BatchAxis> axes,
         BatchMode mode,
         int maxCount = 3)
     {
         ArgumentNullException.ThrowIfNull(templateRequest);
         ArgumentNullException.ThrowIfNull(parameters);
         ArgumentNullException.ThrowIfNull(variables);
+        ArgumentNullException.ThrowIfNull(axes);
 
         var plan = BuildPlan(parameters, variables, mode);
         if (!string.IsNullOrEmpty(plan.ValidationError))
@@ -141,13 +188,17 @@ public class BatchRunner : IBatchRunner
             return [];
         }
 
+        var enabledParams = parameters
+            .Where(p => p.IsEnabled && !string.IsNullOrWhiteSpace(p.Name))
+            .ToList();
+
         var take = Math.Clamp(Math.Min(maxCount, plan.TotalRequests), 0, 10);
         var previewList = new List<BatchPreviewItem>(take);
-        var index = 0;
 
-        foreach (var step in EnumerateExecutionSteps(parameters, variables, mode, take))
+        for (var i = 0; i < take; i++)
         {
-            index++;
+            var index = i + 1;
+            var step = BuildPreviewStep(enabledParams, axes, mode, i);
             var requestWithQuery = CloneRequestWithQuery(templateRequest, step.QueryItems);
             var applyResult = _templateEngine.ApplyDetailed(requestWithQuery, step.VariableDictionary, index);
 
@@ -195,6 +246,7 @@ public class BatchRunner : IBatchRunner
         RequestModel templateRequest,
         IReadOnlyList<VaryingParam> parameters,
         IReadOnlyList<BatchVariable> variables,
+        IReadOnlyList<BatchAxis> axes,
         BatchRunOptions options,
         IProgress<BatchProgressReport> progress,
         Func<BatchResultItem, CancellationToken, Task>? onResultAsync = null,
@@ -203,6 +255,7 @@ public class BatchRunner : IBatchRunner
         ArgumentNullException.ThrowIfNull(templateRequest);
         ArgumentNullException.ThrowIfNull(parameters);
         ArgumentNullException.ThrowIfNull(variables);
+        ArgumentNullException.ThrowIfNull(axes);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(progress);
 
@@ -214,12 +267,13 @@ public class BatchRunner : IBatchRunner
 
         var total = plan.TotalRequests;
         var delayMs = Math.Max(0, options.DelayMs);
+        var axisNames = axes.Select(a => a.DisplayName).ToArray();
 
-        Log.Information("Démarrage du lot : {TotalRequests} requêtes (mode: {Mode}, pause: {DelayMs}ms).",
-            total, options.Mode, delayMs);
+        Log.Information("Démarrage du lot : {TotalRequests} requêtes (mode: {Mode}, pause: {DelayMs}ms, axes: {@Axes}).",
+            total, options.Mode, delayMs, axisNames);
 
         var index = 0;
-        foreach (var step in EnumerateExecutionSteps(parameters, variables, options.Mode, total))
+        foreach (var step in EnumerateExecutionSteps(parameters, axes, options.Mode, total))
         {
             ct.ThrowIfCancellationRequested();
             index++;
@@ -246,6 +300,7 @@ public class BatchRunner : IBatchRunner
                     RequestUrl = maskedUrlOnError,
                     VaryingParams = step.VaryingItems,
                     VariableValues = step.VariableItems,
+                    OrderedAxisValues = step.OrderedAxisItems,
                     QueryParams = step.QueryItems,
                     TimestampUtc = DateTimeOffset.UtcNow,
                     ErrorMessage = applyResult.ErrorMessage ?? "Erreur de substitution des variables.",
@@ -277,6 +332,7 @@ public class BatchRunner : IBatchRunner
                     RequestUrl = maskedUrl,
                     VaryingParams = step.VaryingItems,
                     VariableValues = step.VariableItems,
+                    OrderedAxisValues = step.OrderedAxisItems,
                     QueryParams = finalRequest.QueryParams,
                     TimestampUtc = DateTimeOffset.UtcNow,
                     ErrorMessage = response.ErrorMessage,
@@ -323,21 +379,55 @@ public class BatchRunner : IBatchRunner
         public required List<KeyValueItem> QueryItems { get; init; }
         public required List<KeyValueItem> VaryingItems { get; init; }
         public required List<KeyValueItem> VariableItems { get; init; }
+        public required List<KeyValueItem> OrderedAxisItems { get; init; }
         public required Dictionary<string, string> VariableDictionary { get; init; }
         public required string ParamsText { get; init; }
     }
 
-    private sealed class VariationAxis
+    private BatchExecutionStep BuildPreviewStep(
+        IReadOnlyList<VaryingParam> enabledParams,
+        IReadOnlyList<BatchAxis> axes,
+        BatchMode mode,
+        long stepIndex)
     {
-        public required string Name { get; init; }
-        public required bool IsVariable { get; init; }
-        public required int ParamIndex { get; init; }
-        public required Func<IEnumerable<string>> SequenceFactory { get; init; }
+        if (axes.Count == 0)
+        {
+            var staticQuery = enabledParams
+                .Select(p => new KeyValueItem(p.Name.Trim(), p.Value, true))
+                .ToList();
+
+            return new BatchExecutionStep
+            {
+                QueryItems = staticQuery,
+                VaryingItems = [],
+                VariableItems = [],
+                OrderedAxisItems = [],
+                VariableDictionary = new Dictionary<string, string>(StringComparer.Ordinal),
+                ParamsText = FormatStaticParamsText(staticQuery)
+            };
+        }
+
+        IReadOnlyList<string> selected;
+        if (mode == BatchMode.Parallel)
+        {
+            var arr = new string[axes.Count];
+            for (var i = 0; i < axes.Count; i++)
+            {
+                arr[i] = axes[i].GetValue(stepIndex);
+            }
+            selected = arr;
+        }
+        else
+        {
+            selected = GetCombination(axes, stepIndex);
+        }
+
+        return BuildStepFromAxisValues(enabledParams, axes, selected);
     }
 
     private static IEnumerable<BatchExecutionStep> EnumerateExecutionSteps(
         IReadOnlyList<VaryingParam> parameters,
-        IReadOnlyList<BatchVariable> variables,
+        IReadOnlyList<BatchAxis> axes,
         BatchMode mode,
         int maxCount)
     {
@@ -350,39 +440,6 @@ public class BatchRunner : IBatchRunner
             .Where(p => p.IsEnabled && !string.IsNullOrWhiteSpace(p.Name))
             .ToList();
 
-        var activeVariables = variables
-            .Where(v => v.IsUsed && v.IsConfigured && !v.HasError && !string.IsNullOrWhiteSpace(v.Name))
-            .ToList();
-
-        var axes = new List<VariationAxis>();
-
-        for (var i = 0; i < enabledParams.Count; i++)
-        {
-            if (enabledParams[i].IsVarying)
-            {
-                var capturedParam = enabledParams[i];
-                axes.Add(new VariationAxis
-                {
-                    Name = capturedParam.Name.Trim(),
-                    IsVariable = false,
-                    ParamIndex = i,
-                    SequenceFactory = () => EnumerateVaryingParamValues(capturedParam)
-                });
-            }
-        }
-
-        foreach (var variable in activeVariables)
-        {
-            var capturedVar = variable;
-            axes.Add(new VariationAxis
-            {
-                Name = capturedVar.Name,
-                IsVariable = true,
-                ParamIndex = -1,
-                SequenceFactory = () => capturedVar.EnumerateValues()
-            });
-        }
-
         if (axes.Count == 0)
         {
             var staticQuery = enabledParams
@@ -394,132 +451,92 @@ public class BatchRunner : IBatchRunner
                 QueryItems = staticQuery,
                 VaryingItems = [],
                 VariableItems = [],
+                OrderedAxisItems = [],
                 VariableDictionary = new Dictionary<string, string>(StringComparer.Ordinal),
                 ParamsText = FormatStaticParamsText(staticQuery)
             };
             yield break;
         }
 
-        var produced = 0;
-
         if (mode == BatchMode.Parallel)
         {
-            var enumerators = new IEnumerator<string>[axes.Count];
-            try
+            for (long stepIndex = 0; stepIndex < maxCount; stepIndex++)
             {
+                var selected = new string[axes.Count];
                 for (var i = 0; i < axes.Count; i++)
                 {
-                    enumerators[i] = axes[i].SequenceFactory().GetEnumerator();
-                }
-
-                while (produced < maxCount)
-                {
-                    var allMoved = true;
-                    for (var i = 0; i < enumerators.Length; i++)
-                    {
-                        if (!enumerators[i].MoveNext())
-                        {
-                            allMoved = false;
-                            break;
-                        }
-                    }
-
-                    if (!allMoved)
+                    if (stepIndex >= axes[i].ValueCount)
                     {
                         yield break;
                     }
 
-                    var selected = new string[axes.Count];
-                    for (var i = 0; i < axes.Count; i++)
-                    {
-                        selected[i] = enumerators[i].Current;
-                    }
+                    selected[i] = axes[i].GetValue(stepIndex);
+                }
 
-                    produced++;
-                    yield return BuildStepFromAxisValues(enabledParams, axes, selected);
-                }
-            }
-            finally
-            {
-                for (var i = 0; i < enumerators.Length; i++)
-                {
-                    enumerators[i]?.Dispose();
-                }
+                yield return BuildStepFromAxisValues(enabledParams, axes, selected);
             }
 
             yield break;
         }
 
-        // Mode Combinaisons : produit cartésien paresseux par odomètre
-        var cartEnumerators = new IEnumerator<string>[axes.Count];
-        try
+        // Mode Combinaisons : compteur paresseux (axe 0 externe, dernier axe interne)
+        for (var i = 0; i < axes.Count; i++)
         {
-            for (var i = 0; i < axes.Count; i++)
+            if (axes[i].ValueCount <= 0)
             {
-                cartEnumerators[i] = axes[i].SequenceFactory().GetEnumerator();
-                if (!cartEnumerators[i].MoveNext())
-                {
-                    yield break;
-                }
-            }
-
-            while (produced < maxCount)
-            {
-                var selected = new string[axes.Count];
-                for (var i = 0; i < axes.Count; i++)
-                {
-                    selected[i] = cartEnumerators[i].Current;
-                }
-
-                produced++;
-                yield return BuildStepFromAxisValues(enabledParams, axes, selected);
-
-                if (produced >= maxCount)
-                {
-                    yield break;
-                }
-
-                var pos = axes.Count - 1;
-                while (pos >= 0)
-                {
-                    if (cartEnumerators[pos].MoveNext())
-                    {
-                        break;
-                    }
-
-                    cartEnumerators[pos].Dispose();
-                    cartEnumerators[pos] = axes[pos].SequenceFactory().GetEnumerator();
-                    if (!cartEnumerators[pos].MoveNext())
-                    {
-                        yield break;
-                    }
-
-                    pos--;
-                }
-
-                if (pos < 0)
-                {
-                    yield break;
-                }
+                yield break;
             }
         }
-        finally
+
+        var indices = new long[axes.Count];
+        var produced = 0;
+
+        while (produced < maxCount)
         {
-            for (var i = 0; i < cartEnumerators.Length; i++)
+            var selected = new string[axes.Count];
+            for (var i = 0; i < axes.Count; i++)
             {
-                cartEnumerators[i]?.Dispose();
+                selected[i] = axes[i].GetValue(indices[i]);
+            }
+
+            produced++;
+            yield return BuildStepFromAxisValues(enabledParams, axes, selected);
+
+            if (produced >= maxCount)
+            {
+                yield break;
+            }
+
+            var pos = axes.Count - 1;
+            while (pos >= 0)
+            {
+                indices[pos]++;
+                if (indices[pos] < axes[pos].ValueCount)
+                {
+                    break;
+                }
+
+                indices[pos] = 0;
+                pos--;
+            }
+
+            if (pos < 0)
+            {
+                yield break;
             }
         }
     }
 
     private static BatchExecutionStep BuildStepFromAxisValues(
         IReadOnlyList<VaryingParam> enabledParams,
-        IReadOnlyList<VariationAxis> axes,
+        IReadOnlyList<BatchAxis> axes,
         IReadOnlyList<string> selectedValues)
     {
         var varyingValueByParamIndex = new Dictionary<int, string>();
+        var matchedParamIndices = new HashSet<int>();
         var varyingItems = new List<KeyValueItem>();
         var variableItems = new List<KeyValueItem>();
+        var orderedAxisItems = new List<KeyValueItem>(axes.Count);
         var variableDictionary = new Dictionary<string, string>(StringComparer.Ordinal);
         var displayLabels = new List<string>(axes.Count);
 
@@ -528,18 +545,25 @@ public class BatchRunner : IBatchRunner
             var axis = axes[i];
             var value = selectedValues[i];
 
-            if (axis.IsVariable)
+            orderedAxisItems.Add(new KeyValueItem(axis.DisplayName, value, true));
+            displayLabels.Add($"{axis.DisplayName}={TruncateForDisplay(value)}");
+
+            if (axis.Kind == BatchAxisKind.Variable)
             {
                 variableDictionary[axis.Name] = value;
                 variableItems.Add(new KeyValueItem(axis.Name, value, true));
             }
             else
             {
-                varyingValueByParamIndex[axis.ParamIndex] = value;
+                var paramIndex = ResolveParamIndex(enabledParams, axis, matchedParamIndices);
+                if (paramIndex >= 0)
+                {
+                    matchedParamIndices.Add(paramIndex);
+                    varyingValueByParamIndex[paramIndex] = value;
+                }
+
                 varyingItems.Add(new KeyValueItem(axis.Name, value, true));
             }
-
-            displayLabels.Add($"{axis.Name}={TruncateForDisplay(value)}");
         }
 
         var queryItems = new List<KeyValueItem>(enabledParams.Count);
@@ -559,48 +583,59 @@ public class BatchRunner : IBatchRunner
             QueryItems = queryItems,
             VaryingItems = varyingItems,
             VariableItems = variableItems,
+            OrderedAxisItems = orderedAxisItems,
             VariableDictionary = variableDictionary,
             ParamsText = string.Join(", ", displayLabels)
         };
     }
 
-    private static IEnumerable<string> EnumerateVaryingParamValues(VaryingParam param)
+    private static int ResolveParamIndex(
+        IReadOnlyList<VaryingParam> enabledParams,
+        BatchAxis axis,
+        HashSet<int> alreadyMatched)
     {
-        var current = param.Start;
-        var end = param.End;
-        var step = param.Step;
-
-        if (step == 0)
+        if (axis.SourceParam is not null)
         {
-            yield break;
+            for (var i = 0; i < enabledParams.Count; i++)
+            {
+                if (!alreadyMatched.Contains(i) && ReferenceEquals(enabledParams[i], axis.SourceParam))
+                {
+                    return i;
+                }
+            }
         }
 
-        while (true)
+        for (var i = 0; i < enabledParams.Count; i++)
         {
-            if (step > 0 && current > end)
+            if (!alreadyMatched.Contains(i) &&
+                enabledParams[i].IsVarying &&
+                enabledParams[i].Name.Trim().Equals(axis.Name, StringComparison.Ordinal))
             {
-                yield break;
+                return i;
             }
-
-            if (step < 0 && current < end)
-            {
-                yield break;
-            }
-
-            yield return current.ToString(CultureInfo.InvariantCulture);
-
-            if (step > 0 && current > long.MaxValue - step)
-            {
-                yield break;
-            }
-
-            if (step < 0 && current < long.MinValue - step)
-            {
-                yield break;
-            }
-
-            current += step;
         }
+
+        return -1;
+    }
+
+    private static long ComputeSaturatingProduct(IReadOnlyList<BatchAxis> axes, long cap)
+    {
+        long total = 1;
+        foreach (var axis in axes)
+        {
+            if (axis.ValueCount <= 0)
+            {
+                return 0;
+            }
+
+            total = SaturatingMultiply(total, axis.ValueCount, cap);
+            if (total >= cap)
+            {
+                return cap;
+            }
+        }
+
+        return total;
     }
 
     private static long SaturatingMultiply(long left, long right, long cap)
@@ -616,30 +651,31 @@ public class BatchRunner : IBatchRunner
 
     private static bool TryGetSequenceCount(VaryingParam param, out long count, out string? error)
     {
-        count = 0;
+        if (!BatchAxis.TryComputeRangeCount(param.Start, param.End, param.Step, 0, out var rawCount, out var rangeError))
+        {
+            count = 0;
+            if (param.Step == 0)
+            {
+                error = $"Le pas du paramètre « {param.Name} » ne peut pas être 0.";
+            }
+            else if (param.Start <= param.End && param.Step < 0)
+            {
+                error = $"Le pas du paramètre « {param.Name} » doit être positif lorsque Début <= Fin.";
+            }
+            else if (param.Start > param.End && param.Step > 0)
+            {
+                error = $"Le pas du paramètre « {param.Name} » doit être négatif lorsque Début > Fin.";
+            }
+            else
+            {
+                error = rangeError;
+            }
+
+            return false;
+        }
+
+        count = rawCount > HardMaxRequests + 1 ? HardMaxRequests + 1 : rawCount;
         error = null;
-
-        if (param.Step == 0)
-        {
-            error = $"Le pas du paramètre « {param.Name} » ne peut pas être 0.";
-            return false;
-        }
-
-        if (param.Start <= param.End && param.Step < 0)
-        {
-            error = $"Le pas du paramètre « {param.Name} » doit être positif lorsque Début <= Fin.";
-            return false;
-        }
-
-        if (param.Start > param.End && param.Step > 0)
-        {
-            error = $"Le pas du paramètre « {param.Name} » doit être négatif lorsque Début > Fin.";
-            return false;
-        }
-
-        var diff = (Int128)param.End - (Int128)param.Start;
-        var count128 = (diff / (Int128)param.Step) + 1;
-        count = count128 > HardMaxRequests + 1 ? HardMaxRequests + 1 : (long)count128;
         return true;
     }
 

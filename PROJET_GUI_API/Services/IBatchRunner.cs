@@ -36,10 +36,13 @@ public interface IBatchRunner
         IReadOnlyList<BatchVariable> variables,
         BatchMode mode);
 
+    IReadOnlyList<string> GetCombination(IReadOnlyList<BatchAxis> axes, long n);
+
     IReadOnlyList<BatchPreviewItem> GeneratePreview(
         RequestModel templateRequest,
         IReadOnlyList<VaryingParam> parameters,
         IReadOnlyList<BatchVariable> variables,
+        IReadOnlyList<BatchAxis> axes,
         BatchMode mode,
         int maxCount = 3);
 
@@ -47,6 +50,7 @@ public interface IBatchRunner
         RequestModel templateRequest,
         IReadOnlyList<VaryingParam> parameters,
         IReadOnlyList<BatchVariable> variables,
+        IReadOnlyList<BatchAxis> axes,
         BatchRunOptions options,
         IProgress<BatchProgressReport> progress,
         Func<BatchResultItem, CancellationToken, Task>? onResultAsync = null,

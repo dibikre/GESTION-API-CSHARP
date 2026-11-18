@@ -550,6 +550,11 @@ public sealed class BatchResultWriter : IBatchResultWriter
 
     private static List<KeyValueItem> GetCombinedAxisValues(BatchResultItem item)
     {
+        if (item.OrderedAxisValues.Count > 0)
+        {
+            return [.. item.OrderedAxisValues];
+        }
+
         var combined = new List<KeyValueItem>(item.VaryingParams.Count + item.VariableValues.Count);
         combined.AddRange(item.VaryingParams);
         combined.AddRange(item.VariableValues);
