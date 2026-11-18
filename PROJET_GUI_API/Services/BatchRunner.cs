@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ApiTester.Models;
@@ -14,17 +15,24 @@ public class BatchRunner : IBatchRunner
 {
     public const int ConfirmationThreshold = 500;
     public const int HardMaxRequests = 10_000;
+    private const int ParamsPreviewMaxLength = 40;
 
     private readonly IHttpService _httpService;
+    private readonly ITemplateEngine _templateEngine;
 
-    public BatchRunner(IHttpService httpService)
+    public BatchRunner(IHttpService httpService, ITemplateEngine templateEngine)
     {
         _httpService = httpService ?? throw new ArgumentNullException(nameof(httpService));
+        _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
     }
 
-    public BatchPlanResult BuildPlan(IReadOnlyList<VaryingParam> parameters, BatchMode mode)
+    public BatchPlanResult BuildPlan(
+        IReadOnlyList<VaryingParam> parameters,
+        IReadOnlyList<BatchVariable> variables,
+        BatchMode mode)
     {
         ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentNullException.ThrowIfNull(variables);
 
         var plan = new BatchPlanResult();
         var enabledParams = parameters
@@ -32,14 +40,12 @@ public class BatchRunner : IBatchRunner
             .ToList();
 
         var varyingParams = enabledParams.Where(p => p.IsVarying).ToList();
+        var activeVariables = variables
+            .Where(v => v.IsUsed && !string.IsNullOrWhiteSpace(v.Name))
+            .ToList();
 
-        if (varyingParams.Count == 0)
-        {
-            plan.TotalRequests = 1;
-            return plan;
-        }
+        var axisCounts = new List<long>(varyingParams.Count + activeVariables.Count);
 
-        var counts = new List<long>(varyingParams.Count);
         foreach (var param in varyingParams)
         {
             if (!TryGetSequenceCount(param, out var count, out var error))
@@ -49,13 +55,31 @@ public class BatchRunner : IBatchRunner
                 return plan;
             }
 
-            counts.Add(count);
+            axisCounts.Add(count);
+        }
+
+        foreach (var variable in activeVariables)
+        {
+            if (!variable.IsConfigured || variable.HasError || variable.ValueCount <= 0)
+            {
+                plan.ValidationError = variable.ErrorText ?? $"La variable « {variable.Name} » n'est pas valide.";
+                plan.TotalRequests = 0;
+                return plan;
+            }
+
+            axisCounts.Add(variable.ValueCount);
+        }
+
+        if (axisCounts.Count == 0)
+        {
+            plan.TotalRequests = 1;
+            return plan;
         }
 
         if (mode == BatchMode.Parallel)
         {
-            var minCount = counts.Min();
-            if (counts.Distinct().Count() > 1)
+            var minCount = axisCounts.Min();
+            if (axisCounts.Distinct().Count() > 1)
             {
                 plan.Warnings.Add(
                     $"Mode « En parallèle » : les séquences ont des longueurs différentes ; exécution limitée à la plus courte ({minCount} requêtes).");
@@ -75,17 +99,11 @@ public class BatchRunner : IBatchRunner
             return plan;
         }
 
-        // Mode Combinaisons (produit cartésien)
+        // Mode Combinaisons (produit cartésien avec arithmétique saturante)
         long total = 1;
-        foreach (var count in counts)
+        foreach (var count in axisCounts)
         {
-            if (total > HardMaxRequests / Math.Max(1, count) + 1)
-            {
-                total = HardMaxRequests + 1;
-                break;
-            }
-
-            total *= count;
+            total = SaturatingMultiply(total, count, HardMaxRequests + 1);
             if (total > HardMaxRequests)
             {
                 break;
@@ -106,9 +124,77 @@ public class BatchRunner : IBatchRunner
         return plan;
     }
 
+    public IReadOnlyList<BatchPreviewItem> GeneratePreview(
+        RequestModel templateRequest,
+        IReadOnlyList<VaryingParam> parameters,
+        IReadOnlyList<BatchVariable> variables,
+        BatchMode mode,
+        int maxCount = 3)
+    {
+        ArgumentNullException.ThrowIfNull(templateRequest);
+        ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentNullException.ThrowIfNull(variables);
+
+        var plan = BuildPlan(parameters, variables, mode);
+        if (!string.IsNullOrEmpty(plan.ValidationError))
+        {
+            return [];
+        }
+
+        var take = Math.Clamp(Math.Min(maxCount, plan.TotalRequests), 0, 10);
+        var previewList = new List<BatchPreviewItem>(take);
+        var index = 0;
+
+        foreach (var step in EnumerateExecutionSteps(parameters, variables, mode, take))
+        {
+            index++;
+            var requestWithQuery = CloneRequestWithQuery(templateRequest, step.QueryItems);
+            var applyResult = _templateEngine.ApplyDetailed(requestWithQuery, step.VariableDictionary, index);
+
+            if (!applyResult.IsSuccess || applyResult.Request is null)
+            {
+                previewList.Add(new BatchPreviewItem
+                {
+                    Index = index,
+                    VariablesSummary = step.ParamsText,
+                    Method = templateRequest.Method,
+                    FinalUrl = requestWithQuery.Url,
+                    HeadersText = FormatHeadersForPreview(requestWithQuery),
+                    HasHeaders = HasAnyPreviewHeader(requestWithQuery),
+                    BodyText = FormatBodyForPreview(requestWithQuery),
+                    HasBody = HasAnyPreviewBody(requestWithQuery),
+                    IsInvalidJson = false,
+                    ErrorMessage = applyResult.ErrorMessage
+                });
+                continue;
+            }
+
+            var finalReq = applyResult.Request;
+            var finalUrl = BuildFinalUrl(finalReq.Url, finalReq.QueryParams, finalReq.Auth, maskAllSensitive: false);
+            var headersText = FormatHeadersForPreview(finalReq);
+            var bodyText = FormatBodyForPreview(finalReq);
+
+            previewList.Add(new BatchPreviewItem
+            {
+                Index = index,
+                VariablesSummary = step.ParamsText,
+                Method = finalReq.Method,
+                FinalUrl = finalUrl,
+                HeadersText = headersText,
+                HasHeaders = !string.IsNullOrEmpty(headersText),
+                BodyText = bodyText,
+                HasBody = !string.IsNullOrEmpty(bodyText),
+                IsInvalidJson = finalReq.BodyType == BodyType.Json && !applyResult.IsValidJson
+            });
+        }
+
+        return previewList;
+    }
+
     public async Task RunAsync(
         RequestModel templateRequest,
         IReadOnlyList<VaryingParam> parameters,
+        IReadOnlyList<BatchVariable> variables,
         BatchRunOptions options,
         IProgress<BatchProgressReport> progress,
         Func<BatchResultItem, CancellationToken, Task>? onResultAsync = null,
@@ -116,54 +202,88 @@ public class BatchRunner : IBatchRunner
     {
         ArgumentNullException.ThrowIfNull(templateRequest);
         ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentNullException.ThrowIfNull(variables);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(progress);
 
-        var plan = BuildPlan(parameters, options.Mode);
+        var plan = BuildPlan(parameters, variables, options.Mode);
         if (!string.IsNullOrEmpty(plan.ValidationError))
         {
             throw new InvalidOperationException(plan.ValidationError);
         }
 
-        var combinations = GenerateQueryCombinations(parameters, options.Mode, plan.TotalRequests);
-        var total = combinations.Count;
+        var total = plan.TotalRequests;
         var delayMs = Math.Max(0, options.DelayMs);
 
         Log.Information("Démarrage du lot : {TotalRequests} requêtes (mode: {Mode}, pause: {DelayMs}ms).",
             total, options.Mode, delayMs);
 
-        for (var i = 0; i < total; i++)
+        var index = 0;
+        foreach (var step in EnumerateExecutionSteps(parameters, variables, options.Mode, total))
         {
             ct.ThrowIfCancellationRequested();
+            index++;
 
-            var (queryItems, varyingItems, paramsText) = combinations[i];
-            var requestCopy = CloneRequestWithQuery(templateRequest, queryItems);
-            var maskedUrl = BuildMaskedFinalUrl(templateRequest.Url, queryItems);
+            var requestWithQuery = CloneRequestWithQuery(templateRequest, step.QueryItems);
+            var applyResult = _templateEngine.ApplyDetailed(requestWithQuery, step.VariableDictionary, index);
 
-            var response = await _httpService.SendAsync(requestCopy, ct).ConfigureAwait(false);
+            BatchResultItem item;
+            bool isFailure;
 
-            if (ct.IsCancellationRequested)
+            if (!applyResult.IsSuccess || applyResult.Request is null)
             {
-                ct.ThrowIfCancellationRequested();
+                var maskedUrlOnError = BuildMaskedUrlWithTemplate(templateRequest, step.QueryItems, step.VariableDictionary, index);
+                item = new BatchResultItem
+                {
+                    Index = index,
+                    ParamsText = step.ParamsText,
+                    StatusCode = 0,
+                    StatusCategory = StatusCategory.NetworkError,
+                    DurationMs = 0,
+                    SizeText = "0 B",
+                    SizeBytes = 0,
+                    ContentType = string.Empty,
+                    RequestUrl = maskedUrlOnError,
+                    VaryingParams = step.VaryingItems,
+                    VariableValues = step.VariableItems,
+                    QueryParams = step.QueryItems,
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    ErrorMessage = applyResult.ErrorMessage ?? "Erreur de substitution des variables.",
+                    Response = null
+                };
+                isFailure = true;
             }
-
-            var item = new BatchResultItem
+            else
             {
-                Index = i + 1,
-                ParamsText = paramsText,
-                StatusCode = response.StatusCode,
-                StatusCategory = DetermineStatusCategory(response),
-                DurationMs = response.DurationMs,
-                SizeText = FormatSize(response.SizeBytes),
-                SizeBytes = response.SizeBytes,
-                ContentType = response.ContentType,
-                RequestUrl = maskedUrl,
-                VaryingParams = varyingItems,
-                QueryParams = queryItems,
-                TimestampUtc = DateTimeOffset.UtcNow,
-                ErrorMessage = response.ErrorMessage,
-                Response = response
-            };
+                var finalRequest = applyResult.Request;
+                var maskedUrl = BuildMaskedUrlWithTemplate(templateRequest, finalRequest.QueryParams, step.VariableDictionary, index);
+
+                var response = await _httpService.SendAsync(finalRequest, ct).ConfigureAwait(false);
+                if (ct.IsCancellationRequested)
+                {
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                item = new BatchResultItem
+                {
+                    Index = index,
+                    ParamsText = step.ParamsText,
+                    StatusCode = response.StatusCode,
+                    StatusCategory = DetermineStatusCategory(response),
+                    DurationMs = response.DurationMs,
+                    SizeText = FormatSize(response.SizeBytes),
+                    SizeBytes = response.SizeBytes,
+                    ContentType = response.ContentType,
+                    RequestUrl = maskedUrl,
+                    VaryingParams = step.VaryingItems,
+                    VariableValues = step.VariableItems,
+                    QueryParams = finalRequest.QueryParams,
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    ErrorMessage = response.ErrorMessage,
+                    Response = response
+                };
+                isFailure = response.StatusCode >= 400 || !string.IsNullOrEmpty(response.ErrorMessage);
+            }
 
             if (onResultAsync is not null)
             {
@@ -177,26 +297,321 @@ public class BatchRunner : IBatchRunner
 
             progress.Report(new BatchProgressReport
             {
-                Index = i + 1,
+                Index = index,
                 Total = total,
                 Item = item
             });
 
-            var isFailure = response.StatusCode >= 400 || !string.IsNullOrEmpty(response.ErrorMessage);
             if (options.StopOnFailure && isFailure)
             {
                 Log.Information("Lot arrêté prématurément à la requête {Index}/{Total} (option Arrêter au premier échec).",
-                    i + 1, total);
+                    index, total);
                 break;
             }
 
-            if (i + 1 < total && delayMs > 0)
+            if (index < total && delayMs > 0)
             {
                 await Task.Delay(delayMs, ct).ConfigureAwait(false);
             }
         }
 
         Log.Information("Exécution du lot terminée.");
+    }
+
+    private sealed class BatchExecutionStep
+    {
+        public required List<KeyValueItem> QueryItems { get; init; }
+        public required List<KeyValueItem> VaryingItems { get; init; }
+        public required List<KeyValueItem> VariableItems { get; init; }
+        public required Dictionary<string, string> VariableDictionary { get; init; }
+        public required string ParamsText { get; init; }
+    }
+
+    private sealed class VariationAxis
+    {
+        public required string Name { get; init; }
+        public required bool IsVariable { get; init; }
+        public required int ParamIndex { get; init; }
+        public required Func<IEnumerable<string>> SequenceFactory { get; init; }
+    }
+
+    private static IEnumerable<BatchExecutionStep> EnumerateExecutionSteps(
+        IReadOnlyList<VaryingParam> parameters,
+        IReadOnlyList<BatchVariable> variables,
+        BatchMode mode,
+        int maxCount)
+    {
+        if (maxCount <= 0)
+        {
+            yield break;
+        }
+
+        var enabledParams = parameters
+            .Where(p => p.IsEnabled && !string.IsNullOrWhiteSpace(p.Name))
+            .ToList();
+
+        var activeVariables = variables
+            .Where(v => v.IsUsed && v.IsConfigured && !v.HasError && !string.IsNullOrWhiteSpace(v.Name))
+            .ToList();
+
+        var axes = new List<VariationAxis>();
+
+        for (var i = 0; i < enabledParams.Count; i++)
+        {
+            if (enabledParams[i].IsVarying)
+            {
+                var capturedParam = enabledParams[i];
+                axes.Add(new VariationAxis
+                {
+                    Name = capturedParam.Name.Trim(),
+                    IsVariable = false,
+                    ParamIndex = i,
+                    SequenceFactory = () => EnumerateVaryingParamValues(capturedParam)
+                });
+            }
+        }
+
+        foreach (var variable in activeVariables)
+        {
+            var capturedVar = variable;
+            axes.Add(new VariationAxis
+            {
+                Name = capturedVar.Name,
+                IsVariable = true,
+                ParamIndex = -1,
+                SequenceFactory = () => capturedVar.EnumerateValues()
+            });
+        }
+
+        if (axes.Count == 0)
+        {
+            var staticQuery = enabledParams
+                .Select(p => new KeyValueItem(p.Name.Trim(), p.Value, true))
+                .ToList();
+
+            yield return new BatchExecutionStep
+            {
+                QueryItems = staticQuery,
+                VaryingItems = [],
+                VariableItems = [],
+                VariableDictionary = new Dictionary<string, string>(StringComparer.Ordinal),
+                ParamsText = FormatStaticParamsText(staticQuery)
+            };
+            yield break;
+        }
+
+        var produced = 0;
+
+        if (mode == BatchMode.Parallel)
+        {
+            var enumerators = new IEnumerator<string>[axes.Count];
+            try
+            {
+                for (var i = 0; i < axes.Count; i++)
+                {
+                    enumerators[i] = axes[i].SequenceFactory().GetEnumerator();
+                }
+
+                while (produced < maxCount)
+                {
+                    var allMoved = true;
+                    for (var i = 0; i < enumerators.Length; i++)
+                    {
+                        if (!enumerators[i].MoveNext())
+                        {
+                            allMoved = false;
+                            break;
+                        }
+                    }
+
+                    if (!allMoved)
+                    {
+                        yield break;
+                    }
+
+                    var selected = new string[axes.Count];
+                    for (var i = 0; i < axes.Count; i++)
+                    {
+                        selected[i] = enumerators[i].Current;
+                    }
+
+                    produced++;
+                    yield return BuildStepFromAxisValues(enabledParams, axes, selected);
+                }
+            }
+            finally
+            {
+                for (var i = 0; i < enumerators.Length; i++)
+                {
+                    enumerators[i]?.Dispose();
+                }
+            }
+
+            yield break;
+        }
+
+        // Mode Combinaisons : produit cartésien paresseux par odomètre
+        var cartEnumerators = new IEnumerator<string>[axes.Count];
+        try
+        {
+            for (var i = 0; i < axes.Count; i++)
+            {
+                cartEnumerators[i] = axes[i].SequenceFactory().GetEnumerator();
+                if (!cartEnumerators[i].MoveNext())
+                {
+                    yield break;
+                }
+            }
+
+            while (produced < maxCount)
+            {
+                var selected = new string[axes.Count];
+                for (var i = 0; i < axes.Count; i++)
+                {
+                    selected[i] = cartEnumerators[i].Current;
+                }
+
+                produced++;
+                yield return BuildStepFromAxisValues(enabledParams, axes, selected);
+
+                if (produced >= maxCount)
+                {
+                    yield break;
+                }
+
+                var pos = axes.Count - 1;
+                while (pos >= 0)
+                {
+                    if (cartEnumerators[pos].MoveNext())
+                    {
+                        break;
+                    }
+
+                    cartEnumerators[pos].Dispose();
+                    cartEnumerators[pos] = axes[pos].SequenceFactory().GetEnumerator();
+                    if (!cartEnumerators[pos].MoveNext())
+                    {
+                        yield break;
+                    }
+
+                    pos--;
+                }
+
+                if (pos < 0)
+                {
+                    yield break;
+                }
+            }
+        }
+        finally
+        {
+            for (var i = 0; i < cartEnumerators.Length; i++)
+            {
+                cartEnumerators[i]?.Dispose();
+            }
+        }
+    }
+
+    private static BatchExecutionStep BuildStepFromAxisValues(
+        IReadOnlyList<VaryingParam> enabledParams,
+        IReadOnlyList<VariationAxis> axes,
+        IReadOnlyList<string> selectedValues)
+    {
+        var varyingValueByParamIndex = new Dictionary<int, string>();
+        var varyingItems = new List<KeyValueItem>();
+        var variableItems = new List<KeyValueItem>();
+        var variableDictionary = new Dictionary<string, string>(StringComparer.Ordinal);
+        var displayLabels = new List<string>(axes.Count);
+
+        for (var i = 0; i < axes.Count; i++)
+        {
+            var axis = axes[i];
+            var value = selectedValues[i];
+
+            if (axis.IsVariable)
+            {
+                variableDictionary[axis.Name] = value;
+                variableItems.Add(new KeyValueItem(axis.Name, value, true));
+            }
+            else
+            {
+                varyingValueByParamIndex[axis.ParamIndex] = value;
+                varyingItems.Add(new KeyValueItem(axis.Name, value, true));
+            }
+
+            displayLabels.Add($"{axis.Name}={TruncateForDisplay(value)}");
+        }
+
+        var queryItems = new List<KeyValueItem>(enabledParams.Count);
+        for (var pIdx = 0; pIdx < enabledParams.Count; pIdx++)
+        {
+            var p = enabledParams[pIdx];
+            var trimmedName = p.Name.Trim();
+            var val = varyingValueByParamIndex.TryGetValue(pIdx, out var varyingVal)
+                ? varyingVal
+                : p.Value;
+
+            queryItems.Add(new KeyValueItem(trimmedName, val, true));
+        }
+
+        return new BatchExecutionStep
+        {
+            QueryItems = queryItems,
+            VaryingItems = varyingItems,
+            VariableItems = variableItems,
+            VariableDictionary = variableDictionary,
+            ParamsText = string.Join(", ", displayLabels)
+        };
+    }
+
+    private static IEnumerable<string> EnumerateVaryingParamValues(VaryingParam param)
+    {
+        var current = param.Start;
+        var end = param.End;
+        var step = param.Step;
+
+        if (step == 0)
+        {
+            yield break;
+        }
+
+        while (true)
+        {
+            if (step > 0 && current > end)
+            {
+                yield break;
+            }
+
+            if (step < 0 && current < end)
+            {
+                yield break;
+            }
+
+            yield return current.ToString(CultureInfo.InvariantCulture);
+
+            if (step > 0 && current > long.MaxValue - step)
+            {
+                yield break;
+            }
+
+            if (step < 0 && current < long.MinValue - step)
+            {
+                yield break;
+            }
+
+            current += step;
+        }
+    }
+
+    private static long SaturatingMultiply(long left, long right, long cap)
+    {
+        if (left == 0 || right == 0)
+        {
+            return 0;
+        }
+
+        var product = (Int128)left * (Int128)right;
+        return product > cap ? cap : (long)product;
     }
 
     private static bool TryGetSequenceCount(VaryingParam param, out long count, out string? error)
@@ -222,168 +637,10 @@ public class BatchRunner : IBatchRunner
             return false;
         }
 
-        try
-        {
-            checked
-            {
-                count = ((param.End - param.Start) / param.Step) + 1;
-            }
-            return true;
-        }
-        catch (OverflowException)
-        {
-            count = HardMaxRequests + 1;
-            return true;
-        }
-    }
-
-    private static List<(List<KeyValueItem> QueryItems, List<KeyValueItem> VaryingItems, string ParamsText)> GenerateQueryCombinations(
-        IReadOnlyList<VaryingParam> parameters,
-        BatchMode mode,
-        int maxCount)
-    {
-        var enabledParams = parameters
-            .Where(p => p.IsEnabled && !string.IsNullOrWhiteSpace(p.Name))
-            .ToList();
-
-        var varyingIndices = new List<int>();
-        var sequences = new List<List<string>>();
-
-        for (var i = 0; i < enabledParams.Count; i++)
-        {
-            if (enabledParams[i].IsVarying)
-            {
-                varyingIndices.Add(i);
-                sequences.Add(GenerateSequenceValues(enabledParams[i], maxCount));
-            }
-        }
-
-        var combinations = new List<(List<KeyValueItem>, List<KeyValueItem>, string)>(maxCount);
-
-        if (varyingIndices.Count == 0)
-        {
-            var items = enabledParams.Select(p => new KeyValueItem(p.Name.Trim(), p.Value, true)).ToList();
-            combinations.Add((items, [], FormatParamsText(items)));
-            return combinations;
-        }
-
-        if (mode == BatchMode.Parallel)
-        {
-            for (var row = 0; row < maxCount; row++)
-            {
-                var items = new List<KeyValueItem>(enabledParams.Count);
-                var varyingItems = new List<KeyValueItem>(varyingIndices.Count);
-                var varyingLabels = new List<string>(varyingIndices.Count);
-                var seqCursor = 0;
-
-                for (var pIdx = 0; pIdx < enabledParams.Count; pIdx++)
-                {
-                    var p = enabledParams[pIdx];
-                    var trimmedName = p.Name.Trim();
-                    if (p.IsVarying)
-                    {
-                        var val = sequences[seqCursor][row];
-                        var kv = new KeyValueItem(trimmedName, val, true);
-                        items.Add(kv);
-                        varyingItems.Add(kv);
-                        varyingLabels.Add($"{trimmedName}={val}");
-                        seqCursor++;
-                    }
-                    else
-                    {
-                        items.Add(new KeyValueItem(trimmedName, p.Value, true));
-                    }
-                }
-
-                combinations.Add((items, varyingItems, string.Join(", ", varyingLabels)));
-            }
-
-            return combinations;
-        }
-
-        // Mode Combinaisons (produit cartésien)
-        var selectedValues = new string[varyingIndices.Count];
-        BuildCartesianRecursive(0);
-        return combinations;
-
-        void BuildCartesianRecursive(int depth)
-        {
-            if (combinations.Count >= maxCount)
-            {
-                return;
-            }
-
-            if (depth == varyingIndices.Count)
-            {
-                var items = new List<KeyValueItem>(enabledParams.Count);
-                var varyingItems = new List<KeyValueItem>(varyingIndices.Count);
-                var varyingLabels = new List<string>(varyingIndices.Count);
-                var seqCursor = 0;
-
-                for (var pIdx = 0; pIdx < enabledParams.Count; pIdx++)
-                {
-                    var p = enabledParams[pIdx];
-                    var trimmedName = p.Name.Trim();
-                    if (p.IsVarying)
-                    {
-                        var val = selectedValues[seqCursor];
-                        var kv = new KeyValueItem(trimmedName, val, true);
-                        items.Add(kv);
-                        varyingItems.Add(kv);
-                        varyingLabels.Add($"{trimmedName}={val}");
-                        seqCursor++;
-                    }
-                    else
-                    {
-                        items.Add(new KeyValueItem(trimmedName, p.Value, true));
-                    }
-                }
-
-                combinations.Add((items, varyingItems, string.Join(", ", varyingLabels)));
-                return;
-            }
-
-            foreach (var val in sequences[depth])
-            {
-                selectedValues[depth] = val;
-                BuildCartesianRecursive(depth + 1);
-            }
-        }
-    }
-
-    private static List<string> GenerateSequenceValues(VaryingParam param, int maxTake)
-    {
-        var values = new List<string>();
-        var current = param.Start;
-
-        while (values.Count < maxTake)
-        {
-            if (param.Step > 0 && current > param.End)
-            {
-                break;
-            }
-
-            if (param.Step < 0 && current < param.End)
-            {
-                break;
-            }
-
-            values.Add(current.ToString(CultureInfo.InvariantCulture));
-
-            if (param.Step > 0 && current > long.MaxValue - param.Step)
-            {
-                break;
-            }
-
-            if (param.Step < 0 && current < long.MinValue - param.Step)
-            {
-                break;
-            }
-
-            current += param.Step;
-        }
-
-        return values;
+        var diff = (Int128)param.End - (Int128)param.Start;
+        var count128 = (diff / (Int128)param.Step) + 1;
+        count = count128 > HardMaxRequests + 1 ? HardMaxRequests + 1 : (long)count128;
+        return true;
     }
 
     private static RequestModel CloneRequestWithQuery(RequestModel source, List<KeyValueItem> queryItems)
@@ -392,7 +649,7 @@ public class BatchRunner : IBatchRunner
         {
             Method = source.Method,
             Url = source.Url,
-            QueryParams = queryItems,
+            QueryParams = queryItems.Select(q => new KeyValueItem(q.Key, q.Value, q.IsEnabled)).ToList(),
             Headers = source.Headers.Select(h => new KeyValueItem(h.Key, h.Value, h.IsEnabled)).ToList(),
             BodyType = source.BodyType,
             Body = source.Body,
@@ -411,11 +668,215 @@ public class BatchRunner : IBatchRunner
         };
     }
 
-    private static string FormatParamsText(List<KeyValueItem> items)
+    private string BuildMaskedUrlWithTemplate(
+        RequestModel templateRequest,
+        IReadOnlyList<KeyValueItem> substitutedQueryItems,
+        IReadOnlyDictionary<string, string> variableValues,
+        int index)
+    {
+        var maskedVars = new Dictionary<string, string>(variableValues.Count, StringComparer.Ordinal);
+        foreach (var kvp in variableValues)
+        {
+            maskedVars[kvp.Key] = IsSensitiveParamName(kvp.Key) ? "***" : kvp.Value;
+        }
+
+        var urlOnlyRequest = new RequestModel
+        {
+            Method = templateRequest.Method,
+            Url = templateRequest.Url,
+            BodyType = BodyType.None
+        };
+
+        var maskedBaseResult = _templateEngine.ApplyDetailed(urlOnlyRequest, maskedVars, index);
+        var baseUrl = maskedBaseResult.IsSuccess && maskedBaseResult.Request is not null
+            ? maskedBaseResult.Request.Url
+            : templateRequest.Url;
+
+        var maskedQuery = substitutedQueryItems
+            .Select(q => new KeyValueItem(
+                q.Key,
+                IsSensitiveParamName(q.Key) ? "***" : q.Value,
+                q.IsEnabled))
+            .ToList();
+
+        return BuildFinalUrl(baseUrl, maskedQuery, templateRequest.Auth, maskAllSensitive: true);
+    }
+
+    private static string BuildFinalUrl(
+        string rawUrl,
+        IReadOnlyList<KeyValueItem> queryItems,
+        AuthConfig auth,
+        bool maskAllSensitive)
+    {
+        var trimmedUrl = rawUrl?.Trim() ?? string.Empty;
+        if (!Uri.TryCreate(trimmedUrl, UriKind.Absolute, out var baseUri))
+        {
+            var fallbackParts = BuildQuerySegments(queryItems, auth, maskAllSensitive);
+            if (fallbackParts.Count == 0)
+            {
+                return trimmedUrl;
+            }
+
+            var separator = trimmedUrl.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+            return $"{trimmedUrl}{separator}{string.Join("&", fallbackParts)}";
+        }
+
+        try
+        {
+            var uriBuilder = new UriBuilder(baseUri);
+            var queryParts = new List<string>();
+
+            var existingQuery = uriBuilder.Query.TrimStart('?');
+            if (!string.IsNullOrEmpty(existingQuery))
+            {
+                foreach (var segment in existingQuery.Split('&', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var eqIndex = segment.IndexOf('=');
+                    if (eqIndex < 0)
+                    {
+                        queryParts.Add(segment);
+                        continue;
+                    }
+
+                    var encodedKey = segment[..eqIndex];
+                    var decodedKey = Uri.UnescapeDataString(encodedKey.Replace('+', ' '));
+                    queryParts.Add(maskAllSensitive && IsSensitiveParamName(decodedKey) ? $"{encodedKey}=***" : segment);
+                }
+            }
+
+            queryParts.AddRange(BuildQuerySegments(queryItems, auth, maskAllSensitive));
+
+            uriBuilder.Query = queryParts.Count > 0 ? string.Join("&", queryParts) : string.Empty;
+            return uriBuilder.Uri.ToString();
+        }
+        catch (UriFormatException)
+        {
+            return trimmedUrl;
+        }
+    }
+
+    private static List<string> BuildQuerySegments(
+        IReadOnlyList<KeyValueItem> queryItems,
+        AuthConfig auth,
+        bool maskAllSensitive)
+    {
+        var queryParts = new List<string>();
+
+        foreach (var param in queryItems)
+        {
+            if (!param.IsEnabled || string.IsNullOrWhiteSpace(param.Key))
+            {
+                continue;
+            }
+
+            var key = param.Key.Trim();
+            var encodedKey = Uri.EscapeDataString(key);
+            var encodedValue = maskAllSensitive && IsSensitiveParamName(key)
+                ? "***"
+                : Uri.EscapeDataString(param.Value ?? string.Empty);
+
+            queryParts.Add($"{encodedKey}={encodedValue}");
+        }
+
+        if (auth.Type == AuthType.ApiKey && !auth.ApiKeyInHeader && !string.IsNullOrWhiteSpace(auth.ApiKeyName))
+        {
+            var key = auth.ApiKeyName.Trim();
+            var encodedKey = Uri.EscapeDataString(key);
+            var encodedValue = maskAllSensitive || IsSensitiveParamName(key)
+                ? "***"
+                : Uri.EscapeDataString(auth.ApiKeyValue ?? string.Empty);
+            queryParts.Add($"{encodedKey}={encodedValue}");
+        }
+
+        return queryParts;
+    }
+
+    private static bool HasAnyPreviewHeader(RequestModel request) =>
+        request.Headers.Any(h => h.IsEnabled && !string.IsNullOrWhiteSpace(h.Key))
+        || (request.Auth.Type == AuthType.Bearer && !string.IsNullOrWhiteSpace(request.Auth.Token))
+        || request.Auth.Type == AuthType.Basic
+        || (request.Auth.Type == AuthType.ApiKey && request.Auth.ApiKeyInHeader && !string.IsNullOrWhiteSpace(request.Auth.ApiKeyName));
+
+    private static string FormatHeadersForPreview(RequestModel request)
+    {
+        var lines = new List<string>();
+
+        foreach (var header in request.Headers)
+        {
+            if (!header.IsEnabled || string.IsNullOrWhiteSpace(header.Key))
+            {
+                continue;
+            }
+
+            var key = header.Key.Trim();
+            var value = IsSensitivePreviewHeaderName(key) ? "***" : (header.Value ?? string.Empty);
+            lines.Add($"{key}: {value}");
+        }
+
+        switch (request.Auth.Type)
+        {
+            case AuthType.Bearer when !string.IsNullOrWhiteSpace(request.Auth.Token):
+                lines.Add("Authorization: ***");
+                break;
+            case AuthType.Basic:
+                lines.Add("Authorization: ***");
+                break;
+            case AuthType.ApiKey when request.Auth.ApiKeyInHeader && !string.IsNullOrWhiteSpace(request.Auth.ApiKeyName):
+                lines.Add($"{request.Auth.ApiKeyName.Trim()}: ***");
+                break;
+        }
+
+        return lines.Count == 0 ? string.Empty : string.Join(Environment.NewLine, lines);
+    }
+
+    private static bool HasAnyPreviewBody(RequestModel request) =>
+        !string.IsNullOrEmpty(FormatBodyForPreview(request));
+
+    private static string FormatBodyForPreview(RequestModel request)
+    {
+        if (request.BodyType == BodyType.None)
+        {
+            return string.Empty;
+        }
+
+        if (request.BodyType == BodyType.FormUrlEncoded)
+        {
+            var pairs = request.FormFields
+                .Where(f => f.IsEnabled && !string.IsNullOrWhiteSpace(f.Key))
+                .Select(f => $"{Uri.EscapeDataString(f.Key.Trim())}={Uri.EscapeDataString(f.Value ?? string.Empty)}");
+            return string.Join("&", pairs);
+        }
+
+        return request.Body ?? string.Empty;
+    }
+
+    private static bool IsSensitivePreviewHeaderName(string name)
+    {
+        return name.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("token", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("key", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("secret", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatStaticParamsText(List<KeyValueItem> items)
     {
         return items.Count == 0
             ? "(aucun paramètre)"
-            : string.Join(", ", items.Select(i => $"{i.Key}={i.Value}"));
+            : string.Join(", ", items.Select(i => $"{i.Key}={TruncateForDisplay(i.Value)}"));
+    }
+
+    private static string TruncateForDisplay(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        return value.Length > ParamsPreviewMaxLength
+            ? $"{value[..ParamsPreviewMaxLength]}…"
+            : value;
     }
 
     private static StatusCategory DetermineStatusCategory(ResponseModel response)
@@ -462,62 +923,6 @@ public class BatchRunner : IBatchRunner
         }
 
         return string.Create(CultureInfo.InvariantCulture, $"{bytes / gb:0.##} GB");
-    }
-
-    private static string BuildMaskedFinalUrl(string rawUrl, IReadOnlyList<KeyValueItem> queryItems)
-    {
-        var trimmedUrl = rawUrl?.Trim() ?? string.Empty;
-        if (!Uri.TryCreate(trimmedUrl, UriKind.Absolute, out var baseUri))
-        {
-            return trimmedUrl;
-        }
-
-        try
-        {
-            var uriBuilder = new UriBuilder(baseUri);
-            var queryParts = new List<string>();
-
-            var existingQuery = uriBuilder.Query.TrimStart('?');
-            if (!string.IsNullOrEmpty(existingQuery))
-            {
-                foreach (var segment in existingQuery.Split('&', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var eqIndex = segment.IndexOf('=');
-                    if (eqIndex < 0)
-                    {
-                        queryParts.Add(segment);
-                        continue;
-                    }
-
-                    var encodedKey = segment[..eqIndex];
-                    var decodedKey = Uri.UnescapeDataString(encodedKey.Replace('+', ' '));
-                    queryParts.Add(IsSensitiveParamName(decodedKey) ? $"{encodedKey}=***" : segment);
-                }
-            }
-
-            foreach (var param in queryItems)
-            {
-                if (!param.IsEnabled || string.IsNullOrWhiteSpace(param.Key))
-                {
-                    continue;
-                }
-
-                var key = param.Key.Trim();
-                var encodedKey = Uri.EscapeDataString(key);
-                var encodedValue = IsSensitiveParamName(key)
-                    ? "***"
-                    : Uri.EscapeDataString(param.Value ?? string.Empty);
-
-                queryParts.Add($"{encodedKey}={encodedValue}");
-            }
-
-            uriBuilder.Query = queryParts.Count > 0 ? string.Join("&", queryParts) : string.Empty;
-            return uriBuilder.Uri.ToString();
-        }
-        catch (UriFormatException)
-        {
-            return trimmedUrl;
-        }
     }
 
     private static bool IsSensitiveParamName(string? name)

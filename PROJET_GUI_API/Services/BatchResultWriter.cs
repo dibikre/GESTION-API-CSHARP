@@ -341,7 +341,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
 
         writer.WritePropertyName("params");
         writer.WriteStartObject();
-        var paramsSource = item.VaryingParams.Count > 0 ? item.VaryingParams : item.QueryParams;
+        var paramsSource = GetCombinedParamsForOutput(item);
         var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var param in paramsSource)
         {
@@ -407,8 +407,9 @@ public sealed class BatchResultWriter : IBatchResultWriter
             : "erreur";
         var extension = GetExtensionFromContentType(item.ContentType);
 
-        var varyingSegments = new List<string>(item.VaryingParams.Count);
-        foreach (var param in item.VaryingParams)
+        var combinedAxes = GetCombinedAxisValues(item);
+        var varyingSegments = new List<string>(combinedAxes.Count);
+        foreach (var param in combinedAxes)
         {
             if (string.IsNullOrWhiteSpace(param.Key))
             {
@@ -547,9 +548,23 @@ public sealed class BatchResultWriter : IBatchResultWriter
         }
     }
 
+    private static List<KeyValueItem> GetCombinedAxisValues(BatchResultItem item)
+    {
+        var combined = new List<KeyValueItem>(item.VaryingParams.Count + item.VariableValues.Count);
+        combined.AddRange(item.VaryingParams);
+        combined.AddRange(item.VariableValues);
+        return combined;
+    }
+
+    private static IReadOnlyList<KeyValueItem> GetCombinedParamsForOutput(BatchResultItem item)
+    {
+        var combined = GetCombinedAxisValues(item);
+        return combined.Count > 0 ? combined : item.QueryParams;
+    }
+
     private static string FormatParamsForSummary(BatchResultItem item)
     {
-        var source = item.VaryingParams.Count > 0 ? item.VaryingParams : item.QueryParams;
+        var source = GetCombinedParamsForOutput(item);
         if (source.Count == 0)
         {
             return "(aucun paramètre)";

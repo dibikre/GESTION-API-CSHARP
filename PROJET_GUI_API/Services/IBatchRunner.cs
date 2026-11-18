@@ -31,11 +31,22 @@ public sealed class BatchProgressReport
 
 public interface IBatchRunner
 {
-    BatchPlanResult BuildPlan(IReadOnlyList<VaryingParam> parameters, BatchMode mode);
+    BatchPlanResult BuildPlan(
+        IReadOnlyList<VaryingParam> parameters,
+        IReadOnlyList<BatchVariable> variables,
+        BatchMode mode);
+
+    IReadOnlyList<BatchPreviewItem> GeneratePreview(
+        RequestModel templateRequest,
+        IReadOnlyList<VaryingParam> parameters,
+        IReadOnlyList<BatchVariable> variables,
+        BatchMode mode,
+        int maxCount = 3);
 
     Task RunAsync(
         RequestModel templateRequest,
         IReadOnlyList<VaryingParam> parameters,
+        IReadOnlyList<BatchVariable> variables,
         BatchRunOptions options,
         IProgress<BatchProgressReport> progress,
         Func<BatchResultItem, CancellationToken, Task>? onResultAsync = null,

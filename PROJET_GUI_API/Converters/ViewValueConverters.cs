@@ -174,3 +174,40 @@ public static class StringDisplayConverters
         new FuncValueConverter<string?, string?>(text => string.IsNullOrWhiteSpace(text) ? null : text);
 }
 
+public static class VariableModeConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<VariableMode, string>(mode => mode switch
+        {
+            VariableMode.Range => "Plage numérique",
+            VariableMode.List => "Liste de valeurs",
+            _ => mode.ToString()
+        });
+}
+
+public sealed class ZeroPadToDecimalConverter : IValueConverter
+{
+    public static readonly ZeroPadToDecimalConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int intValue)
+        {
+            return (decimal)intValue;
+        }
+
+        return 0m;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is decimal decValue)
+        {
+            return Math.Clamp((int)decValue, 0, 12);
+        }
+
+        return 0;
+    }
+}
+
+

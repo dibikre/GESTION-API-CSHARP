@@ -1,0 +1,204 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="220"
+             x:Class="ApiTester.Views.BatchVariableEditor"
+             x:Name="Root"
+             x:DataType="x:Object">
+
+    <UserControl.Styles>
+        <Style Selector="Border.kvRow.unused">
+            <Setter Property="Opacity" Value="0.55" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid>
+        <!-- État vide -->
+        <TextBlock IsVisible="{Binding #ItemsList.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsZero}}"
+                   Text="Aucune variable. Écris {{nom}} dans l'URL, un en-tête ou le corps pour en créer une."
+                   FontSize="{DynamicResource FontSizeBase}"
+                   Foreground="{DynamicResource TextMutedBrush}"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   TextWrapping="Wrap"
+                   TextAlignment="Center"
+                   Margin="12" />
+
+        <!-- Liste des variables détectées -->
+        <ScrollViewer IsVisible="{Binding #ItemsList.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                      AllowAutoHide="False"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl x:Name="ItemsList"
+                          ItemsSource="{Binding #Root.Items}"
+                          Margin="0,0,12,4">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="models:BatchVariable">
+                        <Border Classes="kvRow"
+                                Classes.unused="{Binding !IsUsed}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="6,6">
+                            <StackPanel Spacing="6">
+                                <!-- En-tête de variable : nom, localisation, mode, compteur et aperçu -->
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                    <StackPanel Grid.Column="0"
+                                                Orientation="Horizontal"
+                                                Spacing="6"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}"
+                                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                                   FontSize="{DynamicResource FontSizeMono}"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextBrush}"
+                                                   VerticalAlignment="Center" />
+
+                                        <Border IsVisible="{Binding HasLocations}"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding UsedIn}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       FontWeight="Medium"
+                                                       Foreground="{DynamicResource AccentBrush}" />
+                                        </Border>
+
+                                        <Border IsVisible="{Binding !IsUsed}"
+                                                Background="{DynamicResource SurfaceAltBrush}"
+                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="inutilisée"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                        </Border>
+
+                                        <ComboBox ItemsSource="{x:Static vm:BatchViewModel.VariableModes}"
+                                                  SelectedItem="{Binding Mode}"
+                                                  MinWidth="140"
+                                                  AutomationProperties.Name="Mode de la variable">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="models:VariableMode">
+                                                    <TextBlock Text="{Binding Converter={x:Static conv:VariableModeConverters.ToLabel}}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding ValuesPreview}"
+                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               Foreground="{DynamicResource TextFaintBrush}"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip.Tip="{Binding ValuesPreview, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
+                                               VerticalAlignment="Center" />
+
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding ValueCountText}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               FontWeight="Medium"
+                                               Foreground="{DynamicResource TextMutedBrush}"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- Paramètres selon le mode -->
+                                <WrapPanel IsVisible="{Binding IsRangeMode}"
+                                           Orientation="Horizontal"
+                                           VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
+                                        <TextBlock Text="Début"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <NumericUpDown Value="{Binding RangeStart, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                       FormatString="0"
+                                                       Increment="1"
+                                                       ShowButtonSpinner="False"
+                                                       Width="84"
+                                                       Height="24"
+                                                       MinHeight="24"
+                                                       AutomationProperties.Name="Début de la plage" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
+                                        <TextBlock Text="Fin"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <NumericUpDown Value="{Binding RangeEnd, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                       FormatString="0"
+                                                       Increment="1"
+                                                       ShowButtonSpinner="False"
+                                                       Width="84"
+                                                       Height="24"
+                                                       MinHeight="24"
+                                                       AutomationProperties.Name="Fin de la plage" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
+                                        <TextBlock Text="Pas"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <NumericUpDown Value="{Binding RangeStep, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                       FormatString="0"
+                                                       Increment="1"
+                                                       ShowButtonSpinner="False"
+                                                       Width="68"
+                                                       Height="24"
+                                                       MinHeight="24"
+                                                       AutomationProperties.Name="Pas de la plage" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <TextBlock Text="Zéros"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <NumericUpDown Value="{Binding ZeroPad, Converter={x:Static conv:ZeroPadToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                       Minimum="0"
+                                                       Maximum="12"
+                                                       FormatString="0"
+                                                       Increment="1"
+                                                       ShowButtonSpinner="False"
+                                                       Width="60"
+                                                       Height="24"
+                                                       MinHeight="24"
+                                                       AutomationProperties.Name="Remplissage par zéros" />
+                                    </StackPanel>
+                                </WrapPanel>
+
+                                <TextBox IsVisible="{Binding IsListMode}"
+                                         Classes="mono"
+                                         Text="{Binding ListText}"
+                                         AcceptsReturn="True"
+                                         TextWrapping="NoWrap"
+                                         Height="64"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                         PlaceholderText="Une valeur par ligne (ex. valeur1, valeur2)"
+                                         AutomationProperties.Name="Liste des valeurs de la variable" />
+
+                                <!-- Erreur sur une ligne -->
+                                <TextBlock IsVisible="{Binding HasError}"
+                                           Text="{Binding ErrorText}"
+                                           FontSize="{DynamicResource FontSizeCaption}"
+                                           Foreground="{DynamicResource DangerBrush}"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+
+</UserControl>

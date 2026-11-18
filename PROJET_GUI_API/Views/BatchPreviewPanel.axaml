@@ -1,0 +1,122 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="220"
+             x:Class="ApiTester.Views.BatchPreviewPanel"
+             x:Name="Root"
+             x:DataType="x:Object">
+
+    <Border Background="{DynamicResource SurfaceBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="{DynamicResource ControlCornerRadius}">
+        <Expander Classes="warningExpander"
+                  IsExpanded="{Binding #Root.IsExpanded, Mode=TwoWay}">
+            <Expander.Header>
+                <TextBlock Text="Aperçu des premières requêtes (aucun envoi réseau)"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           FontWeight="Medium"
+                           Foreground="{DynamicResource TextBrush}"
+                           VerticalAlignment="Center" />
+            </Expander.Header>
+
+            <ScrollViewer MaxHeight="240"
+                          AllowAutoHide="False"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding #Root.Items}"
+                              Margin="8,0,12,8">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:BatchPreviewItem">
+                            <Border Background="{DynamicResource SurfaceAltBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                                    Padding="8,6"
+                                    Margin="0,4,0,0">
+                                <StackPanel Spacing="4">
+                                    <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding Index, StringFormat='{}#{0}'}"
+                                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   VerticalAlignment="Center" />
+
+                                        <Border Grid.Column="1"
+                                                Background="{DynamicResource SurfaceBrush}"
+                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="6,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Method, Converter={x:Static conv:HttpMethodConverters.ToUpper}}"
+                                                       Classes="httpMethod"
+                                                       Classes.get="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsGet}}"
+                                                       Classes.post="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPost}}"
+                                                       Classes.put="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPutOrPatch}}"
+                                                       Classes.delete="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsDelete}}" />
+                                        </Border>
+
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding FinalUrl}"
+                                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TextBrush}"
+                                                   TextWrapping="Wrap"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+
+                                    <TextBlock IsVisible="{Binding VariablesSummary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                               Text="{Binding VariablesSummary}"
+                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource AccentBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <TextBlock IsVisible="{Binding HasHeaders}"
+                                               Text="{Binding HeadersText}"
+                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource TextMutedBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <TextBlock IsVisible="{Binding HasBody}"
+                                               Text="{Binding BodyText}"
+                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               Foreground="{DynamicResource TextBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <Border IsVisible="{Binding IsInvalidJson}"
+                                            Background="{DynamicResource WarningBadgeSoftBrush}"
+                                            BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                            Padding="6,2"
+                                            HorizontalAlignment="Left">
+                                        <TextBlock Text="JSON invalide"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource WarningBrush}" />
+                                    </Border>
+
+                                    <TextBlock IsVisible="{Binding HasError}"
+                                               Text="{Binding ErrorMessage}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource DangerBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Expander>
+    </Border>
+
+</UserControl>

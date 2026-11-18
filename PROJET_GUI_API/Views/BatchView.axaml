@@ -82,6 +82,26 @@
                         AutomationProperties.Name="Ouvrir dans l'onglet Requête" />
             </StackPanel>
 
+            <!-- Notice discrète si la requête envoyée vers l'onglet Requête contient des variables -->
+            <Border IsVisible="{Binding HasOpenInSingleRequestWarning}"
+                    Background="{DynamicResource WarningSoftBrush}"
+                    BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    Padding="8,5">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Path Classes="iconStroke"
+                          Data="{StaticResource IconWarning}"
+                          Stroke="{DynamicResource WarningBrush}"
+                          VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding OpenInSingleRequestWarning}"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource WarningBrush}"
+                               TextWrapping="Wrap"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
             <!-- Bandeau d'avertissements fin, replié par défaut -->
             <Border IsVisible="{Binding HasWarnings}"
                     Background="{DynamicResource WarningSoftBrush}"
@@ -130,7 +150,7 @@
                 <RowDefinition Height="*" MinHeight="190" />
             </Grid.RowDefinitions>
 
-            <!-- Récapitulatif Méthode + URL -->
+            <!-- Récapitulatif Méthode + URL éditable -->
             <Border Grid.Row="0"
                     BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="0,0,0,1"
@@ -150,14 +170,13 @@
                                    Classes.put="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPutOrPatch}}"
                                    Classes.delete="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsDelete}}" />
                     </Border>
-                    <TextBlock Grid.Column="1"
-                               Text="{Binding Url}"
-                               FontFamily="{DynamicResource MonoFontFamily}"
-                               FontSize="12.5"
-                               Foreground="{DynamicResource TextMutedBrush}"
-                               VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis"
-                               ToolTip.Tip="{Binding Url, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}" />
+                    <TextBox Grid.Column="1"
+                             Classes="mono"
+                             Text="{Binding Url}"
+                             PlaceholderText="URL de la requête (ex. https://api.exemple.com/users/{{id}})"
+                             ToolTip.Tip="{Binding Url, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
+                             VerticalAlignment="Center"
+                             AutomationProperties.Name="URL de la requête du lot" />
                 </Grid>
             </Border>
 
@@ -215,16 +234,65 @@
                     </TabItem>
 
                     <TabItem Header="Corps">
-                        <TextBox Margin="0,8,0,0"
-                                 Classes="mono"
-                                 Text="{Binding Body}"
-                                 AcceptsReturn="True"
-                                 TextWrapping="NoWrap"
-                                 LineHeight="19"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 PlaceholderText="Aucun corps (ou saisissez le corps à envoyer)..."
-                                 AutomationProperties.Name="Corps de la requête du lot" />
+                        <Grid RowDefinitions="Auto,*,Auto" RowSpacing="6" Margin="0,8,0,0">
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="Type de corps"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           VerticalAlignment="Center" />
+                                <ComboBox ItemsSource="{x:Static vm:BatchViewModel.BodyTypes}"
+                                          SelectedItem="{Binding BodyType}"
+                                          MinWidth="160"
+                                          AutomationProperties.Name="Type de corps du lot" />
+                            </StackPanel>
+
+                            <TextBox Grid.Row="1"
+                                     IsVisible="{Binding !IsFormBody}"
+                                     Classes="mono"
+                                     Text="{Binding Body}"
+                                     AcceptsReturn="True"
+                                     TextWrapping="NoWrap"
+                                     LineHeight="19"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     PlaceholderText="Aucun corps (ou saisissez le corps à envoyer)..."
+                                     AutomationProperties.Name="Corps de la requête du lot" />
+
+                            <views:KeyValueEditor Grid.Row="1"
+                                                  IsVisible="{Binding IsFormBody}"
+                                                  Items="{Binding FormFields}"
+                                                  AddCommand="{Binding AddFormFieldCommand}"
+                                                  RemoveCommand="{Binding RemoveFormFieldCommand}"
+                                                  AddButtonText="Ajouter un champ"
+                                                  KeyPlaceholder="Champ"
+                                                  ValuePlaceholder="Valeur" />
+
+                            <TextBlock Grid.Row="2"
+                                       Text="Utilise {{nom}} pour insérer une variable. Variables prédéfinies : {{$index}}, {{$guid}}, {{$timestamp}}."
+                                       FontSize="{DynamicResource FontSizeCaption}"
+                                       Foreground="{DynamicResource TextFaintBrush}"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem>
+                        <TabItem.Header>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="Variables" VerticalAlignment="Center" />
+                                <Border IsVisible="{Binding UsedVariablesCount, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                        Background="{DynamicResource AccentSoftBrush}"
+                                        CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                        Padding="5,1"
+                                        VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding UsedVariablesCount}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentBrush}" />
+                                </Border>
+                            </StackPanel>
+                        </TabItem.Header>
+                        <views:BatchVariableEditor Margin="0,8,0,0"
+                                                   Items="{Binding Variables}" />
                     </TabItem>
                 </TabControl>
             </Border>
@@ -234,233 +302,264 @@
                           Classes="horizontal"
                           ResizeDirection="Rows" />
 
-            <!-- Barre d'exécution compacte -->
-            <Border Grid.Row="3"
-                    Background="{DynamicResource SurfaceBrush}"
-                    CornerRadius="{DynamicResource PanelCornerRadius}"
-                    Padding="10,8">
-                <StackPanel Spacing="8">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                        <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
-                                <TextBlock Text="Mode"
-                                           FontSize="12"
-                                           Foreground="{DynamicResource TextMutedBrush}"
-                                           VerticalAlignment="Center" />
-                                <ComboBox ItemsSource="{x:Static vm:BatchViewModel.BatchModes}"
-                                          SelectedItem="{Binding SelectedMode}"
-                                          MinWidth="136"
-                                          AutomationProperties.Name="Mode de génération des paramètres">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate x:DataType="models:BatchMode">
-                                            <TextBlock Text="{Binding Converter={x:Static conv:BatchModeConverters.ToLabel}}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                            </StackPanel>
-
-                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
-                                <TextBlock Text="Pause (ms)"
-                                           FontSize="12"
-                                           Foreground="{DynamicResource TextMutedBrush}"
-                                           VerticalAlignment="Center" />
-                                <NumericUpDown Value="{Binding DelayMs, Converter={x:Static conv:DelayMsToDecimalConverter.Instance}, Mode=TwoWay}"
-                                               Minimum="0"
-                                               Maximum="60000"
-                                               Increment="100"
-                                               FormatString="0"
-                                               Width="104"
-                                               AutomationProperties.Name="Pause entre requêtes en millisecondes" />
-                            </StackPanel>
-
-                            <CheckBox IsChecked="{Binding StopOnFailure}"
-                                      Content="Arrêter au premier échec"
-                                      Margin="0,0,12,0"
-                                      VerticalAlignment="Center"
-                                      AutomationProperties.Name="Arrêter au premier échec" />
-
-                            <CheckBox IsChecked="{Binding KeepBodies}"
-                                      Content="Conserver les corps"
-                                      Margin="0,0,12,0"
-                                      VerticalAlignment="Center"
-                                      AutomationProperties.Name="Conserver les corps de réponse" />
-
-                            <CheckBox IsVisible="{Binding NeedsConfirmation}"
-                                      IsChecked="{Binding IsConfirmed}"
-                                      Content="Confirmer (> 500 requêtes)"
-                                      FontWeight="Medium"
-                                      VerticalAlignment="Center"
-                                      AutomationProperties.Name="Confirmer l'envoi de plus de 500 requêtes" />
-                        </WrapPanel>
-
-                        <StackPanel Grid.Column="1"
-                                    Orientation="Horizontal"
-                                    Spacing="10"
-                                    VerticalAlignment="Center">
-                            <TextBlock Text="{Binding TotalRequestsText}"
-                                       FontSize="12"
-                                       Foreground="{DynamicResource TextMutedBrush}"
-                                       VerticalAlignment="Center" />
-
-                            <Panel VerticalAlignment="Center">
-                                <Button Classes="primary"
-                                        Command="{Binding RunCommand}"
-                                        IsVisible="{Binding !IsRunning}"
-                                        MinWidth="96"
-                                        AutomationProperties.Name="Lancer le lot">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Path Classes="iconStroke" Data="{StaticResource IconSend}" />
-                                        <TextBlock Text="Lancer" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button>
-                                <Button Classes="secondary"
-                                        Command="{Binding RunCancelCommand}"
-                                        IsVisible="{Binding IsRunning}"
-                                        MinWidth="96"
-                                        AutomationProperties.Name="Annuler le lot">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Path Classes="iconStroke" Data="{StaticResource IconStop}" />
-                                        <TextBlock Text="Annuler" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button>
-                            </Panel>
-                        </StackPanel>
-                    </Grid>
-
-                    <!-- Seconde ligne : Enregistrement des réponses -->
-                    <Border BorderBrush="{DynamicResource BorderBrush}"
-                            BorderThickness="0,1,0,0"
-                            Padding="0,8,0,0">
-                        <StackPanel Spacing="6">
-                            <StackPanel IsEnabled="{Binding !IsRunning}" Spacing="6">
-                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-                                    <TextBlock Grid.Column="0"
-                                               Text="Enregistrement des réponses"
+            <!-- Barre d'exécution compacte + erreur variables + aperçu -->
+            <StackPanel Grid.Row="3" Spacing="6">
+                <Border Background="{DynamicResource SurfaceBrush}"
+                        CornerRadius="{DynamicResource PanelCornerRadius}"
+                        Padding="10,8">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
+                                    <TextBlock Text="Mode"
                                                FontSize="12"
                                                Foreground="{DynamicResource TextMutedBrush}"
                                                VerticalAlignment="Center" />
-                                    <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <ComboBox ItemsSource="{x:Static vm:BatchViewModel.SaveModes}"
-                                                  SelectedItem="{Binding SaveMode}"
-                                                  MinWidth="190"
-                                                  Margin="0,0,12,0"
-                                                  AutomationProperties.Name="Mode d'enregistrement des réponses">
-                                            <ComboBox.ItemTemplate>
-                                                <DataTemplate x:DataType="models:SaveMode">
-                                                    <TextBlock Text="{Binding Converter={x:Static conv:SaveModeConverters.ToLabel}}" />
-                                                </DataTemplate>
-                                            </ComboBox.ItemTemplate>
-                                        </ComboBox>
+                                    <ComboBox ItemsSource="{x:Static vm:BatchViewModel.BatchModes}"
+                                              SelectedItem="{Binding SelectedMode}"
+                                              MinWidth="136"
+                                              AutomationProperties.Name="Mode de génération des paramètres">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="models:BatchMode">
+                                                <TextBlock Text="{Binding Converter={x:Static conv:BatchModeConverters.ToLabel}}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </StackPanel>
 
-                                        <CheckBox IsVisible="{Binding CanChooseFolder}"
-                                                  IsChecked="{Binding CreateTimestampSubfolder}"
-                                                  Content="Créer un sous-dossier horodaté"
-                                                  Margin="0,0,12,0"
-                                                  VerticalAlignment="Center"
-                                                  AutomationProperties.Name="Créer un sous-dossier horodaté" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,0" VerticalAlignment="Center">
+                                    <TextBlock Text="Pause (ms)"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource TextMutedBrush}"
+                                               VerticalAlignment="Center" />
+                                    <NumericUpDown Value="{Binding DelayMs, Converter={x:Static conv:DelayMsToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                   Minimum="0"
+                                                   Maximum="60000"
+                                                   Increment="100"
+                                                   FormatString="0"
+                                                   Width="104"
+                                                   AutomationProperties.Name="Pause entre requêtes en millisecondes" />
+                                </StackPanel>
 
-                                        <CheckBox IsVisible="{Binding ShowPerRequestOptions}"
-                                                  IsChecked="{Binding IncludeSummaryCsv}"
-                                                  Content="Inclure un fichier _resume.csv"
-                                                  Margin="0,0,12,0"
-                                                  VerticalAlignment="Center"
-                                                  AutomationProperties.Name="Inclure un fichier _resume.csv" />
+                                <CheckBox IsChecked="{Binding StopOnFailure}"
+                                          Content="Arrêter au premier échec"
+                                          Margin="0,0,12,0"
+                                          VerticalAlignment="Center"
+                                          AutomationProperties.Name="Arrêter au premier échec" />
 
-                                        <StackPanel IsVisible="{Binding ShowGroupedOptions}"
-                                                    Orientation="Horizontal"
-                                                    Spacing="6"
-                                                    VerticalAlignment="Center">
-                                            <TextBlock Text="Format groupé"
-                                                       FontSize="12"
-                                                       Foreground="{DynamicResource TextMutedBrush}"
-                                                       VerticalAlignment="Center" />
-                                            <ComboBox ItemsSource="{x:Static vm:BatchViewModel.GroupedFormats}"
-                                                      SelectedItem="{Binding GroupedFormat}"
-                                                      MinWidth="220"
-                                                      AutomationProperties.Name="Format du fichier groupé">
+                                <CheckBox IsChecked="{Binding KeepBodies}"
+                                          Content="Conserver les corps"
+                                          Margin="0,0,12,0"
+                                          VerticalAlignment="Center"
+                                          AutomationProperties.Name="Conserver les corps de réponse" />
+
+                                <CheckBox IsVisible="{Binding NeedsConfirmation}"
+                                          IsChecked="{Binding IsConfirmed}"
+                                          Content="Confirmer (> 500 requêtes)"
+                                          FontWeight="Medium"
+                                          VerticalAlignment="Center"
+                                          AutomationProperties.Name="Confirmer l'envoi de plus de 500 requêtes" />
+                            </WrapPanel>
+
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        VerticalAlignment="Center">
+                                <TextBlock Text="{Binding TotalRequestsText}"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           VerticalAlignment="Center" />
+
+                                <Button Classes="secondary"
+                                        Content="Aperçu"
+                                        Command="{Binding PreviewCommand}"
+                                        AutomationProperties.Name="Aperçu des premières requêtes" />
+
+                                <Panel VerticalAlignment="Center">
+                                    <Button Classes="primary"
+                                            Command="{Binding RunCommand}"
+                                            IsVisible="{Binding !IsRunning}"
+                                            MinWidth="96"
+                                            AutomationProperties.Name="Lancer le lot">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Path Classes="iconStroke" Data="{StaticResource IconSend}" />
+                                            <TextBlock Text="Lancer" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Classes="secondary"
+                                            Command="{Binding RunCancelCommand}"
+                                            IsVisible="{Binding IsRunning}"
+                                            MinWidth="96"
+                                            AutomationProperties.Name="Annuler le lot">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Path Classes="iconStroke" Data="{StaticResource IconStop}" />
+                                            <TextBlock Text="Annuler" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                </Panel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Seconde ligne : Enregistrement des réponses -->
+                        <Border BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="0,1,0,0"
+                                Padding="0,8,0,0">
+                            <StackPanel Spacing="6">
+                                <StackPanel IsEnabled="{Binding !IsRunning}" Spacing="6">
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="Enregistrement des réponses"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <ComboBox ItemsSource="{x:Static vm:BatchViewModel.SaveModes}"
+                                                      SelectedItem="{Binding SaveMode}"
+                                                      MinWidth="190"
+                                                      Margin="0,0,12,0"
+                                                      AutomationProperties.Name="Mode d'enregistrement des réponses">
                                                 <ComboBox.ItemTemplate>
-                                                    <DataTemplate x:DataType="models:GroupedFormat">
-                                                        <TextBlock Text="{Binding Converter={x:Static conv:GroupedFormatConverters.ToLabel}}" />
+                                                    <DataTemplate x:DataType="models:SaveMode">
+                                                        <TextBlock Text="{Binding Converter={x:Static conv:SaveModeConverters.ToLabel}}" />
                                                     </DataTemplate>
                                                 </ComboBox.ItemTemplate>
                                             </ComboBox>
-                                        </StackPanel>
-                                    </WrapPanel>
-                                </Grid>
 
-                                <Grid IsVisible="{Binding CanChooseFolder}"
-                                      ColumnDefinitions="Auto,*,Auto"
-                                      ColumnSpacing="8">
-                                    <TextBlock Grid.Column="0"
-                                               Text="Dossier"
-                                               FontSize="12"
-                                               Foreground="{DynamicResource TextMutedBrush}"
-                                               VerticalAlignment="Center" />
-                                    <TextBox Grid.Column="1"
-                                             Classes="mono"
-                                             Text="{Binding OutputFolder}"
-                                             PlaceholderText="Chemin du dossier de destination"
-                                             AutomationProperties.Name="Dossier d'enregistrement des réponses" />
-                                    <Button Grid.Column="2"
-                                            Classes="secondary"
-                                            Command="{Binding BrowseFolderCommand}"
-                                            MinWidth="96"
-                                            AutomationProperties.Name="Choisir le dossier d'enregistrement">
-                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <Path Classes="iconStroke" Data="{StaticResource IconFolder}" />
-                                            <TextBlock Text="Choisir…" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                    </Button>
-                                </Grid>
-                            </StackPanel>
+                                            <CheckBox IsVisible="{Binding CanChooseFolder}"
+                                                      IsChecked="{Binding CreateTimestampSubfolder}"
+                                                      Content="Créer un sous-dossier horodaté"
+                                                      Margin="0,0,12,0"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Créer un sous-dossier horodaté" />
 
-                            <TextBlock IsVisible="{Binding CanChooseFolder}"
-                                       Text="Les réponses sont enregistrées en clair sur ton disque. Elles peuvent contenir des données personnelles."
-                                       FontSize="11"
-                                       Foreground="{DynamicResource TextFaintBrush}"
-                                       TextWrapping="Wrap" />
+                                            <CheckBox IsVisible="{Binding ShowPerRequestOptions}"
+                                                      IsChecked="{Binding IncludeSummaryCsv}"
+                                                      Content="Inclure un fichier _resume.csv"
+                                                      Margin="0,0,12,0"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Inclure un fichier _resume.csv" />
 
-                            <TextBlock IsVisible="{Binding HasSaveError}"
-                                       Text="{Binding SaveError}"
-                                       Foreground="{DynamicResource DangerBrush}"
-                                       FontSize="12"
-                                       FontWeight="Medium"
-                                       TextWrapping="Wrap" />
+                                            <StackPanel IsVisible="{Binding ShowGroupedOptions}"
+                                                        Orientation="Horizontal"
+                                                        Spacing="6"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock Text="Format groupé"
+                                                           FontSize="12"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <ComboBox ItemsSource="{x:Static vm:BatchViewModel.GroupedFormats}"
+                                                          SelectedItem="{Binding GroupedFormat}"
+                                                          MinWidth="220"
+                                                          AutomationProperties.Name="Format du fichier groupé">
+                                                    <ComboBox.ItemTemplate>
+                                                        <DataTemplate x:DataType="models:GroupedFormat">
+                                                            <TextBlock Text="{Binding Converter={x:Static conv:GroupedFormatConverters.ToLabel}}" />
+                                                        </DataTemplate>
+                                                    </ComboBox.ItemTemplate>
+                                                </ComboBox>
+                                            </StackPanel>
+                                        </WrapPanel>
+                                    </Grid>
 
-                            <TextBlock IsVisible="{Binding HasActiveOutputPath}"
-                                       Text="{Binding ActiveOutputPathText}"
-                                       FontSize="12"
-                                       Foreground="{DynamicResource TextMutedBrush}"
-                                       TextTrimming="CharacterEllipsis" />
+                                    <Grid IsVisible="{Binding CanChooseFolder}"
+                                          ColumnDefinitions="Auto,*,Auto"
+                                          ColumnSpacing="8">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="Dossier"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBox Grid.Column="1"
+                                                 Classes="mono"
+                                                 Text="{Binding OutputFolder}"
+                                                 PlaceholderText="Chemin du dossier de destination"
+                                                 AutomationProperties.Name="Dossier d'enregistrement des réponses" />
+                                        <Button Grid.Column="2"
+                                                Classes="secondary"
+                                                Command="{Binding BrowseFolderCommand}"
+                                                MinWidth="96"
+                                                AutomationProperties.Name="Choisir le dossier d'enregistrement">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Path Classes="iconStroke" Data="{StaticResource IconFolder}" />
+                                                <TextBlock Text="Choisir…" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                    </Grid>
+                                </StackPanel>
 
-                            <StackPanel IsVisible="{Binding HasSaveSummary}"
-                                        Orientation="Horizontal"
-                                        Spacing="10"
-                                        VerticalAlignment="Center">
-                                <TextBlock Text="{Binding SaveSummaryText}"
+                                <TextBlock IsVisible="{Binding CanChooseFolder}"
+                                           Text="Les réponses sont enregistrées en clair sur ton disque. Elles peuvent contenir des données personnelles."
+                                           FontSize="11"
+                                           Foreground="{DynamicResource TextFaintBrush}"
+                                           TextWrapping="Wrap" />
+
+                                <TextBlock IsVisible="{Binding HasSaveError}"
+                                           Text="{Binding SaveError}"
+                                           Foreground="{DynamicResource DangerBrush}"
                                            FontSize="12"
                                            FontWeight="Medium"
-                                           VerticalAlignment="Center" />
-                                <Button Classes="secondary"
-                                        Command="{Binding OpenOutputFolderCommand}"
-                                        AutomationProperties.Name="Ouvrir le dossier d'enregistrement">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Path Classes="iconStroke" Data="{StaticResource IconFolder}" />
-                                        <TextBlock Text="Ouvrir le dossier" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
+                                           TextWrapping="Wrap" />
 
-                    <TextBlock IsVisible="{Binding HasPlanError}"
-                               Text="{Binding PlanError}"
-                               Foreground="{DynamicResource DangerBrush}"
-                               FontSize="12"
-                               FontWeight="Medium"
-                               TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
+                                <TextBlock IsVisible="{Binding HasActiveOutputPath}"
+                                           Text="{Binding ActiveOutputPathText}"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           TextTrimming="CharacterEllipsis" />
+
+                                <StackPanel IsVisible="{Binding HasSaveSummary}"
+                                            Orientation="Horizontal"
+                                            Spacing="10"
+                                            VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding SaveSummaryText}"
+                                               FontSize="12"
+                                               FontWeight="Medium"
+                                               VerticalAlignment="Center" />
+                                    <Button Classes="secondary"
+                                            Command="{Binding OpenOutputFolderCommand}"
+                                            AutomationProperties.Name="Ouvrir le dossier d'enregistrement">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Path Classes="iconStroke" Data="{StaticResource IconFolder}" />
+                                            <TextBlock Text="Ouvrir le dossier" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock IsVisible="{Binding HasPlanError}"
+                                   Text="{Binding PlanError}"
+                                   Foreground="{DynamicResource DangerBrush}"
+                                   FontSize="12"
+                                   FontWeight="Medium"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Bandeau fin d'erreur / avertissement sur les variables -->
+                <Border IsVisible="{Binding HasVariablesError}"
+                        Background="{DynamicResource WarningSoftBrush}"
+                        BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                        Padding="8,5">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Path Classes="iconStroke"
+                              Data="{StaticResource IconWarning}"
+                              Stroke="{DynamicResource WarningBrush}"
+                              VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding VariablesError}"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{DynamicResource WarningBrush}"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Panneau repliable d'aperçu des premières requêtes -->
+                <views:BatchPreviewPanel IsVisible="{Binding HasPreviewItems}"
+                                         Items="{Binding PreviewItems}"
+                                         IsExpanded="{Binding IsPreviewOpen, Mode=TwoWay}" />
+            </StackPanel>
 
             <!-- Bas : résultats + détail de la réponse sélectionnée -->
             <Grid Grid.Row="4" ColumnSpacing="4">

@@ -16,37 +16,49 @@ namespace ApiTester.ViewModels;
 
 public partial class BatchViewModel : ViewModelBase
 {
+    private const int VariableSyncDebounceMs = 250;
+
     private readonly ICurlParser _curlParser;
+    private readonly ITemplateEngine _templateEngine;
     private readonly IBatchRunner _batchRunner;
     private readonly IFolderPickerService _folderPickerService;
     private readonly IBatchResultWriter _batchResultWriter;
     private readonly List<string> _parseWarnings = [];
     private AuthConfig _parsedAuth = new();
     private int _parsedTimeoutSeconds = 30;
+    private bool _isBulkUpdating;
+    private CancellationTokenSource? _variableSyncCts;
 
     public BatchViewModel(
         ICurlParser curlParser,
+        ITemplateEngine templateEngine,
         IBatchRunner batchRunner,
         IFolderPickerService folderPickerService,
         IBatchResultWriter batchResultWriter)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
+        _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
         _batchRunner = batchRunner ?? throw new ArgumentNullException(nameof(batchRunner));
         _folderPickerService = folderPickerService ?? throw new ArgumentNullException(nameof(folderPickerService));
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
 
         VaryingParams.CollectionChanged += OnVaryingParamsCollectionChanged;
+        Headers.CollectionChanged += OnEditableItemsCollectionChanged;
+        FormFields.CollectionChanged += OnEditableItemsCollectionChanged;
         Warnings.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(HasWarnings));
             OnPropertyChanged(nameof(WarningsSummaryText));
         };
         Results.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasResults));
+        PreviewItems.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPreviewItems));
     }
 
     public static IReadOnlyList<BatchMode> BatchModes { get; } = Enum.GetValues<BatchMode>();
     public static IReadOnlyList<SaveMode> SaveModes { get; } = Enum.GetValues<SaveMode>();
     public static IReadOnlyList<GroupedFormat> GroupedFormats { get; } = Enum.GetValues<GroupedFormat>();
+    public static IReadOnlyList<VariableMode> VariableModes { get; } = Enum.GetValues<VariableMode>();
+    public static IReadOnlyList<BodyType> BodyTypes { get; } = RequestViewModel.BodyTypes;
 
     public Action<RequestModel>? OpenInSingleRequestCallback { get; set; }
 
@@ -63,6 +75,7 @@ public partial class BatchViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(OpenInSingleRequestCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PreviewCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
     public partial bool HasParsed { get; set; }
 
@@ -78,11 +91,43 @@ public partial class BatchViewModel : ViewModelBase
     public partial string Body { get; set; } = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsFormBody))]
     public partial BodyType BodyType { get; set; } = BodyType.None;
+
+    public bool IsFormBody => BodyType == BodyType.FormUrlEncoded;
 
     public ObservableCollection<KeyValueItem> FormFields { get; } = [];
 
     public ObservableCollection<VaryingParam> VaryingParams { get; } = [];
+
+    public ObservableCollection<BatchVariable> Variables { get; } = [];
+
+    [ObservableProperty]
+    public partial int UsedVariablesCount { get; private set; }
+
+    [ObservableProperty]
+    public partial bool HasVariables { get; private set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasVariablesError))]
+    [NotifyCanExecuteChangedFor(nameof(PreviewCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RunCommand))]
+    public partial string? VariablesError { get; private set; }
+
+    public bool HasVariablesError => !string.IsNullOrWhiteSpace(VariablesError);
+
+    public ObservableCollection<BatchPreviewItem> PreviewItems { get; } = [];
+
+    public bool HasPreviewItems => PreviewItems.Count > 0;
+
+    [ObservableProperty]
+    public partial bool IsPreviewOpen { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasOpenInSingleRequestWarning))]
+    public partial string? OpenInSingleRequestWarning { get; private set; }
+
+    public bool HasOpenInSingleRequestWarning => !string.IsNullOrWhiteSpace(OpenInSingleRequestWarning);
 
     [ObservableProperty]
     public partial BatchMode SelectedMode { get; set; } = BatchMode.Combinations;
@@ -98,6 +143,7 @@ public partial class BatchViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TotalRequestsText))]
+    [NotifyCanExecuteChangedFor(nameof(PreviewCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
     public partial int TotalRequests { get; set; }
 
@@ -110,11 +156,13 @@ public partial class BatchViewModel : ViewModelBase
     public partial bool IsConfirmed { get; set; }
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PreviewCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
     public partial bool ExceedsHardLimit { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPlanError))]
+    [NotifyCanExecuteChangedFor(nameof(PreviewCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
     public partial string? PlanError { get; set; }
 
@@ -177,6 +225,7 @@ public partial class BatchViewModel : ViewModelBase
     public bool HasActiveOutputPath => !string.IsNullOrWhiteSpace(ActiveOutputPathText);
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PreviewCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
     [NotifyCanExecuteChangedFor(nameof(BrowseFolderCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenOutputFolderCommand))]
@@ -200,6 +249,44 @@ public partial class BatchViewModel : ViewModelBase
     public partial BatchResultItem? SelectedResult { get; set; }
 
     public ResponseViewModel SelectedResponse { get; } = new();
+
+    partial void OnUrlChanged(string value)
+    {
+        if (!_isBulkUpdating)
+        {
+            ScheduleVariableSync();
+        }
+    }
+
+    partial void OnBodyChanged(string value)
+    {
+        if (_isBulkUpdating)
+        {
+            return;
+        }
+
+        if (BodyType == BodyType.None && !string.IsNullOrWhiteSpace(value))
+        {
+            var trimmed = value.TrimStart();
+            var contentType = Headers.LastOrDefault(h =>
+                h.IsEnabled && h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))?.Value;
+
+            BodyType = (trimmed.StartsWith('{') || trimmed.StartsWith('[') ||
+                        (contentType is not null && contentType.Contains("json", StringComparison.OrdinalIgnoreCase)))
+                ? BodyType.Json
+                : BodyType.Text;
+        }
+
+        ScheduleVariableSync();
+    }
+
+    partial void OnBodyTypeChanged(BodyType value)
+    {
+        if (!_isBulkUpdating)
+        {
+            ScheduleVariableSync();
+        }
+    }
 
     partial void OnSelectedModeChanged(BatchMode value)
     {
@@ -247,69 +334,103 @@ public partial class BatchViewModel : ViewModelBase
         _parseWarnings.Clear();
         _parseWarnings.AddRange(parseResult.Warnings);
 
-        var req = parseResult.Request;
-        Method = req.Method;
-        Url = req.Url;
-        Body = req.Body;
-        BodyType = req.BodyType;
-        _parsedAuth = req.Auth;
-        _parsedTimeoutSeconds = req.TimeoutSeconds > 0 ? req.TimeoutSeconds : 30;
-
-        Headers.Clear();
-        foreach (var header in req.Headers)
+        _isBulkUpdating = true;
+        try
         {
-            Headers.Add(new KeyValueItem(header.Key, header.Value, header.IsEnabled));
+            var req = parseResult.Request;
+            Method = req.Method;
+            Url = req.Url;
+            Body = req.Body;
+            BodyType = req.BodyType;
+            _parsedAuth = req.Auth;
+            _parsedTimeoutSeconds = req.TimeoutSeconds > 0 ? req.TimeoutSeconds : 30;
+
+            Headers.Clear();
+            foreach (var header in req.Headers)
+            {
+                Headers.Add(new KeyValueItem(header.Key, header.Value, header.IsEnabled));
+            }
+
+            FormFields.Clear();
+            foreach (var field in req.FormFields)
+            {
+                FormFields.Add(new KeyValueItem(field.Key, field.Value, field.IsEnabled));
+            }
+
+            VaryingParams.Clear();
+            foreach (var queryParam in req.QueryParams)
+            {
+                VaryingParams.Add(new VaryingParam(queryParam.Key, queryParam.Value, queryParam.IsEnabled));
+            }
+
+            HasParsed = !string.IsNullOrWhiteSpace(Url);
+            IsConfirmed = false;
+            OpenInSingleRequestWarning = null;
+            PreviewItems.Clear();
+            IsPreviewOpen = false;
+        }
+        finally
+        {
+            _isBulkUpdating = false;
         }
 
-        FormFields.Clear();
-        foreach (var field in req.FormFields)
-        {
-            FormFields.Add(new KeyValueItem(field.Key, field.Value, field.IsEnabled));
-        }
-
-        VaryingParams.Clear();
-        foreach (var queryParam in req.QueryParams)
-        {
-            VaryingParams.Add(new VaryingParam(queryParam.Key, queryParam.Value, queryParam.IsEnabled));
-        }
-
-        HasParsed = !string.IsNullOrWhiteSpace(Url);
-        IsConfirmed = false;
-        RecalculatePlan();
+        SyncVariablesWithTemplate();
     }
 
     [RelayCommand]
     private void Clear()
     {
-        CurlText = string.Empty;
-        _parseWarnings.Clear();
-        Warnings.Clear();
-        HasParsed = false;
-        Method = HttpMethodType.Get;
-        Url = string.Empty;
-        Headers.Clear();
-        FormFields.Clear();
-        Body = string.Empty;
-        BodyType = BodyType.None;
-        _parsedAuth = new AuthConfig();
-        _parsedTimeoutSeconds = 30;
-        VaryingParams.Clear();
-        TotalRequests = 0;
-        NeedsConfirmation = false;
-        IsConfirmed = false;
-        ExceedsHardLimit = false;
-        PlanError = null;
-        ProgressCurrent = 0;
-        ProgressTotal = 0;
-        LastOutputPath = string.Empty;
-        SavedCount = 0;
-        SaveErrorCount = 0;
-        SaveSummaryText = string.Empty;
-        SaveError = null;
-        ActiveOutputPathText = string.Empty;
-        Results.Clear();
-        SelectedResult = null;
-        SelectedResponse.Clear();
+        CancelPendingVariableSync();
+        _isBulkUpdating = true;
+        try
+        {
+            CurlText = string.Empty;
+            _parseWarnings.Clear();
+            Warnings.Clear();
+            HasParsed = false;
+            Method = HttpMethodType.Get;
+            Url = string.Empty;
+            Headers.Clear();
+            FormFields.Clear();
+            Body = string.Empty;
+            BodyType = BodyType.None;
+            _parsedAuth = new AuthConfig();
+            _parsedTimeoutSeconds = 30;
+            VaryingParams.Clear();
+
+            foreach (var variable in Variables)
+            {
+                variable.PropertyChanged -= OnBatchVariablePropertyChanged;
+            }
+            Variables.Clear();
+            UsedVariablesCount = 0;
+            HasVariables = false;
+            VariablesError = null;
+            PreviewItems.Clear();
+            IsPreviewOpen = false;
+            OpenInSingleRequestWarning = null;
+
+            TotalRequests = 0;
+            NeedsConfirmation = false;
+            IsConfirmed = false;
+            ExceedsHardLimit = false;
+            PlanError = null;
+            ProgressCurrent = 0;
+            ProgressTotal = 0;
+            LastOutputPath = string.Empty;
+            SavedCount = 0;
+            SaveErrorCount = 0;
+            SaveSummaryText = string.Empty;
+            SaveError = null;
+            ActiveOutputPathText = string.Empty;
+            Results.Clear();
+            SelectedResult = null;
+            SelectedResponse.Clear();
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
     }
 
     private bool CanOpenInSingleRequest() => HasParsed;
@@ -318,6 +439,9 @@ public partial class BatchViewModel : ViewModelBase
     private void OpenInSingleRequest()
     {
         var requestModel = BuildTemplateRequest();
+        OpenInSingleRequestWarning = _templateEngine.ContainsAnyMarker(requestModel)
+            ? "Cette requête contient des {{variables}} qui ne seront pas remplacées dans l'onglet Requête."
+            : null;
         OpenInSingleRequestCallback?.Invoke(requestModel);
     }
 
@@ -333,6 +457,21 @@ public partial class BatchViewModel : ViewModelBase
         if (item is not null)
         {
             Headers.Remove(item);
+        }
+    }
+
+    [RelayCommand]
+    private void AddFormField()
+    {
+        FormFields.Add(new KeyValueItem());
+    }
+
+    [RelayCommand]
+    private void RemoveFormField(KeyValueItem? item)
+    {
+        if (item is not null)
+        {
+            FormFields.Remove(item);
         }
     }
 
@@ -380,18 +519,51 @@ public partial class BatchViewModel : ViewModelBase
         await _folderPickerService.OpenFolderAsync(LastOutputPath);
     }
 
+    private bool CanPreview() =>
+        HasParsed &&
+        !IsRunning &&
+        !HasVariablesError &&
+        string.IsNullOrEmpty(PlanError) &&
+        TotalRequests > 0;
+
+    [RelayCommand(CanExecute = nameof(CanPreview))]
+    private void Preview()
+    {
+        SyncVariablesWithTemplate();
+        if (!CanPreview())
+        {
+            return;
+        }
+
+        var preview = _batchRunner.GeneratePreview(
+            BuildTemplateRequest(),
+            VaryingParams.ToList(),
+            Variables.ToList(),
+            SelectedMode,
+            maxCount: 3);
+
+        PreviewItems.Clear();
+        foreach (var item in preview)
+        {
+            PreviewItems.Add(item);
+        }
+
+        IsPreviewOpen = PreviewItems.Count > 0;
+    }
+
     private bool CanRun() =>
         HasParsed &&
         !IsRunning &&
         TotalRequests > 0 &&
         !ExceedsHardLimit &&
+        !HasVariablesError &&
         string.IsNullOrEmpty(PlanError) &&
         (!NeedsConfirmation || IsConfirmed);
 
     [RelayCommand(IncludeCancelCommand = true, CanExecute = nameof(CanRun))]
     private async Task RunAsync(CancellationToken ct)
     {
-        RecalculatePlan();
+        SyncVariablesWithTemplate();
         if (!CanRun())
         {
             return;
@@ -450,6 +622,22 @@ public partial class BatchViewModel : ViewModelBase
             })
             .ToList();
 
+        var variablesSnapshot = Variables
+            .Select(v => new BatchVariable
+            {
+                Name = v.Name,
+                Mode = v.Mode,
+                RangeStart = v.RangeStart,
+                RangeEnd = v.RangeEnd,
+                RangeStep = v.RangeStep,
+                ZeroPad = v.ZeroPad,
+                ListText = v.ListText,
+                UsedIn = v.UsedIn,
+                IsUsed = v.IsUsed,
+                IsConfigured = v.IsConfigured
+            })
+            .ToList();
+
         var options = new BatchRunOptions
         {
             Mode = SelectedMode,
@@ -475,7 +663,7 @@ public partial class BatchViewModel : ViewModelBase
 
         try
         {
-            await _batchRunner.RunAsync(templateRequest, paramsSnapshot, options, progress, onResultAsync, ct);
+            await _batchRunner.RunAsync(templateRequest, paramsSnapshot, variablesSnapshot, options, progress, onResultAsync, ct);
         }
         catch (OperationCanceledException)
         {
@@ -528,6 +716,38 @@ public partial class BatchViewModel : ViewModelBase
         };
     }
 
+    private void OnEditableItemsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+        {
+            foreach (KeyValueItem item in e.OldItems)
+            {
+                item.PropertyChanged -= OnEditableItemPropertyChanged;
+            }
+        }
+
+        if (e.NewItems is not null)
+        {
+            foreach (KeyValueItem item in e.NewItems)
+            {
+                item.PropertyChanged += OnEditableItemPropertyChanged;
+            }
+        }
+
+        if (!_isBulkUpdating)
+        {
+            ScheduleVariableSync();
+        }
+    }
+
+    private void OnEditableItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_isBulkUpdating)
+        {
+            ScheduleVariableSync();
+        }
+    }
+
     private void OnVaryingParamsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         if (e.OldItems is not null)
@@ -546,14 +766,170 @@ public partial class BatchViewModel : ViewModelBase
             }
         }
 
-        IsConfirmed = false;
-        RecalculatePlan();
+        if (!_isBulkUpdating)
+        {
+            IsConfirmed = false;
+            ScheduleVariableSync();
+            RecalculatePlan();
+        }
     }
 
     private void OnVaryingParamPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (_isBulkUpdating)
+        {
+            return;
+        }
+
         IsConfirmed = false;
+        if (e.PropertyName is nameof(VaryingParam.Value) or nameof(VaryingParam.IsEnabled) or nameof(VaryingParam.Name))
+        {
+            ScheduleVariableSync();
+        }
+
         RecalculatePlan();
+    }
+
+    private void OnBatchVariablePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(BatchVariable.Mode)
+            or nameof(BatchVariable.RangeStart)
+            or nameof(BatchVariable.RangeEnd)
+            or nameof(BatchVariable.RangeStep)
+            or nameof(BatchVariable.ZeroPad)
+            or nameof(BatchVariable.ListText)
+            or nameof(BatchVariable.IsConfigured)
+            or nameof(BatchVariable.IsUsed)
+            or nameof(BatchVariable.ValueCount)
+            or nameof(BatchVariable.ErrorText))
+        {
+            IsConfirmed = false;
+            UpdateVariablesValidation();
+            RecalculatePlan();
+        }
+    }
+
+    private void ScheduleVariableSync()
+    {
+        CancelPendingVariableSync();
+        var cts = new CancellationTokenSource();
+        _variableSyncCts = cts;
+        _ = DebounceVariableSyncAsync(cts.Token);
+    }
+
+    private void CancelPendingVariableSync()
+    {
+        if (_variableSyncCts is not null)
+        {
+            _variableSyncCts.Cancel();
+            _variableSyncCts.Dispose();
+            _variableSyncCts = null;
+        }
+    }
+
+    private async Task DebounceVariableSyncAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(VariableSyncDebounceMs, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!ct.IsCancellationRequested)
+        {
+            SyncVariablesWithTemplate();
+        }
+    }
+
+    private void SyncVariablesWithTemplate()
+    {
+        CancelPendingVariableSync();
+
+        var template = BuildTemplateRequest();
+        var extracted = _templateEngine.ExtractVariables(template);
+        var extractedByName = extracted.ToDictionary(v => v.Name, StringComparer.Ordinal);
+
+        var existingByName = new Dictionary<string, BatchVariable>(StringComparer.Ordinal);
+        for (var i = Variables.Count - 1; i >= 0; i--)
+        {
+            var existing = Variables[i];
+            if (extractedByName.TryGetValue(existing.Name, out var info))
+            {
+                existing.UsedIn = info.LocationsDisplay;
+                existing.IsUsed = true;
+                existingByName[existing.Name] = existing;
+            }
+            else if (existing.IsConfigured)
+            {
+                existing.IsUsed = false;
+                existing.UsedIn = string.Empty;
+                existingByName[existing.Name] = existing;
+            }
+            else
+            {
+                existing.PropertyChanged -= OnBatchVariablePropertyChanged;
+                Variables.RemoveAt(i);
+            }
+        }
+
+        foreach (var item in extracted)
+        {
+            if (existingByName.ContainsKey(item.Name))
+            {
+                continue;
+            }
+
+            var created = new BatchVariable
+            {
+                Name = item.Name,
+                UsedIn = item.LocationsDisplay,
+                IsUsed = true
+            };
+            created.PropertyChanged += OnBatchVariablePropertyChanged;
+            Variables.Add(created);
+        }
+
+        UsedVariablesCount = Variables.Count(v => v.IsUsed);
+        HasVariables = Variables.Count > 0;
+        UpdateVariablesValidation();
+        RecalculatePlan();
+    }
+
+    private void UpdateVariablesValidation()
+    {
+        var template = BuildTemplateRequest();
+        var errors = new List<string>();
+
+        foreach (var unknownDollar in _templateEngine.GetUnknownPredefinedMarkers(template))
+        {
+            errors.Add($"{{{{{unknownDollar}}}}} : variable prédéfinie inconnue (disponibles : $index, $guid, $timestamp).");
+        }
+
+        var extracted = _templateEngine.ExtractVariables(template);
+        var definedByName = Variables.ToDictionary(v => v.Name, StringComparer.Ordinal);
+
+        foreach (var ext in extracted)
+        {
+            if (!definedByName.TryGetValue(ext.Name, out var variable))
+            {
+                errors.Add($"{{{{{ext.Name}}}}} : variable utilisée mais jamais définie.");
+            }
+            else if (!variable.IsConfigured)
+            {
+                errors.Add($"{{{{{ext.Name}}}}} : variable non configurée.");
+            }
+            else if (variable.HasError)
+            {
+                errors.Add($"{{{{{ext.Name}}}}} : {variable.ErrorText}");
+            }
+        }
+
+        VariablesError = errors.Count == 0
+            ? null
+            : string.Join(Environment.NewLine, errors);
     }
 
     private void RecalculatePlan()
@@ -568,7 +944,17 @@ public partial class BatchViewModel : ViewModelBase
             return;
         }
 
-        var plan = _batchRunner.BuildPlan(VaryingParams, SelectedMode);
+        if (HasVariablesError)
+        {
+            TotalRequests = 0;
+            NeedsConfirmation = false;
+            ExceedsHardLimit = false;
+            PlanError = null;
+            RefreshWarnings([]);
+            return;
+        }
+
+        var plan = _batchRunner.BuildPlan(VaryingParams, Variables, SelectedMode);
         TotalRequests = plan.TotalRequests;
         ExceedsHardLimit = plan.ExceedsHardLimit;
         PlanError = plan.ValidationError;

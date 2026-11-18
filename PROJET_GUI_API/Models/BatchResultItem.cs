@@ -16,6 +16,7 @@ public class BatchResultItem
     public string ContentType { get; set; } = string.Empty;
     public string RequestUrl { get; set; } = string.Empty;
     public IReadOnlyList<KeyValueItem> VaryingParams { get; set; } = [];
+    public IReadOnlyList<KeyValueItem> VariableValues { get; set; } = [];
     public IReadOnlyList<KeyValueItem> QueryParams { get; set; } = [];
     public DateTimeOffset TimestampUtc { get; set; } = DateTimeOffset.UtcNow;
     public string? ErrorMessage { get; set; }
