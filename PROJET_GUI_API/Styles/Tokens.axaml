@@ -1,0 +1,105 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <FontFamily x:Key="AppFontFamily">fonts:Inter#Inter, Inter, Segoe UI, sans-serif</FontFamily>
+    <FontFamily x:Key="MonoFontFamily">Cascadia Mono, Consolas, monospace</FontFamily>
+
+    <x:Double x:Key="ControlHeight">28</x:Double>
+    <x:Double x:Key="FontSizeBase">13</x:Double>
+    <x:Double x:Key="FontSizeSmall">12</x:Double>
+    <x:Double x:Key="FontSizeCaption">11</x:Double>
+    <x:Double x:Key="FontSizeMono">12.5</x:Double>
+
+    <CornerRadius x:Key="BadgeCornerRadius">4</CornerRadius>
+    <CornerRadius x:Key="ControlCornerRadius">6</CornerRadius>
+    <CornerRadius x:Key="PanelCornerRadius">8</CornerRadius>
+
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+            <Color x:Key="AppBgColor">#14161A</Color>
+            <Color x:Key="SurfaceColor">#1A1D23</Color>
+            <Color x:Key="SurfaceAltColor">#20242B</Color>
+            <Color x:Key="HoverColor">#262B33</Color>
+            <Color x:Key="BorderColor">#2A2F38</Color>
+            <Color x:Key="BorderStrongColor">#3A404B</Color>
+            <Color x:Key="TextColor">#E6E8EC</Color>
+            <Color x:Key="TextMutedColor">#9AA1AD</Color>
+            <Color x:Key="TextFaintColor">#6B7280</Color>
+            <Color x:Key="AccentColor">#4F8CFF</Color>
+            <Color x:Key="AccentHoverColor">#6299FF</Color>
+            <Color x:Key="AccentPressedColor">#3B7BF2</Color>
+            <Color x:Key="SuccessColor">#3FB68B</Color>
+            <Color x:Key="WarningColor">#E0A030</Color>
+            <Color x:Key="DangerColor">#E5484D</Color>
+
+            <SolidColorBrush x:Key="AppBgBrush" Color="#14161A" />
+            <SolidColorBrush x:Key="SurfaceBrush" Color="#1A1D23" />
+            <SolidColorBrush x:Key="SurfaceAltBrush" Color="#20242B" />
+            <SolidColorBrush x:Key="HoverBrush" Color="#262B33" />
+            <SolidColorBrush x:Key="BorderBrush" Color="#2A2F38" />
+            <SolidColorBrush x:Key="BorderStrongBrush" Color="#3A404B" />
+            <SolidColorBrush x:Key="TextBrush" Color="#E6E8EC" />
+            <SolidColorBrush x:Key="TextMutedBrush" Color="#9AA1AD" />
+            <SolidColorBrush x:Key="TextFaintBrush" Color="#6B7280" />
+            <SolidColorBrush x:Key="AccentBrush" Color="#4F8CFF" />
+            <SolidColorBrush x:Key="AccentHoverBrush" Color="#6299FF" />
+            <SolidColorBrush x:Key="AccentPressedBrush" Color="#3B7BF2" />
+            <SolidColorBrush x:Key="AccentSoftBrush" Color="#4F8CFF" Opacity="0.14" />
+            <SolidColorBrush x:Key="AccentOnBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="#3FB68B" />
+            <SolidColorBrush x:Key="SuccessSoftBrush" Color="#3FB68B" Opacity="0.14" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#E0A030" />
+            <SolidColorBrush x:Key="WarningSoftBrush" Color="#E0A030" Opacity="0.08" />
+            <SolidColorBrush x:Key="WarningBadgeSoftBrush" Color="#E0A030" Opacity="0.14" />
+            <SolidColorBrush x:Key="WarningBorderSoftBrush" Color="#E0A030" Opacity="0.40" />
+            <SolidColorBrush x:Key="DangerBrush" Color="#E5484D" />
+            <SolidColorBrush x:Key="DangerSoftBrush" Color="#E5484D" Opacity="0.08" />
+            <SolidColorBrush x:Key="DangerBadgeSoftBrush" Color="#E5484D" Opacity="0.14" />
+            <SolidColorBrush x:Key="DangerBorderSoftBrush" Color="#E5484D" Opacity="0.40" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Light">
+            <Color x:Key="AppBgColor">#F6F7F9</Color>
+            <Color x:Key="SurfaceColor">#FFFFFF</Color>
+            <Color x:Key="SurfaceAltColor">#F0F2F5</Color>
+            <Color x:Key="HoverColor">#E8EBEF</Color>
+            <Color x:Key="BorderColor">#E1E4E9</Color>
+            <Color x:Key="BorderStrongColor">#CBD0D8</Color>
+            <Color x:Key="TextColor">#1B1F24</Color>
+            <Color x:Key="TextMutedColor">#5F6773</Color>
+            <Color x:Key="TextFaintColor">#8B93A0</Color>
+            <Color x:Key="AccentColor">#2563EB</Color>
+            <Color x:Key="AccentHoverColor">#1D4ED8</Color>
+            <Color x:Key="AccentPressedColor">#1E40AF</Color>
+            <Color x:Key="SuccessColor">#1E9E6F</Color>
+            <Color x:Key="WarningColor">#B7791F</Color>
+            <Color x:Key="DangerColor">#D13438</Color>
+
+            <SolidColorBrush x:Key="AppBgBrush" Color="#F6F7F9" />
+            <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="SurfaceAltBrush" Color="#F0F2F5" />
+            <SolidColorBrush x:Key="HoverBrush" Color="#E8EBEF" />
+            <SolidColorBrush x:Key="BorderBrush" Color="#E1E4E9" />
+            <SolidColorBrush x:Key="BorderStrongBrush" Color="#CBD0D8" />
+            <SolidColorBrush x:Key="TextBrush" Color="#1B1F24" />
+            <SolidColorBrush x:Key="TextMutedBrush" Color="#5F6773" />
+            <SolidColorBrush x:Key="TextFaintBrush" Color="#8B93A0" />
+            <SolidColorBrush x:Key="AccentBrush" Color="#2563EB" />
+            <SolidColorBrush x:Key="AccentHoverBrush" Color="#1D4ED8" />
+            <SolidColorBrush x:Key="AccentPressedBrush" Color="#1E40AF" />
+            <SolidColorBrush x:Key="AccentSoftBrush" Color="#2563EB" Opacity="0.14" />
+            <SolidColorBrush x:Key="AccentOnBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="#1E9E6F" />
+            <SolidColorBrush x:Key="SuccessSoftBrush" Color="#1E9E6F" Opacity="0.14" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#B7791F" />
+            <SolidColorBrush x:Key="WarningSoftBrush" Color="#B7791F" Opacity="0.08" />
+            <SolidColorBrush x:Key="WarningBadgeSoftBrush" Color="#B7791F" Opacity="0.14" />
+            <SolidColorBrush x:Key="WarningBorderSoftBrush" Color="#B7791F" Opacity="0.40" />
+            <SolidColorBrush x:Key="DangerBrush" Color="#D13438" />
+            <SolidColorBrush x:Key="DangerSoftBrush" Color="#D13438" Opacity="0.08" />
+            <SolidColorBrush x:Key="DangerBadgeSoftBrush" Color="#D13438" Opacity="0.14" />
+            <SolidColorBrush x:Key="DangerBorderSoftBrush" Color="#D13438" Opacity="0.40" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+</ResourceDictionary>

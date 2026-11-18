@@ -9,108 +9,113 @@
              x:Class="ApiTester.Views.ResponseView"
              x:DataType="vm:ResponseViewModel">
 
-    <UserControl.Resources>
-        <ResourceDictionary>
-            <ResourceDictionary.ThemeDictionaries>
-                <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="StatusSuccessBackground" Color="#DCFCE7" />
-                    <SolidColorBrush x:Key="StatusSuccessForeground" Color="#166534" />
-                    <SolidColorBrush x:Key="StatusRedirectBackground" Color="#FFEDD5" />
-                    <SolidColorBrush x:Key="StatusRedirectForeground" Color="#9A3412" />
-                    <SolidColorBrush x:Key="StatusErrorBackground" Color="#FEE2E2" />
-                    <SolidColorBrush x:Key="StatusErrorForeground" Color="#991B1B" />
-                    <SolidColorBrush x:Key="StatusNeutralBackground" Color="#E5E7EB" />
-                    <SolidColorBrush x:Key="StatusNeutralForeground" Color="#374151" />
-                    <SolidColorBrush x:Key="ErrorBannerBackground" Color="#FEF2F2" />
-                    <SolidColorBrush x:Key="ErrorBannerBorder" Color="#FCA5A5" />
-                    <SolidColorBrush x:Key="ErrorBannerForeground" Color="#991B1B" />
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="Dark">
-                    <SolidColorBrush x:Key="StatusSuccessBackground" Color="#14532D" />
-                    <SolidColorBrush x:Key="StatusSuccessForeground" Color="#86EFAC" />
-                    <SolidColorBrush x:Key="StatusRedirectBackground" Color="#7C2D12" />
-                    <SolidColorBrush x:Key="StatusRedirectForeground" Color="#FDBA74" />
-                    <SolidColorBrush x:Key="StatusErrorBackground" Color="#7F1D1D" />
-                    <SolidColorBrush x:Key="StatusErrorForeground" Color="#FCA5A5" />
-                    <SolidColorBrush x:Key="StatusNeutralBackground" Color="#374151" />
-                    <SolidColorBrush x:Key="StatusNeutralForeground" Color="#E5E7EB" />
-                    <SolidColorBrush x:Key="ErrorBannerBackground" Color="#450A0A" />
-                    <SolidColorBrush x:Key="ErrorBannerBorder" Color="#B91C1C" />
-                    <SolidColorBrush x:Key="ErrorBannerForeground" Color="#FECACA" />
-                </ResourceDictionary>
-            </ResourceDictionary.ThemeDictionaries>
-        </ResourceDictionary>
-    </UserControl.Resources>
-
     <UserControl.Styles>
-        <Style Selector="Border.statusBadge">
-            <Setter Property="Background" Value="{DynamicResource StatusNeutralBackground}" />
+        <Style Selector="Border.statusPill">
+            <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="8,3" />
         </Style>
-        <Style Selector="Border.statusBadge TextBlock">
-            <Setter Property="Foreground" Value="{DynamicResource StatusNeutralForeground}" />
+        <Style Selector="Border.statusPill TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
         </Style>
-        <Style Selector="Border.statusBadge.success">
-            <Setter Property="Background" Value="{DynamicResource StatusSuccessBackground}" />
+        <Style Selector="Border.statusPill Ellipse.statusDot">
+            <Setter Property="Fill" Value="{DynamicResource TextMutedBrush}" />
         </Style>
-        <Style Selector="Border.statusBadge.success TextBlock">
-            <Setter Property="Foreground" Value="{DynamicResource StatusSuccessForeground}" />
+
+        <Style Selector="Border.statusPill.success">
+            <Setter Property="Background" Value="{DynamicResource SuccessSoftBrush}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
         </Style>
-        <Style Selector="Border.statusBadge.redirect">
-            <Setter Property="Background" Value="{DynamicResource StatusRedirectBackground}" />
+        <Style Selector="Border.statusPill.success TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
         </Style>
-        <Style Selector="Border.statusBadge.redirect TextBlock">
-            <Setter Property="Foreground" Value="{DynamicResource StatusRedirectForeground}" />
+        <Style Selector="Border.statusPill.success Ellipse.statusDot">
+            <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
         </Style>
-        <Style Selector="Border.statusBadge.error">
-            <Setter Property="Background" Value="{DynamicResource StatusErrorBackground}" />
+
+        <Style Selector="Border.statusPill.redirect">
+            <Setter Property="Background" Value="{DynamicResource WarningBadgeSoftBrush}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
         </Style>
-        <Style Selector="Border.statusBadge.error TextBlock">
-            <Setter Property="Foreground" Value="{DynamicResource StatusErrorForeground}" />
+        <Style Selector="Border.statusPill.redirect TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+        </Style>
+        <Style Selector="Border.statusPill.redirect Ellipse.statusDot">
+            <Setter Property="Fill" Value="{DynamicResource WarningBrush}" />
+        </Style>
+
+        <Style Selector="Border.statusPill.error">
+            <Setter Property="Background" Value="{DynamicResource DangerBadgeSoftBrush}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.statusPill.error TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+        </Style>
+        <Style Selector="Border.statusPill.error Ellipse.statusDot">
+            <Setter Property="Fill" Value="{DynamicResource DangerBrush}" />
         </Style>
     </UserControl.Styles>
 
-    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-            BorderThickness="1"
-            CornerRadius="6"
-            Padding="10"
-            Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
-        <Grid RowDefinitions="Auto,Auto,*">
+    <Border Background="{DynamicResource SurfaceBrush}"
+            CornerRadius="{DynamicResource PanelCornerRadius}"
+            Padding="10">
+        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8">
             <!-- État vide -->
-            <TextBlock Grid.Row="0"
-                       Grid.RowSpan="3"
-                       Text="Envoie une requête pour voir la réponse"
-                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center">
-                <TextBlock.IsVisible>
+            <StackPanel Grid.Row="0"
+                        Grid.RowSpan="3"
+                        Orientation="Horizontal"
+                        Spacing="8"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <StackPanel.IsVisible>
                     <MultiBinding Converter="{x:Static BoolConverters.And}">
                         <Binding Path="!HasResponse" />
                         <Binding Path="!HasError" />
                     </MultiBinding>
-                </TextBlock.IsVisible>
-            </TextBlock>
+                </StackPanel.IsVisible>
+                <Path Classes="iconStroke"
+                      Width="15"
+                      Height="15"
+                      Data="{StaticResource IconInfo}"
+                      Stroke="{DynamicResource TextMutedBrush}" />
+                <TextBlock Text="Envoie une requête pour voir la réponse"
+                           FontSize="13"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
 
-            <!-- Ligne de statut -->
+            <!-- Ligne de statut en pastilles -->
             <WrapPanel Grid.Row="0"
                        IsVisible="{Binding HasResponse}"
-                       Orientation="Horizontal"
-                       Margin="0,0,0,8">
-                <Border Classes="statusBadge"
+                       Orientation="Horizontal">
+                <Border Classes="statusPill"
                         Classes.success="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsSuccess}}"
                         Classes.redirect="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsRedirect}}"
                         Classes.error="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsError}}"
-                        CornerRadius="4"
-                        Padding="8,4"
-                        Margin="0,0,16,4"
+                        Margin="0,0,8,4"
                         VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Ellipse Classes="statusDot"
+                                 Width="6"
+                                 Height="6"
+                                 VerticalAlignment="Center" />
                         <TextBlock Text="{Binding StatusCode}"
                                    IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsPositiveInt}}"
-                                   FontWeight="SemiBold" />
+                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
                         <TextBlock Text="{Binding StatusText}"
                                    IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                                   FontWeight="SemiBold" />
-                        <TextBlock Text="Erreur" FontWeight="SemiBold">
+                                   FontSize="12"
+                                   FontWeight="Medium"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="Erreur"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center">
                             <TextBlock.IsVisible>
                                 <MultiBinding Converter="{x:Static BoolConverters.And}">
                                     <Binding Path="HasError" />
@@ -121,74 +126,145 @@
                     </StackPanel>
                 </Border>
 
-                <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,0,16,4" VerticalAlignment="Center">
-                    <TextBlock Text="Durée :" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-                    <TextBlock Text="{Binding DurationMs, StringFormat='{}{0} ms'}" FontWeight="SemiBold" />
-                </StackPanel>
+                <Border Background="{DynamicResource SurfaceAltBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource BadgeCornerRadius}"
+                        Padding="8,3"
+                        Margin="0,0,8,4"
+                        VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <TextBlock Text="Durée"
+                                   FontSize="11.5"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding DurationMs, StringFormat='{}{0} ms'}"
+                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                   FontSize="12"
+                                   FontWeight="Medium"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
 
-                <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,0,16,4" VerticalAlignment="Center">
-                    <TextBlock Text="Taille :" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-                    <TextBlock Text="{Binding SizeText}" FontWeight="SemiBold" />
-                </StackPanel>
+                <Border Background="{DynamicResource SurfaceAltBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource BadgeCornerRadius}"
+                        Padding="8,3"
+                        Margin="0,0,8,4"
+                        VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <TextBlock Text="Taille"
+                                   FontSize="11.5"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding SizeText}"
+                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                   FontSize="12"
+                                   FontWeight="Medium"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
 
-                <StackPanel Orientation="Horizontal"
-                            Spacing="4"
-                            Margin="0,0,0,4"
-                            VerticalAlignment="Center"
-                            IsVisible="{Binding ContentType, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                    <TextBlock Text="Type :" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-                    <TextBlock Text="{Binding ContentType}" />
-                </StackPanel>
+                <Border Background="{DynamicResource SurfaceAltBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource BadgeCornerRadius}"
+                        Padding="8,3"
+                        Margin="0,0,0,4"
+                        VerticalAlignment="Center"
+                        IsVisible="{Binding ContentType, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                    <TextBlock Text="{Binding ContentType}"
+                               FontFamily="{DynamicResource MonoFontFamily}"
+                               FontSize="11.5"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               VerticalAlignment="Center" />
+                </Border>
             </WrapPanel>
 
-            <!-- Bandeau d'erreur -->
+            <!-- Bandeau d'erreur fin -->
             <Border Grid.Row="1"
                     IsVisible="{Binding HasError}"
-                    Background="{DynamicResource ErrorBannerBackground}"
-                    BorderBrush="{DynamicResource ErrorBannerBorder}"
+                    Background="{DynamicResource DangerSoftBrush}"
+                    BorderBrush="{DynamicResource DangerBorderSoftBrush}"
                     BorderThickness="1"
-                    CornerRadius="4"
-                    Padding="10,8"
-                    Margin="0,0,0,8">
-                <TextBlock Text="{Binding ErrorMessage}"
-                           Foreground="{DynamicResource ErrorBannerForeground}"
-                           TextWrapping="Wrap"
-                           AutomationProperties.Name="Message d'erreur" />
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    Padding="10,6">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Path Classes="iconStroke"
+                          Width="14"
+                          Height="14"
+                          Data="{StaticResource IconWarning}"
+                          Stroke="{DynamicResource DangerBrush}"
+                          VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding ErrorMessage}"
+                               Foreground="{DynamicResource DangerBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               VerticalAlignment="Center"
+                               AutomationProperties.Name="Message d'erreur" />
+                </StackPanel>
             </Border>
 
             <!-- Onglets Corps et En-têtes -->
             <TabControl Grid.Row="2"
+                        Classes="sub"
                         IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsPositiveInt}}">
                 <TabItem Header="Corps">
                     <TextBox Margin="0,8,0,0"
+                             Classes="mono"
                              Text="{Binding Body, Mode=OneWay}"
                              IsReadOnly="True"
                              AcceptsReturn="True"
                              TextWrapping="NoWrap"
-                             FontFamily="Cascadia Mono, Consolas, Liberation Mono, Menlo, monospace"
+                             LineHeight="19"
+                             ScrollViewer.AllowAutoHide="False"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
                              AutomationProperties.Name="Corps de la réponse" />
                 </TabItem>
 
-                <TabItem Header="En-têtes">
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="En-têtes" VerticalAlignment="Center" />
+                            <Border IsVisible="{Binding Headers.Count, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                    Background="{DynamicResource AccentSoftBrush}"
+                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                    Padding="5,1"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Headers.Count}"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource AccentBrush}" />
+                            </Border>
+                        </StackPanel>
+                    </TabItem.Header>
                     <ScrollViewer Margin="0,8,0,0"
+                                  AllowAutoHide="False"
                                   VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding Headers}">
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding Headers}" Margin="0,0,12,0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="models:KeyValueItem">
-                                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                                    <Border BorderBrush="{DynamicResource BorderBrush}"
                                             BorderThickness="0,0,0,1"
-                                            Padding="4,6">
-                                        <Grid ColumnDefinitions="240,*" ColumnSpacing="12">
+                                            MinHeight="28"
+                                            Padding="4,4">
+                                        <Grid ColumnDefinitions="220,*" ColumnSpacing="12">
                                             <SelectableTextBlock Grid.Column="0"
                                                                  Text="{Binding Key}"
-                                                                 FontWeight="SemiBold"
-                                                                 TextTrimming="CharacterEllipsis" />
+                                                                 FontSize="12"
+                                                                 FontWeight="Medium"
+                                                                 Foreground="{DynamicResource TextMutedBrush}"
+                                                                 TextTrimming="CharacterEllipsis"
+                                                                 VerticalAlignment="Center" />
                                             <SelectableTextBlock Grid.Column="1"
                                                                  Text="{Binding Value}"
-                                                                 TextWrapping="Wrap" />
+                                                                 FontFamily="{DynamicResource MonoFontFamily}"
+                                                                 FontSize="12"
+                                                                 TextWrapping="Wrap"
+                                                                 VerticalAlignment="Center" />
                                         </Grid>
                                     </Border>
                                 </DataTemplate>

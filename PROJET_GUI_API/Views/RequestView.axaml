@@ -9,14 +9,27 @@
              x:Class="ApiTester.Views.RequestView"
              x:DataType="vm:RequestViewModel">
 
-    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-            BorderThickness="1"
-            CornerRadius="6"
-            Padding="8"
-            Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
-        <TabControl>
+    <Border Background="{DynamicResource SurfaceBrush}"
+            CornerRadius="{DynamicResource PanelCornerRadius}"
+            Padding="10,4,10,10">
+        <TabControl Classes="sub">
             <!-- Onglet Paramètres -->
-            <TabItem Header="Paramètres">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Paramètres" VerticalAlignment="Center" />
+                        <Border IsVisible="{Binding QueryParams.Count, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                Background="{DynamicResource AccentSoftBrush}"
+                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                Padding="5,1"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="{Binding QueryParams.Count}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource AccentBrush}" />
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
                 <views:KeyValueEditor Margin="0,8,0,0"
                                       Items="{Binding QueryParams}"
                                       AddCommand="{Binding AddQueryParamCommand}"
@@ -27,7 +40,22 @@
             </TabItem>
 
             <!-- Onglet En-têtes -->
-            <TabItem Header="En-têtes">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="En-têtes" VerticalAlignment="Center" />
+                        <Border IsVisible="{Binding Headers.Count, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                Background="{DynamicResource AccentSoftBrush}"
+                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                Padding="5,1"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Headers.Count}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource AccentBrush}" />
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
                 <views:KeyValueEditor Margin="0,8,0,0"
                                       Items="{Binding Headers}"
                                       AddCommand="{Binding AddHeaderCommand}"
@@ -39,59 +67,93 @@
 
             <!-- Onglet Authentification -->
             <TabItem Header="Authentification">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="0,10,0,0" Spacing="12" MaxWidth="560" HorizontalAlignment="Left">
-                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                            <TextBlock Text="Type d'authentification :"
-                                       VerticalAlignment="Center"
-                                       MinWidth="170" />
-                            <ComboBox ItemsSource="{x:Static vm:RequestViewModel.AuthTypes}"
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              AllowAutoHide="False">
+                    <StackPanel Margin="0,10,12,0" Spacing="10" MaxWidth="520" HorizontalAlignment="Left">
+                        <Grid ColumnDefinitions="150,*" ColumnSpacing="10">
+                            <TextBlock Grid.Column="0"
+                                       Text="Type"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       VerticalAlignment="Center" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{x:Static vm:RequestViewModel.AuthTypes}"
                                       SelectedItem="{Binding AuthType}"
                                       MinWidth="200"
                                       AutomationProperties.Name="Type d'authentification" />
-                        </StackPanel>
+                        </Grid>
 
                         <!-- Bearer -->
-                        <StackPanel IsVisible="{Binding IsBearerAuth}" Spacing="6">
-                            <TextBlock Text="Jeton Bearer (Token)" FontWeight="SemiBold" />
-                            <TextBox Text="{Binding Token}"
+                        <Grid IsVisible="{Binding IsBearerAuth}"
+                              ColumnDefinitions="150,*"
+                              ColumnSpacing="10">
+                            <TextBlock Grid.Column="0"
+                                       Text="Jeton Bearer"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1"
+                                     Classes="mono"
+                                     Text="{Binding Token}"
                                      PlaceholderText="Collez votre jeton Bearer..."
                                      AutomationProperties.Name="Jeton Bearer" />
-                        </StackPanel>
+                        </Grid>
 
                         <!-- Basic -->
-                        <StackPanel IsVisible="{Binding IsBasicAuth}" Spacing="10">
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Nom d'utilisateur" FontWeight="SemiBold" />
-                                <TextBox Text="{Binding Username}"
+                        <StackPanel IsVisible="{Binding IsBasicAuth}" Spacing="8">
+                            <Grid ColumnDefinitions="150,*" ColumnSpacing="10">
+                                <TextBlock Grid.Column="0"
+                                           Text="Nom d'utilisateur"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding Username}"
                                          PlaceholderText="Utilisateur"
                                          AutomationProperties.Name="Nom d'utilisateur Basic" />
-                            </StackPanel>
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Mot de passe" FontWeight="SemiBold" />
-                                <TextBox Text="{Binding Password}"
+                            </Grid>
+                            <Grid ColumnDefinitions="150,*" ColumnSpacing="10">
+                                <TextBlock Grid.Column="0"
+                                           Text="Mot de passe"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding Password}"
                                          PasswordChar="•"
                                          PlaceholderText="Mot de passe"
                                          AutomationProperties.Name="Mot de passe Basic" />
-                            </StackPanel>
+                            </Grid>
                         </StackPanel>
 
                         <!-- API Key -->
-                        <StackPanel IsVisible="{Binding IsApiKeyAuth}" Spacing="10">
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Nom de la clé" FontWeight="SemiBold" />
-                                <TextBox Text="{Binding ApiKeyName}"
+                        <StackPanel IsVisible="{Binding IsApiKeyAuth}" Spacing="8">
+                            <Grid ColumnDefinitions="150,*" ColumnSpacing="10">
+                                <TextBlock Grid.Column="0"
+                                           Text="Nom de la clé"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding ApiKeyName}"
                                          PlaceholderText="ex. X-API-Key ou api_key"
                                          AutomationProperties.Name="Nom de la clé API" />
-                            </StackPanel>
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Valeur de la clé" FontWeight="SemiBold" />
-                                <TextBox Text="{Binding ApiKeyValue}"
+                            </Grid>
+                            <Grid ColumnDefinitions="150,*" ColumnSpacing="10">
+                                <TextBlock Grid.Column="0"
+                                           Text="Valeur de la clé"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1"
+                                         Classes="mono"
+                                         Text="{Binding ApiKeyValue}"
                                          PlaceholderText="Valeur de la clé API"
                                          AutomationProperties.Name="Valeur de la clé API" />
-                            </StackPanel>
-                            <CheckBox IsChecked="{Binding ApiKeyInHeader}"
-                                      Content="Envoyer dans l'en-tête HTTP (sinon en paramètre de requête)"
+                            </Grid>
+                            <CheckBox Margin="160,0,0,0"
+                                      IsChecked="{Binding ApiKeyInHeader}"
+                                      Content="Envoyer dans l'en-tête HTTP (sinon en paramètre)"
                                       AutomationProperties.Name="Envoyer la clé API dans l'en-tête" />
                         </StackPanel>
                     </StackPanel>
@@ -103,16 +165,20 @@
                 <Grid RowDefinitions="Auto,*" RowSpacing="8" Margin="0,8,0,0">
                     <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="10">
                         <TextBlock Grid.Column="0"
-                                   Text="Type de corps :"
+                                   Text="Type de corps"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource TextMutedBrush}"
                                    VerticalAlignment="Center" />
                         <ComboBox Grid.Column="1"
                                   ItemsSource="{x:Static vm:RequestViewModel.BodyTypes}"
                                   SelectedItem="{Binding BodyType}"
-                                  MinWidth="170"
+                                  MinWidth="160"
                                   AutomationProperties.Name="Type de corps" />
 
                         <TextBlock Grid.Column="3"
-                                   Text="Délai max (s) :"
+                                   Text="Délai max (s)"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource TextMutedBrush}"
                                    VerticalAlignment="Center" />
                         <NumericUpDown Grid.Column="4"
                                        Value="{Binding TimeoutSeconds, Converter={x:Static conv:IntToDecimalConverter.Instance}, Mode=TwoWay}"
@@ -120,7 +186,7 @@
                                        Maximum="3600"
                                        Increment="5"
                                        FormatString="0"
-                                       Width="120"
+                                       Width="104"
                                        AutomationProperties.Name="Délai d'expiration en secondes" />
                     </Grid>
 
@@ -128,16 +194,18 @@
                     <TextBlock Grid.Row="1"
                                IsVisible="{Binding BodyType, Converter={x:Static conv:BodyTypeConverters.IsNone}}"
                                Text="Aucun corps ne sera envoyé avec cette requête."
-                               Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                               FontSize="13"
+                               Foreground="{DynamicResource TextMutedBrush}"
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center" />
 
                     <!-- Éditeur JSON ou Texte -->
                     <TextBox Grid.Row="1"
+                             Classes="mono"
                              Text="{Binding Body}"
                              AcceptsReturn="True"
                              TextWrapping="NoWrap"
-                             FontFamily="Cascadia Mono, Consolas, Liberation Mono, Menlo, monospace"
+                             LineHeight="19"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
                              PlaceholderText="Saisissez le contenu du corps de la requête..."

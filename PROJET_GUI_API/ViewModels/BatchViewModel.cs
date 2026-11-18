@@ -36,7 +36,12 @@ public partial class BatchViewModel : ViewModelBase
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
 
         VaryingParams.CollectionChanged += OnVaryingParamsCollectionChanged;
-        Warnings.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasWarnings));
+        Warnings.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasWarnings));
+            OnPropertyChanged(nameof(WarningsSummaryText));
+        };
+        Results.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasResults));
     }
 
     public static IReadOnlyList<BatchMode> BatchModes { get; } = Enum.GetValues<BatchMode>();
@@ -51,6 +56,10 @@ public partial class BatchViewModel : ViewModelBase
     public ObservableCollection<string> Warnings { get; } = [];
 
     public bool HasWarnings => Warnings.Count > 0;
+
+    public string WarningsSummaryText => Warnings.Count <= 1
+        ? $"{Warnings.Count} avertissement"
+        : $"{Warnings.Count} avertissements";
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(OpenInSingleRequestCommand))]
@@ -111,7 +120,9 @@ public partial class BatchViewModel : ViewModelBase
 
     public bool HasPlanError => !string.IsNullOrWhiteSpace(PlanError);
 
-    public string TotalRequestsText => $"{TotalRequests} requêtes seront envoyées";
+    public string TotalRequestsText => TotalRequests <= 1
+        ? $"{TotalRequests} requête sera envoyée"
+        : $"{TotalRequests} requêtes seront envoyées";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowPerRequestOptions))]
@@ -182,6 +193,8 @@ public partial class BatchViewModel : ViewModelBase
     public string ProgressText => $"{ProgressCurrent} / {ProgressTotal}";
 
     public ObservableCollection<BatchResultItem> Results { get; } = [];
+
+    public bool HasResults => Results.Count > 0;
 
     [ObservableProperty]
     public partial BatchResultItem? SelectedResult { get; set; }

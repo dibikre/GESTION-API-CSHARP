@@ -140,3 +140,37 @@ public static class GroupedFormatConverters
             _ => format.ToString()
         });
 }
+
+public static class HttpMethodConverters
+{
+    public static readonly IValueConverter ToUpper =
+        new FuncValueConverter<HttpMethodType, string>(method => method.ToString().ToUpperInvariant());
+
+    public static readonly IValueConverter IsGet =
+        new FuncValueConverter<HttpMethodType, bool>(method => method == HttpMethodType.Get);
+
+    public static readonly IValueConverter IsPost =
+        new FuncValueConverter<HttpMethodType, bool>(method => method == HttpMethodType.Post);
+
+    public static readonly IValueConverter IsPutOrPatch =
+        new FuncValueConverter<HttpMethodType, bool>(method => method is HttpMethodType.Put or HttpMethodType.Patch);
+
+    public static readonly IValueConverter IsDelete =
+        new FuncValueConverter<HttpMethodType, bool>(method => method == HttpMethodType.Delete);
+}
+
+public static class CollectionCountConverters
+{
+    public static readonly IValueConverter IsZero =
+        new FuncValueConverter<int, bool>(count => count == 0);
+
+    public static readonly IValueConverter IsPositive =
+        new FuncValueConverter<int, bool>(count => count > 0);
+}
+
+public static class StringDisplayConverters
+{
+    public static readonly IValueConverter EmptyToNull =
+        new FuncValueConverter<string?, string?>(text => string.IsNullOrWhiteSpace(text) ? null : text);
+}
+

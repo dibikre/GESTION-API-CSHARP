@@ -4,15 +4,20 @@
         xmlns:views="using:ApiTester.Views"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
-        Width="1100" Height="700"
+        mc:Ignorable="d" d:DesignWidth="1120" d:DesignHeight="720"
+        Width="1120" Height="720"
         MinWidth="900" MinHeight="600"
         x:Class="ApiTester.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
+        Background="{DynamicResource AppBgBrush}"
+        Foreground="{DynamicResource TextBrush}"
+        FontFamily="{DynamicResource AppFontFamily}"
+        FontSize="13"
         Icon="/Assets/avalonia-logo.ico"
         Title="ApiTester">
 
-    <TabControl SelectedIndex="{Binding SelectedTabIndex}" Margin="8">
+    <TabControl SelectedIndex="{Binding SelectedTabIndex}"
+                Padding="12">
         <TabItem Header="Requête">
             <views:SingleRequestView DataContext="{Binding SingleRequest}" />
         </TabItem>

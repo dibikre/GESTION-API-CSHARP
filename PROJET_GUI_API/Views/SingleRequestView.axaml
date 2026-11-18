@@ -1,7 +1,9 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
              xmlns:views="using:ApiTester.Views"
+             xmlns:conv="using:ApiTester.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="1060" d:DesignHeight="640"
@@ -12,7 +14,7 @@
         <KeyBinding Gesture="Ctrl+Enter" Command="{Binding SendCommand}" />
     </UserControl.KeyBindings>
 
-    <Grid Margin="4" RowSpacing="8">
+    <Grid RowSpacing="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" MinHeight="180" />
@@ -20,45 +22,72 @@
             <RowDefinition Height="*" MinHeight="180" />
         </Grid.RowDefinitions>
 
-        <!-- Barre d'envoi + indicateur de progression -->
-        <StackPanel Grid.Row="0" Spacing="6">
-            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                <ComboBox Grid.Column="0"
-                          ItemsSource="{x:Static vm:RequestViewModel.Methods}"
-                          SelectedItem="{Binding Request.Method}"
-                          MinWidth="110"
-                          AutomationProperties.Name="Méthode HTTP" />
+        <!-- Barre d'envoi unifiée + progression fine -->
+        <StackPanel Grid.Row="0" Spacing="4">
+            <Border Classes="sendBar" Padding="2">
+                <Grid ColumnDefinitions="Auto,1,*,Auto">
+                    <ComboBox Grid.Column="0"
+                              Classes="borderless"
+                              ItemsSource="{x:Static vm:RequestViewModel.Methods}"
+                              SelectedItem="{Binding Request.Method}"
+                              MinWidth="96"
+                              AutomationProperties.Name="Méthode HTTP">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="models:HttpMethodType">
+                                <TextBlock Text="{Binding Converter={x:Static conv:HttpMethodConverters.ToUpper}}"
+                                           Classes="httpMethod"
+                                           Classes.get="{Binding Converter={x:Static conv:HttpMethodConverters.IsGet}}"
+                                           Classes.post="{Binding Converter={x:Static conv:HttpMethodConverters.IsPost}}"
+                                           Classes.put="{Binding Converter={x:Static conv:HttpMethodConverters.IsPutOrPatch}}"
+                                           Classes.delete="{Binding Converter={x:Static conv:HttpMethodConverters.IsDelete}}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
 
-                <TextBox Grid.Column="1"
-                         Text="{Binding Request.Url}"
-                         PlaceholderText="https://api.exemple.com/ressource"
-                         AutomationProperties.Name="URL de la requête">
-                    <TextBox.KeyBindings>
-                        <KeyBinding Gesture="Enter" Command="{Binding SendCommand}" />
-                    </TextBox.KeyBindings>
-                </TextBox>
+                    <Border Grid.Column="1"
+                            Width="1"
+                            Background="{DynamicResource BorderBrush}"
+                            Margin="0,5" />
 
-                <Panel Grid.Column="2">
-                    <Button Content="Envoyer"
-                            Command="{Binding SendCommand}"
-                            IsVisible="{Binding !Response.IsBusy}"
-                            Classes="accent"
-                            MinWidth="100"
-                            HorizontalContentAlignment="Center"
-                            AutomationProperties.Name="Envoyer la requête" />
+                    <TextBox Grid.Column="2"
+                             Classes="borderless mono"
+                             Text="{Binding Request.Url}"
+                             PlaceholderText="https://api.exemple.com/ressource"
+                             AutomationProperties.Name="URL de la requête">
+                        <TextBox.KeyBindings>
+                            <KeyBinding Gesture="Enter" Command="{Binding SendCommand}" />
+                        </TextBox.KeyBindings>
+                    </TextBox>
 
-                    <Button Content="Annuler"
-                            Command="{Binding SendCancelCommand}"
-                            IsVisible="{Binding Response.IsBusy}"
-                            MinWidth="100"
-                            HorizontalContentAlignment="Center"
-                            AutomationProperties.Name="Annuler la requête" />
-                </Panel>
-            </Grid>
+                    <Panel Grid.Column="3" Margin="4,0,0,0">
+                        <Button Classes="primary"
+                                Command="{Binding SendCommand}"
+                                IsVisible="{Binding !Response.IsBusy}"
+                                MinWidth="96"
+                                AutomationProperties.Name="Envoyer la requête">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Path Classes="iconStroke" Data="{StaticResource IconSend}" />
+                                <TextBlock Text="Envoyer" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button Classes="secondary"
+                                Command="{Binding SendCancelCommand}"
+                                IsVisible="{Binding Response.IsBusy}"
+                                MinWidth="96"
+                                AutomationProperties.Name="Annuler la requête">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Path Classes="iconStroke" Data="{StaticResource IconStop}" />
+                                <TextBlock Text="Annuler" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </Panel>
+                </Grid>
+            </Border>
 
             <ProgressBar IsIndeterminate="True"
                          IsVisible="{Binding Response.IsBusy}"
-                         Height="3"
+                         Height="2"
                          AutomationProperties.Name="Envoi de la requête en cours" />
         </StackPanel>
 
@@ -66,12 +95,10 @@
         <views:RequestView Grid.Row="1"
                            DataContext="{Binding Request}" />
 
-        <!-- Séparateur redimensionnable -->
+        <!-- Séparateur fin -->
         <GridSplitter Grid.Row="2"
-                      Height="6"
-                      ResizeDirection="Rows"
-                      Background="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                      HorizontalAlignment="Stretch" />
+                      Classes="horizontal"
+                      ResizeDirection="Rows" />
 
         <!-- Panneau Réponse -->
         <views:ResponseView Grid.Row="3"

@@ -9,95 +9,187 @@
              x:Name="Root"
              x:DataType="x:Object">
 
-    <Grid RowDefinitions="Auto,*,Auto" RowSpacing="6">
+    <Grid RowDefinitions="Auto,*">
         <!-- En-tête des colonnes -->
-        <Grid Grid.Row="0"
-              ColumnDefinitions="36,*,*,78,96,96,86,86"
-              ColumnSpacing="6"
-              Margin="4,0,4,0">
-            <TextBlock Grid.Column="0" Text="Actif" FontSize="11" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-            <TextBlock Grid.Column="1" Text="Nom" FontSize="11" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-            <TextBlock Grid.Column="2" Text="Valeur" FontSize="11" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-            <TextBlock Grid.Column="3" Text="Varier" FontSize="11" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-            <TextBlock Grid.Column="4" Text="Début" FontSize="11" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-            <TextBlock Grid.Column="5" Text="Fin" FontSize="11" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-            <TextBlock Grid.Column="6" Text="Pas" FontSize="11" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-        </Grid>
+        <Border Grid.Row="0"
+                IsVisible="{Binding #ItemsList.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="0,0,12,4">
+            <Grid ColumnDefinitions="32,*,2*,56,72,72,56,28" ColumnSpacing="6">
+                <TextBlock Grid.Column="0"
+                           Text="Actif"
+                           FontSize="11"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           Text="Nom"
+                           FontSize="11"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           Margin="6,0,0,0" />
+                <TextBlock Grid.Column="2"
+                           Text="Valeur"
+                           FontSize="11"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           Margin="6,0,0,0" />
+                <TextBlock Grid.Column="3"
+                           Text="Varier"
+                           FontSize="11"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Grid.Column="4"
+                           Text="Début"
+                           FontSize="11"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           Margin="4,0,0,0" />
+                <TextBlock Grid.Column="5"
+                           Text="Fin"
+                           FontSize="11"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           Margin="4,0,0,0" />
+                <TextBlock Grid.Column="6"
+                           Text="Pas"
+                           FontSize="11"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           Margin="4,0,0,0" />
+            </Grid>
+        </Border>
 
+        <!-- État vide -->
+        <StackPanel Grid.Row="1"
+                    IsVisible="{Binding #ItemsList.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsZero}}"
+                    Spacing="8"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+            <TextBlock Text="Aucun élément. Clique sur « + Ajouter »."
+                       FontSize="13"
+                       Foreground="{DynamicResource TextMutedBrush}"
+                       HorizontalAlignment="Center" />
+            <Button Classes="ghost"
+                    HorizontalAlignment="Center"
+                    Command="{Binding #Root.AddCommand}"
+                    AutomationProperties.Name="Ajouter un paramètre d'URL">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                    <TextBlock Text="Ajouter un paramètre" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </StackPanel>
+
+        <!-- Liste compacte avec gouttière droite -->
         <ScrollViewer Grid.Row="1"
+                      IsVisible="{Binding #ItemsList.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                      AllowAutoHide="False"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding #Root.Items}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="models:VaryingParam">
-                        <Grid ColumnDefinitions="36,*,*,78,96,96,86,86"
-                              ColumnSpacing="6"
-                              Margin="0,0,0,6">
-                            <CheckBox Grid.Column="0"
-                                      IsChecked="{Binding IsEnabled}"
-                                      HorizontalAlignment="Center"
-                                      VerticalAlignment="Center"
-                                      AutomationProperties.Name="Activer le paramètre" />
+            <StackPanel Margin="0,0,12,4" Spacing="0">
+                <ItemsControl x:Name="ItemsList" ItemsSource="{Binding #Root.Items}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:VaryingParam">
+                            <Border Classes="kvRow"
+                                    Height="28"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="0,0,0,1">
+                                <Grid ColumnDefinitions="32,*,2*,56,72,72,56,28" ColumnSpacing="6">
+                                    <CheckBox Grid.Column="0"
+                                              IsChecked="{Binding IsEnabled}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              AutomationProperties.Name="Activer le paramètre" />
 
-                            <TextBox Grid.Column="1"
-                                     Text="{Binding Name}"
-                                     PlaceholderText="Nom"
-                                     AutomationProperties.Name="Nom du paramètre" />
+                                    <TextBox Grid.Column="1"
+                                             Classes="kvCell"
+                                             Text="{Binding Name}"
+                                             PlaceholderText="Nom"
+                                             ToolTip.Tip="{Binding Name, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
+                                             VerticalAlignment="Center"
+                                             AutomationProperties.Name="Nom du paramètre" />
 
-                            <TextBox Grid.Column="2"
-                                     Text="{Binding Value}"
-                                     PlaceholderText="Valeur fixe"
-                                     AutomationProperties.Name="Valeur du paramètre" />
+                                    <Panel Grid.Column="2"
+                                           Classes="kvValueCell"
+                                           Classes.hasValue="{Binding Value, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                           ToolTip.Tip="{Binding Value, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
+                                           VerticalAlignment="Center">
+                                        <TextBox Classes="kvCell"
+                                                 Text="{Binding Value}"
+                                                 PlaceholderText="Valeur fixe"
+                                                 AutomationProperties.Name="Valeur du paramètre" />
+                                        <TextBlock Classes="kvTruncatedOverlay"
+                                                   Text="{Binding Value}"
+                                                   FontSize="12.5"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   IsHitTestVisible="False"
+                                                   VerticalAlignment="Center"
+                                                   Margin="6,0" />
+                                    </Panel>
 
-                            <CheckBox Grid.Column="3"
-                                      IsChecked="{Binding IsVarying}"
-                                      Content="Varier"
-                                      VerticalAlignment="Center"
-                                      AutomationProperties.Name="Faire varier ce paramètre" />
+                                    <CheckBox Grid.Column="3"
+                                              IsChecked="{Binding IsVarying}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              AutomationProperties.Name="Faire varier ce paramètre" />
 
-                            <NumericUpDown Grid.Column="4"
-                                           Value="{Binding Start, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
-                                           IsEnabled="{Binding IsVarying}"
-                                           FormatString="0"
-                                           Increment="1"
-                                           ShowButtonSpinner="False"
-                                           AutomationProperties.Name="Valeur de début" />
+                                    <NumericUpDown Grid.Column="4"
+                                                   IsVisible="{Binding IsVarying}"
+                                                   Value="{Binding Start, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                   Height="24"
+                                                   MinHeight="24"
+                                                   FormatString="0"
+                                                   Increment="1"
+                                                   ShowButtonSpinner="False"
+                                                   VerticalAlignment="Center"
+                                                   AutomationProperties.Name="Valeur de début" />
 
-                            <NumericUpDown Grid.Column="5"
-                                           Value="{Binding End, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
-                                           IsEnabled="{Binding IsVarying}"
-                                           FormatString="0"
-                                           Increment="1"
-                                           ShowButtonSpinner="False"
-                                           AutomationProperties.Name="Valeur de fin" />
+                                    <NumericUpDown Grid.Column="5"
+                                                   IsVisible="{Binding IsVarying}"
+                                                   Value="{Binding End, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                   Height="24"
+                                                   MinHeight="24"
+                                                   FormatString="0"
+                                                   Increment="1"
+                                                   ShowButtonSpinner="False"
+                                                   VerticalAlignment="Center"
+                                                   AutomationProperties.Name="Valeur de fin" />
 
-                            <NumericUpDown Grid.Column="6"
-                                           Value="{Binding Step, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
-                                           IsEnabled="{Binding IsVarying}"
-                                           FormatString="0"
-                                           Increment="1"
-                                           ShowButtonSpinner="False"
-                                           AutomationProperties.Name="Pas" />
+                                    <NumericUpDown Grid.Column="6"
+                                                   IsVisible="{Binding IsVarying}"
+                                                   Value="{Binding Step, Converter={x:Static conv:LongToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                   Height="24"
+                                                   MinHeight="24"
+                                                   FormatString="0"
+                                                   Increment="1"
+                                                   ShowButtonSpinner="False"
+                                                   VerticalAlignment="Center"
+                                                   AutomationProperties.Name="Pas" />
 
-                            <Button Grid.Column="7"
-                                    Content="Supprimer"
-                                    Command="{Binding #Root.RemoveCommand}"
-                                    CommandParameter="{Binding}"
-                                    HorizontalAlignment="Stretch"
-                                    HorizontalContentAlignment="Center"
-                                    VerticalAlignment="Center"
-                                    AutomationProperties.Name="Supprimer le paramètre" />
-                        </Grid>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                                    <Button Grid.Column="7"
+                                            Classes="icon danger kvDelete"
+                                            Command="{Binding #Root.RemoveCommand}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip.Tip="Supprimer"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            AutomationProperties.Name="Supprimer le paramètre">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconTrash}" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Button Classes="ghost"
+                        HorizontalAlignment="Left"
+                        Margin="0,6,0,2"
+                        Command="{Binding #Root.AddCommand}"
+                        AutomationProperties.Name="Ajouter un paramètre d'URL">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                        <TextBlock Text="Ajouter un paramètre" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
         </ScrollViewer>
-
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Left">
-            <Button Content="Ajouter un paramètre"
-                    Command="{Binding #Root.AddCommand}"
-                    AutomationProperties.Name="Ajouter un paramètre d'URL" />
-        </StackPanel>
     </Grid>
 
 </UserControl>
