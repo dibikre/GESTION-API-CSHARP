@@ -1,0 +1,408 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:views="using:ApiTester.Views"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1060" d:DesignHeight="640"
+             x:Class="ApiTester.Views.BatchView"
+             x:DataType="vm:BatchViewModel">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="WarningBannerBackground" Color="#FFFBEB" />
+                    <SolidColorBrush x:Key="WarningBannerBorder" Color="#FCD34D" />
+                    <SolidColorBrush x:Key="WarningBannerForeground" Color="#92400E" />
+                    <SolidColorBrush x:Key="BatchSuccessBackground" Color="#DCFCE7" />
+                    <SolidColorBrush x:Key="BatchSuccessForeground" Color="#166534" />
+                    <SolidColorBrush x:Key="BatchRedirectBackground" Color="#FFEDD5" />
+                    <SolidColorBrush x:Key="BatchRedirectForeground" Color="#9A3412" />
+                    <SolidColorBrush x:Key="BatchErrorBackground" Color="#FEE2E2" />
+                    <SolidColorBrush x:Key="BatchErrorForeground" Color="#991B1B" />
+                    <SolidColorBrush x:Key="BatchNeutralBackground" Color="#E5E7EB" />
+                    <SolidColorBrush x:Key="BatchNeutralForeground" Color="#374151" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="WarningBannerBackground" Color="#451A03" />
+                    <SolidColorBrush x:Key="WarningBannerBorder" Color="#D97706" />
+                    <SolidColorBrush x:Key="WarningBannerForeground" Color="#FDE68A" />
+                    <SolidColorBrush x:Key="BatchSuccessBackground" Color="#14532D" />
+                    <SolidColorBrush x:Key="BatchSuccessForeground" Color="#86EFAC" />
+                    <SolidColorBrush x:Key="BatchRedirectBackground" Color="#7C2D12" />
+                    <SolidColorBrush x:Key="BatchRedirectForeground" Color="#FDBA74" />
+                    <SolidColorBrush x:Key="BatchErrorBackground" Color="#7F1D1D" />
+                    <SolidColorBrush x:Key="BatchErrorForeground" Color="#FCA5A5" />
+                    <SolidColorBrush x:Key="BatchNeutralBackground" Color="#374151" />
+                    <SolidColorBrush x:Key="BatchNeutralForeground" Color="#E5E7EB" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Border.batchStatus">
+            <Setter Property="Background" Value="{DynamicResource BatchNeutralBackground}" />
+        </Style>
+        <Style Selector="Border.batchStatus TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource BatchNeutralForeground}" />
+        </Style>
+        <Style Selector="Border.batchStatus.success">
+            <Setter Property="Background" Value="{DynamicResource BatchSuccessBackground}" />
+        </Style>
+        <Style Selector="Border.batchStatus.success TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource BatchSuccessForeground}" />
+        </Style>
+        <Style Selector="Border.batchStatus.redirect">
+            <Setter Property="Background" Value="{DynamicResource BatchRedirectBackground}" />
+        </Style>
+        <Style Selector="Border.batchStatus.redirect TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource BatchRedirectForeground}" />
+        </Style>
+        <Style Selector="Border.batchStatus.error">
+            <Setter Property="Background" Value="{DynamicResource BatchErrorBackground}" />
+        </Style>
+        <Style Selector="Border.batchStatus.error TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource BatchErrorForeground}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid Margin="4" RowDefinitions="Auto,*" RowSpacing="8">
+        <!-- Haut : saisie curl + boutons + avertissements -->
+        <StackPanel Grid.Row="0" Spacing="8">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Grid.Column="0"
+                         Text="{Binding CurlText}"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         Height="88"
+                         FontFamily="Cascadia Mono, Consolas, Liberation Mono, Menlo, monospace"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         PlaceholderText="Colle ici ta commande curl"
+                         AutomationProperties.Name="Commande curl" />
+
+                <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Top">
+                    <Button Content="Analyser"
+                            Command="{Binding ParseCommand}"
+                            Classes="accent"
+                            MinWidth="190"
+                            HorizontalContentAlignment="Center"
+                            AutomationProperties.Name="Analyser la commande curl" />
+                    <Button Content="Effacer"
+                            Command="{Binding ClearCommand}"
+                            MinWidth="190"
+                            HorizontalContentAlignment="Center"
+                            AutomationProperties.Name="Effacer la commande curl" />
+                    <Button Content="Ouvrir dans l'onglet Requête"
+                            Command="{Binding OpenInSingleRequestCommand}"
+                            MinWidth="190"
+                            HorizontalContentAlignment="Center"
+                            AutomationProperties.Name="Ouvrir dans l'onglet Requête" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Zone des avertissements -->
+            <Border IsVisible="{Binding HasWarnings}"
+                    Background="{DynamicResource WarningBannerBackground}"
+                    BorderBrush="{DynamicResource WarningBannerBorder}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="8,6">
+                <ItemsControl ItemsSource="{Binding Warnings}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <TextBlock Text="{Binding}"
+                                       Foreground="{DynamicResource WarningBannerForeground}"
+                                       FontSize="12"
+                                       TextWrapping="Wrap" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+        </StackPanel>
+
+        <!-- Corps du lot après analyse -->
+        <Grid Grid.Row="1"
+              IsVisible="{Binding HasParsed}"
+              RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" MinHeight="160" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" MinHeight="180" />
+            </Grid.RowDefinitions>
+
+            <!-- Ligne récapitulative Méthode + URL -->
+            <Border Grid.Row="0"
+                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="8,6"
+                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                    <Border Grid.Column="0"
+                            BorderBrush="{DynamicResource SystemControlHighlightAccentBrush}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="8,2"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Method}"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource SystemControlHighlightAccentBrush}" />
+                    </Border>
+                    <SelectableTextBlock Grid.Column="1"
+                                         Text="{Binding Url}"
+                                         VerticalAlignment="Center"
+                                         TextTrimming="CharacterEllipsis" />
+                </Grid>
+            </Border>
+
+            <!-- Onglets de configuration du lot -->
+            <Border Grid.Row="1"
+                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="8"
+                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
+                <TabControl>
+                    <TabItem Header="Paramètres d'URL">
+                        <views:VaryingParamEditor Margin="0,8,0,0"
+                                                  Items="{Binding VaryingParams}"
+                                                  AddCommand="{Binding AddVaryingParamCommand}"
+                                                  RemoveCommand="{Binding RemoveVaryingParamCommand}" />
+                    </TabItem>
+
+                    <TabItem Header="En-têtes">
+                        <views:KeyValueEditor Margin="0,8,0,0"
+                                              Items="{Binding Headers}"
+                                              AddCommand="{Binding AddHeaderCommand}"
+                                              RemoveCommand="{Binding RemoveHeaderCommand}"
+                                              AddButtonText="Ajouter un en-tête"
+                                              KeyPlaceholder="Nom de l'en-tête"
+                                              ValuePlaceholder="Valeur" />
+                    </TabItem>
+
+                    <TabItem Header="Corps">
+                        <TextBox Margin="0,8,0,0"
+                                 Text="{Binding Body}"
+                                 AcceptsReturn="True"
+                                 TextWrapping="NoWrap"
+                                 FontFamily="Cascadia Mono, Consolas, Liberation Mono, Menlo, monospace"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 PlaceholderText="Aucun corps (ou saisissez le corps à envoyer)..."
+                                 AutomationProperties.Name="Corps de la requête du lot" />
+                    </TabItem>
+                </TabControl>
+            </Border>
+
+            <!-- Séparateur horizontal -->
+            <GridSplitter Grid.Row="2"
+                          Height="6"
+                          ResizeDirection="Rows"
+                          Background="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                          HorizontalAlignment="Stretch" />
+
+            <!-- Barre d'exécution -->
+            <Border Grid.Row="3"
+                    BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="8"
+                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
+                <StackPanel Spacing="6">
+                    <WrapPanel Orientation="Horizontal">
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,14,4" VerticalAlignment="Center">
+                            <TextBlock Text="Mode :" VerticalAlignment="Center" />
+                            <ComboBox ItemsSource="{x:Static vm:BatchViewModel.BatchModes}"
+                                      SelectedItem="{Binding SelectedMode}"
+                                      MinWidth="140"
+                                      AutomationProperties.Name="Mode de génération des paramètres">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:BatchMode">
+                                        <TextBlock Text="{Binding Converter={x:Static conv:BatchModeConverters.ToLabel}}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,14,4" VerticalAlignment="Center">
+                            <TextBlock Text="Pause (ms) :" VerticalAlignment="Center" />
+                            <NumericUpDown Value="{Binding DelayMs, Converter={x:Static conv:DelayMsToDecimalConverter.Instance}, Mode=TwoWay}"
+                                           Minimum="0"
+                                           Maximum="60000"
+                                           Increment="100"
+                                           FormatString="0"
+                                           Width="115"
+                                           AutomationProperties.Name="Pause entre requêtes en millisecondes" />
+                        </StackPanel>
+
+                        <CheckBox IsChecked="{Binding StopOnFailure}"
+                                  Content="Arrêter au premier échec"
+                                  Margin="0,0,14,4"
+                                  VerticalAlignment="Center"
+                                  AutomationProperties.Name="Arrêter au premier échec" />
+
+                        <CheckBox IsChecked="{Binding KeepBodies}"
+                                  Content="Conserver les corps"
+                                  Margin="0,0,14,4"
+                                  VerticalAlignment="Center"
+                                  AutomationProperties.Name="Conserver les corps de réponse" />
+
+                        <TextBlock Text="{Binding TotalRequestsText}"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,14,4"
+                                   VerticalAlignment="Center" />
+
+                        <CheckBox IsVisible="{Binding NeedsConfirmation}"
+                                  IsChecked="{Binding IsConfirmed}"
+                                  Content="Confirmer (> 500 requêtes)"
+                                  FontWeight="SemiBold"
+                                  Margin="0,0,14,4"
+                                  VerticalAlignment="Center"
+                                  AutomationProperties.Name="Confirmer l'envoi de plus de 500 requêtes" />
+
+                        <Panel Margin="0,0,0,4" VerticalAlignment="Center">
+                            <Button Content="Lancer"
+                                    Command="{Binding RunCommand}"
+                                    IsVisible="{Binding !IsRunning}"
+                                    Classes="accent"
+                                    MinWidth="100"
+                                    HorizontalContentAlignment="Center"
+                                    AutomationProperties.Name="Lancer le lot" />
+                            <Button Content="Annuler"
+                                    Command="{Binding RunCancelCommand}"
+                                    IsVisible="{Binding IsRunning}"
+                                    MinWidth="100"
+                                    HorizontalContentAlignment="Center"
+                                    AutomationProperties.Name="Annuler le lot" />
+                        </Panel>
+                    </WrapPanel>
+
+                    <TextBlock IsVisible="{Binding HasPlanError}"
+                               Text="{Binding PlanError}"
+                               Foreground="{DynamicResource BatchErrorForeground}"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap" />
+
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                        <ProgressBar Grid.Column="0"
+                                     Minimum="0"
+                                     Maximum="{Binding ProgressTotal}"
+                                     Value="{Binding ProgressCurrent}"
+                                     Height="8"
+                                     VerticalAlignment="Center"
+                                     AutomationProperties.Name="Progression du lot" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding ProgressText}"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Bas : résultats + détail de la réponse sélectionnée -->
+            <Grid Grid.Row="4" ColumnSpacing="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" MinWidth="280" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" MinWidth="280" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Liste des résultats -->
+                <Border Grid.Column="0"
+                        BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="6"
+                        Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
+                    <Grid RowDefinitions="Auto,*" RowSpacing="6">
+                        <Grid Grid.Row="0"
+                              ColumnDefinitions="42,*,76,72,72"
+                              ColumnSpacing="6"
+                              Margin="8,0,8,0">
+                            <TextBlock Grid.Column="0" Text="#" FontWeight="SemiBold" FontSize="12" />
+                            <TextBlock Grid.Column="1" Text="Paramètres" FontWeight="SemiBold" FontSize="12" />
+                            <TextBlock Grid.Column="2" Text="Statut" FontWeight="SemiBold" FontSize="12" />
+                            <TextBlock Grid.Column="3" Text="Durée" FontWeight="SemiBold" FontSize="12" />
+                            <TextBlock Grid.Column="4" Text="Taille" FontWeight="SemiBold" FontSize="12" />
+                        </Grid>
+
+                        <ListBox Grid.Row="1"
+                                 ItemsSource="{Binding Results}"
+                                 SelectedItem="{Binding SelectedResult}"
+                                 AutomationProperties.Name="Résultats du lot">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:BatchResultItem">
+                                    <StackPanel Spacing="2">
+                                        <Grid ColumnDefinitions="42,*,76,72,72" ColumnSpacing="6">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding Index}"
+                                                       VerticalAlignment="Center" />
+
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding ParamsText}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+
+                                            <Border Grid.Column="2"
+                                                    Classes="batchStatus"
+                                                    Classes.success="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsSuccess}}"
+                                                    Classes.redirect="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsRedirect}}"
+                                                    Classes.error="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsError}}"
+                                                    CornerRadius="4"
+                                                    Padding="6,2"
+                                                    HorizontalAlignment="Left"
+                                                    VerticalAlignment="Center">
+                                                <Panel>
+                                                    <TextBlock Text="{Binding StatusCode}"
+                                                               IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsPositiveInt}}"
+                                                               FontWeight="SemiBold"
+                                                               FontSize="12" />
+                                                    <TextBlock Text="Erreur"
+                                                               IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsZeroInt}}"
+                                                               FontWeight="SemiBold"
+                                                               FontSize="12" />
+                                                </Panel>
+                                            </Border>
+
+                                            <TextBlock Grid.Column="3"
+                                                       Text="{Binding DurationMs, StringFormat='{}{0} ms'}"
+                                                       VerticalAlignment="Center" />
+
+                                            <TextBlock Grid.Column="4"
+                                                       Text="{Binding SizeText}"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+
+                                        <TextBlock Text="{Binding ErrorMessage}"
+                                                   IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                                   Foreground="{DynamicResource BatchErrorForeground}"
+                                                   FontSize="11"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Border>
+
+                <!-- Séparateur vertical -->
+                <GridSplitter Grid.Column="1"
+                              Width="6"
+                              ResizeDirection="Columns"
+                              Background="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                              VerticalAlignment="Stretch" />
+
+                <!-- Détail de la réponse sélectionnée -->
+                <views:ResponseView Grid.Column="2"
+                                    DataContext="{Binding SelectedResponse}" />
+            </Grid>
+        </Grid>
+    </Grid>
+
+</UserControl>

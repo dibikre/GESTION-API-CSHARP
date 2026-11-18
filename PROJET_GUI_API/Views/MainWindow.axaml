@@ -12,74 +12,14 @@
         Icon="/Assets/avalonia-logo.ico"
         Title="ApiTester">
 
-    <Window.KeyBindings>
-        <KeyBinding Gesture="Ctrl+Enter" Command="{Binding SendCommand}" />
-    </Window.KeyBindings>
+    <TabControl SelectedIndex="{Binding SelectedTabIndex}" Margin="8">
+        <TabItem Header="Requête">
+            <views:SingleRequestView DataContext="{Binding SingleRequest}" />
+        </TabItem>
 
-    <Grid Margin="12" RowSpacing="8">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" MinHeight="180" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" MinHeight="180" />
-        </Grid.RowDefinitions>
-
-        <!-- Barre d'envoi + indicateur de progression -->
-        <StackPanel Grid.Row="0" Spacing="6">
-            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                <ComboBox Grid.Column="0"
-                          ItemsSource="{x:Static vm:RequestViewModel.Methods}"
-                          SelectedItem="{Binding Request.Method}"
-                          MinWidth="110"
-                          AutomationProperties.Name="Méthode HTTP" />
-
-                <TextBox Grid.Column="1"
-                         Text="{Binding Request.Url}"
-                         PlaceholderText="https://api.exemple.com/ressource"
-                         AutomationProperties.Name="URL de la requête">
-                    <TextBox.KeyBindings>
-                        <KeyBinding Gesture="Enter" Command="{Binding SendCommand}" />
-                    </TextBox.KeyBindings>
-                </TextBox>
-
-                <Panel Grid.Column="2">
-                    <Button Content="Envoyer"
-                            Command="{Binding SendCommand}"
-                            IsVisible="{Binding !Response.IsBusy}"
-                            Classes="accent"
-                            MinWidth="100"
-                            HorizontalContentAlignment="Center"
-                            AutomationProperties.Name="Envoyer la requête" />
-
-                    <Button Content="Annuler"
-                            Command="{Binding SendCancelCommand}"
-                            IsVisible="{Binding Response.IsBusy}"
-                            MinWidth="100"
-                            HorizontalContentAlignment="Center"
-                            AutomationProperties.Name="Annuler la requête" />
-                </Panel>
-            </Grid>
-
-            <ProgressBar IsIndeterminate="True"
-                         IsVisible="{Binding Response.IsBusy}"
-                         Height="3"
-                         AutomationProperties.Name="Envoi de la requête en cours" />
-        </StackPanel>
-
-        <!-- Panneau Requête -->
-        <views:RequestView Grid.Row="1"
-                           DataContext="{Binding Request}" />
-
-        <!-- Séparateur redimensionnable -->
-        <GridSplitter Grid.Row="2"
-                      Height="6"
-                      ResizeDirection="Rows"
-                      Background="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                      HorizontalAlignment="Stretch" />
-
-        <!-- Panneau Réponse -->
-        <views:ResponseView Grid.Row="3"
-                            DataContext="{Binding Response}" />
-    </Grid>
+        <TabItem Header="Lot (curl)">
+            <views:BatchView DataContext="{Binding Batch}" />
+        </TabItem>
+    </TabControl>
 
 </Window>

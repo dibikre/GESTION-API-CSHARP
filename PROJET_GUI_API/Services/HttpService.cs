@@ -242,15 +242,27 @@ public class HttpService : IHttpService
             var key = header.Key.Trim();
             var value = header.Value ?? string.Empty;
 
-            if (httpRequest.Headers.TryAddWithoutValidation(key, value))
+            try
             {
-                continue;
-            }
+                if (httpRequest.Headers.TryAddWithoutValidation(key, value))
+                {
+                    continue;
+                }
 
-            if (httpRequest.Content is not null)
+                if (httpRequest.Content is not null)
+                {
+                    httpRequest.Content.Headers.Remove(key);
+                    if (httpRequest.Content.Headers.TryAddWithoutValidation(key, value))
+                    {
+                        continue;
+                    }
+                }
+
+                Log.Warning("En-tête HTTP ignoré ou refusé par .NET : {HeaderName}.", key);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or FormatException)
             {
-                httpRequest.Content.Headers.Remove(key);
-                httpRequest.Content.Headers.TryAddWithoutValidation(key, value);
+                Log.Warning("En-tête HTTP refusé par .NET : {HeaderName} ({Reason}).", key, ex.Message);
             }
         }
     }

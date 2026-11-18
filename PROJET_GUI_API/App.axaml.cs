@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using Avalonia;
@@ -42,11 +43,25 @@ public partial class App : Application
 
     private static void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton(_ => new HttpClient
+        services.AddSingleton(_ =>
         {
-            Timeout = Timeout.InfiniteTimeSpan
+            var handler = new SocketsHttpHandler
+            {
+                UseCookies = false,
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+            };
+
+            return new HttpClient(handler, disposeHandler: true)
+            {
+                Timeout = Timeout.InfiniteTimeSpan
+            };
         });
+
         services.AddSingleton<IHttpService, HttpService>();
+        services.AddSingleton<ICurlParser, CurlParser>();
+        services.AddSingleton<IBatchRunner, BatchRunner>();
+        services.AddSingleton<SingleRequestViewModel>();
+        services.AddSingleton<BatchViewModel>();
         services.AddSingleton<MainWindowViewModel>();
     }
 }

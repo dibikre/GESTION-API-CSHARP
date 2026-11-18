@@ -55,3 +55,64 @@ public sealed class IntToDecimalConverter : IValueConverter
         return 30;
     }
 }
+
+public sealed class DelayMsToDecimalConverter : IValueConverter
+{
+    public static readonly DelayMsToDecimalConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int intValue)
+        {
+            return (decimal)intValue;
+        }
+
+        return 500m;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is decimal decValue)
+        {
+            return Math.Clamp((int)decValue, 0, 60_000);
+        }
+
+        return 500;
+    }
+}
+
+public sealed class LongToDecimalConverter : IValueConverter
+{
+    public static readonly LongToDecimalConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is long longValue)
+        {
+            return (decimal)longValue;
+        }
+
+        return 1m;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is decimal decValue)
+        {
+            return (long)decValue;
+        }
+
+        return 1L;
+    }
+}
+
+public static class BatchModeConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<BatchMode, string>(mode => mode switch
+        {
+            BatchMode.Combinations => "Combinaisons",
+            BatchMode.Parallel => "En parallèle",
+            _ => mode.ToString()
+        });
+}
