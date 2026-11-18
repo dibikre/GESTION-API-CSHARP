@@ -1,0 +1,203 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="300"
+             x:Class="ApiTester.Views.ResponseView"
+             x:DataType="vm:ResponseViewModel">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="StatusSuccessBackground" Color="#DCFCE7" />
+                    <SolidColorBrush x:Key="StatusSuccessForeground" Color="#166534" />
+                    <SolidColorBrush x:Key="StatusRedirectBackground" Color="#FFEDD5" />
+                    <SolidColorBrush x:Key="StatusRedirectForeground" Color="#9A3412" />
+                    <SolidColorBrush x:Key="StatusErrorBackground" Color="#FEE2E2" />
+                    <SolidColorBrush x:Key="StatusErrorForeground" Color="#991B1B" />
+                    <SolidColorBrush x:Key="StatusNeutralBackground" Color="#E5E7EB" />
+                    <SolidColorBrush x:Key="StatusNeutralForeground" Color="#374151" />
+                    <SolidColorBrush x:Key="ErrorBannerBackground" Color="#FEF2F2" />
+                    <SolidColorBrush x:Key="ErrorBannerBorder" Color="#FCA5A5" />
+                    <SolidColorBrush x:Key="ErrorBannerForeground" Color="#991B1B" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="StatusSuccessBackground" Color="#14532D" />
+                    <SolidColorBrush x:Key="StatusSuccessForeground" Color="#86EFAC" />
+                    <SolidColorBrush x:Key="StatusRedirectBackground" Color="#7C2D12" />
+                    <SolidColorBrush x:Key="StatusRedirectForeground" Color="#FDBA74" />
+                    <SolidColorBrush x:Key="StatusErrorBackground" Color="#7F1D1D" />
+                    <SolidColorBrush x:Key="StatusErrorForeground" Color="#FCA5A5" />
+                    <SolidColorBrush x:Key="StatusNeutralBackground" Color="#374151" />
+                    <SolidColorBrush x:Key="StatusNeutralForeground" Color="#E5E7EB" />
+                    <SolidColorBrush x:Key="ErrorBannerBackground" Color="#450A0A" />
+                    <SolidColorBrush x:Key="ErrorBannerBorder" Color="#B91C1C" />
+                    <SolidColorBrush x:Key="ErrorBannerForeground" Color="#FECACA" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Border.statusBadge">
+            <Setter Property="Background" Value="{DynamicResource StatusNeutralBackground}" />
+        </Style>
+        <Style Selector="Border.statusBadge TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource StatusNeutralForeground}" />
+        </Style>
+        <Style Selector="Border.statusBadge.success">
+            <Setter Property="Background" Value="{DynamicResource StatusSuccessBackground}" />
+        </Style>
+        <Style Selector="Border.statusBadge.success TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource StatusSuccessForeground}" />
+        </Style>
+        <Style Selector="Border.statusBadge.redirect">
+            <Setter Property="Background" Value="{DynamicResource StatusRedirectBackground}" />
+        </Style>
+        <Style Selector="Border.statusBadge.redirect TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource StatusRedirectForeground}" />
+        </Style>
+        <Style Selector="Border.statusBadge.error">
+            <Setter Property="Background" Value="{DynamicResource StatusErrorBackground}" />
+        </Style>
+        <Style Selector="Border.statusBadge.error TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource StatusErrorForeground}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+            BorderThickness="1"
+            CornerRadius="6"
+            Padding="10"
+            Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
+        <Grid RowDefinitions="Auto,Auto,*">
+            <!-- État vide -->
+            <TextBlock Grid.Row="0"
+                       Grid.RowSpan="3"
+                       Text="Envoie une requête pour voir la réponse"
+                       Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center">
+                <TextBlock.IsVisible>
+                    <MultiBinding Converter="{x:Static BoolConverters.And}">
+                        <Binding Path="!HasResponse" />
+                        <Binding Path="!HasError" />
+                    </MultiBinding>
+                </TextBlock.IsVisible>
+            </TextBlock>
+
+            <!-- Ligne de statut -->
+            <WrapPanel Grid.Row="0"
+                       IsVisible="{Binding HasResponse}"
+                       Orientation="Horizontal"
+                       Margin="0,0,0,8">
+                <Border Classes="statusBadge"
+                        Classes.success="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsSuccess}}"
+                        Classes.redirect="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsRedirect}}"
+                        Classes.error="{Binding StatusCategory, Converter={x:Static conv:StatusCategoryConverters.IsError}}"
+                        CornerRadius="4"
+                        Padding="8,4"
+                        Margin="0,0,16,4"
+                        VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="{Binding StatusCode}"
+                                   IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsPositiveInt}}"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding StatusText}"
+                                   IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="Erreur" FontWeight="SemiBold">
+                            <TextBlock.IsVisible>
+                                <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                    <Binding Path="HasError" />
+                                    <Binding Path="StatusCode" Converter="{x:Static conv:StatusCategoryConverters.IsZeroInt}" />
+                                </MultiBinding>
+                            </TextBlock.IsVisible>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,0,16,4" VerticalAlignment="Center">
+                    <TextBlock Text="Durée :" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+                    <TextBlock Text="{Binding DurationMs, StringFormat='{}{0} ms'}" FontWeight="SemiBold" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,0,16,4" VerticalAlignment="Center">
+                    <TextBlock Text="Taille :" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+                    <TextBlock Text="{Binding SizeText}" FontWeight="SemiBold" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal"
+                            Spacing="4"
+                            Margin="0,0,0,4"
+                            VerticalAlignment="Center"
+                            IsVisible="{Binding ContentType, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                    <TextBlock Text="Type :" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+                    <TextBlock Text="{Binding ContentType}" />
+                </StackPanel>
+            </WrapPanel>
+
+            <!-- Bandeau d'erreur -->
+            <Border Grid.Row="1"
+                    IsVisible="{Binding HasError}"
+                    Background="{DynamicResource ErrorBannerBackground}"
+                    BorderBrush="{DynamicResource ErrorBannerBorder}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="10,8"
+                    Margin="0,0,0,8">
+                <TextBlock Text="{Binding ErrorMessage}"
+                           Foreground="{DynamicResource ErrorBannerForeground}"
+                           TextWrapping="Wrap"
+                           AutomationProperties.Name="Message d'erreur" />
+            </Border>
+
+            <!-- Onglets Corps et En-têtes -->
+            <TabControl Grid.Row="2"
+                        IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsPositiveInt}}">
+                <TabItem Header="Corps">
+                    <TextBox Margin="0,8,0,0"
+                             Text="{Binding Body, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             FontFamily="Cascadia Mono, Consolas, Liberation Mono, Menlo, monospace"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             AutomationProperties.Name="Corps de la réponse" />
+                </TabItem>
+
+                <TabItem Header="En-têtes">
+                    <ScrollViewer Margin="0,8,0,0"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding Headers}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:KeyValueItem">
+                                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                                            BorderThickness="0,0,0,1"
+                                            Padding="4,6">
+                                        <Grid ColumnDefinitions="240,*" ColumnSpacing="12">
+                                            <SelectableTextBlock Grid.Column="0"
+                                                                 Text="{Binding Key}"
+                                                                 FontWeight="SemiBold"
+                                                                 TextTrimming="CharacterEllipsis" />
+                                            <SelectableTextBlock Grid.Column="1"
+                                                                 Text="{Binding Value}"
+                                                                 TextWrapping="Wrap" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
+        </Grid>
+    </Border>
+
+</UserControl>

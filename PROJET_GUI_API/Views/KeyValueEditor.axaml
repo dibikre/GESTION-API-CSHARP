@@ -1,0 +1,57 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="700" d:DesignHeight="220"
+             x:Class="ApiTester.Views.KeyValueEditor"
+             x:Name="Root"
+             x:DataType="x:Object">
+
+    <Grid RowDefinitions="*,Auto" RowSpacing="8">
+        <ScrollViewer Grid.Row="0"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding #Root.Items}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="models:KeyValueItem">
+                        <Grid ColumnDefinitions="Auto,*,*,Auto"
+                              ColumnSpacing="8"
+                              Margin="0,0,0,6">
+                            <CheckBox Grid.Column="0"
+                                      IsChecked="{Binding IsEnabled}"
+                                      VerticalAlignment="Center"
+                                      AutomationProperties.Name="Activer l'élément" />
+
+                            <TextBox Grid.Column="1"
+                                     Text="{Binding Key}"
+                                     PlaceholderText="{Binding #Root.KeyPlaceholder}"
+                                     AutomationProperties.Name="Clé" />
+
+                            <TextBox Grid.Column="2"
+                                     Text="{Binding Value}"
+                                     PlaceholderText="{Binding #Root.ValuePlaceholder}"
+                                     AutomationProperties.Name="Valeur" />
+
+                            <Button Grid.Column="3"
+                                    Content="Supprimer"
+                                    Command="{Binding #Root.RemoveCommand}"
+                                    CommandParameter="{Binding}"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Supprimer la ligne" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Left">
+            <Button Content="{Binding #Root.AddButtonText}"
+                    Command="{Binding #Root.AddCommand}"
+                    AutomationProperties.Name="Ajouter une ligne" />
+        </StackPanel>
+    </Grid>
+
+</UserControl>
