@@ -1,0 +1,6 @@
+{
+  "name": "APP GUI DESKTOP GESTION API",
+  "description": "Application de gestion d'API.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
