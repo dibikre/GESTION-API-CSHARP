@@ -1,0 +1,219 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="860" d:DesignHeight="240"
+             x:Class="ApiTester.Views.ChainExtractionEditor"
+             x:Name="Root"
+             x:DataType="x:Object">
+
+    <Grid RowDefinitions="Auto,*">
+        <Border Grid.Row="0"
+                IsVisible="{Binding #Root.HasLastResponse}"
+                Background="{DynamicResource SurfaceAltBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="{DynamicResource ControlCornerRadius}"
+                Padding="8,4"
+                Margin="0,0,0,6">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Dernière réponse disponible pour test hors ligne :"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Center" />
+                <TextBlock Text="{Binding #Root.LastResponseSummary}"
+                           FontFamily="{DynamicResource MonoFontFamily}"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource AccentBrush}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
+
+        <!-- État vide -->
+        <StackPanel Grid.Row="1"
+                    IsVisible="{Binding #ItemsList.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsZero}}"
+                    Spacing="8"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+            <TextBlock Text="Aucune extraction. Extrais une valeur (ex. token, id) pour les étapes suivantes."
+                       FontSize="{DynamicResource FontSizeBase}"
+                       Foreground="{DynamicResource TextMutedBrush}"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center" />
+            <Button Classes="ghost"
+                    HorizontalAlignment="Center"
+                    Command="{Binding #Root.AddCommand}"
+                    AutomationProperties.Name="Ajouter une extraction">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                    <TextBlock Text="Ajouter une extraction" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </StackPanel>
+
+        <!-- Liste des extractions -->
+        <ScrollViewer Grid.Row="1"
+                      IsVisible="{Binding #ItemsList.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                      AllowAutoHide="False"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="0,0,12,4" Spacing="6">
+                <ItemsControl x:Name="ItemsList" ItemsSource="{Binding #Root.Items}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:ChainExtraction">
+                            <Border Classes="kvRow"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="0,0,0,1"
+                                    Padding="4,6">
+                                <StackPanel Spacing="6">
+                                    <Grid ColumnDefinitions="150,104,104,*,Auto,Auto" ColumnSpacing="6">
+                                        <TextBox Grid.Column="0"
+                                                 Classes="mono"
+                                                 Text="{Binding VariableName}"
+                                                 PlaceholderText="nom_variable"
+                                                 ToolTip.Tip="Nom de la variable réutilisable avec {{nom}}"
+                                                 AutomationProperties.Name="Nom de la variable extraite" />
+
+                                        <ComboBox Grid.Column="1"
+                                                  ItemsSource="{x:Static vm:ChainViewModel.ExtractionSources}"
+                                                  SelectedItem="{Binding Source}"
+                                                  AutomationProperties.Name="Source d'extraction">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="models:ChainExtractionSource">
+                                                    <TextBlock Text="{Binding Converter={x:Static conv:ChainExtractionSourceConverters.ToLabel}}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+
+                                        <ComboBox Grid.Column="2"
+                                                  ItemsSource="{x:Static vm:ChainViewModel.ExtractionKinds}"
+                                                  SelectedItem="{Binding Kind}"
+                                                  IsEnabled="{Binding IsBodySource}"
+                                                  AutomationProperties.Name="Type d'extraction">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="models:ExtractionKind">
+                                                    <TextBlock Text="{Binding Converter={x:Static conv:ExtractionKindConverters.ToLabel}}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+
+                                        <TextBox Grid.Column="3"
+                                                 Classes="mono"
+                                                 Text="{Binding Expression}"
+                                                 PlaceholderText="{Binding ExpressionPlaceholder}"
+                                                 ToolTip.Tip="{Binding Expression, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
+                                                 AutomationProperties.Name="Expression JSONPath ou Regex" />
+
+                                        <Button Grid.Column="4"
+                                                Classes="secondary"
+                                                Content="Tester"
+                                                Command="{Binding #Root.TestCommand}"
+                                                CommandParameter="{Binding}"
+                                                IsEnabled="{Binding #Root.HasLastResponse}"
+                                                ToolTip.Tip="Tester l'extraction sur la dernière réponse reçue"
+                                                AutomationProperties.Name="Tester l'extraction" />
+
+                                        <Button Grid.Column="5"
+                                                Classes="icon danger"
+                                                Command="{Binding #Root.RemoveCommand}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip.Tip="Supprimer l'extraction"
+                                                AutomationProperties.Name="Supprimer l'extraction">
+                                            <Path Classes="iconStroke" Data="{StaticResource IconTrash}" />
+                                        </Button>
+                                    </Grid>
+
+                                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <StackPanel IsVisible="{Binding IsHeaderSource}"
+                                                    Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    Margin="0,0,12,0"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="En-tête"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding HeaderName}"
+                                                     Width="168"
+                                                     PlaceholderText="ex. Authorization"
+                                                     AutomationProperties.Name="Nom de l'en-tête HTTP" />
+                                        </StackPanel>
+
+                                        <StackPanel IsVisible="{Binding ShowRegexGroup}"
+                                                    Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    Margin="0,0,12,0"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="Groupe Regex"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <NumericUpDown Value="{Binding RegexGroup, Converter={x:Static conv:RegexGroupToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                           Minimum="0"
+                                                           Maximum="99"
+                                                           Increment="1"
+                                                           FormatString="0"
+                                                           ShowButtonSpinner="False"
+                                                           Width="56"
+                                                           AutomationProperties.Name="Index du groupe Regex" />
+                                        </StackPanel>
+
+                                        <CheckBox IsChecked="{Binding IsRequired}"
+                                                  Content="Obligatoire"
+                                                  Margin="0,0,12,0"
+                                                  VerticalAlignment="Center"
+                                                  AutomationProperties.Name="Extraction obligatoire" />
+
+                                        <StackPanel IsVisible="{Binding IsOptional}"
+                                                    Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="Valeur par défaut"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBox Classes="mono"
+                                                     Text="{Binding DefaultValueIfMissing}"
+                                                     Width="148"
+                                                     PlaceholderText="si absent"
+                                                     AutomationProperties.Name="Valeur par défaut si absent" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <TextBlock IsVisible="{Binding HasLastExtractedValue}"
+                                               Text="{Binding LastExtractedDisplay, StringFormat='Extrait : {0}'}"
+                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource SuccessBrush}"
+                                               TextTrimming="CharacterEllipsis" />
+
+                                    <TextBlock IsVisible="{Binding HasError}"
+                                               Text="{Binding ErrorText}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource DangerBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Button Classes="ghost"
+                        HorizontalAlignment="Left"
+                        Command="{Binding #Root.AddCommand}"
+                        AutomationProperties.Name="Ajouter une extraction">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                        <TextBlock Text="Ajouter une extraction" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+
+</UserControl>

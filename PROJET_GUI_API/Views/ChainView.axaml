@@ -1,0 +1,920 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:views="using:ApiTester.Views"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1060" d:DesignHeight="660"
+             x:Class="ApiTester.Views.ChainView"
+             x:Name="ChainRoot"
+             x:DataType="vm:ChainViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="Border.chainStatusPill">
+            <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource BadgeCornerRadius}" />
+            <Setter Property="Padding" Value="6,2" />
+        </Style>
+        <Style Selector="Border.chainStatusPill TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        </Style>
+        <Style Selector="Border.chainStatusPill Ellipse.chainDot">
+            <Setter Property="Fill" Value="{DynamicResource TextMutedBrush}" />
+        </Style>
+
+        <Style Selector="Border.chainStatusPill.success">
+            <Setter Property="Background" Value="{DynamicResource SuccessSoftBrush}" />
+        </Style>
+        <Style Selector="Border.chainStatusPill.success TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+        </Style>
+        <Style Selector="Border.chainStatusPill.success Ellipse.chainDot">
+            <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
+        </Style>
+
+        <Style Selector="Border.chainStatusPill.failed">
+            <Setter Property="Background" Value="{DynamicResource DangerBadgeSoftBrush}" />
+        </Style>
+        <Style Selector="Border.chainStatusPill.failed TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+        </Style>
+        <Style Selector="Border.chainStatusPill.failed Ellipse.chainDot">
+            <Setter Property="Fill" Value="{DynamicResource DangerBrush}" />
+        </Style>
+
+        <Style Selector="Border.chainStatusPill.skipped">
+            <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />
+        </Style>
+        <Style Selector="Border.chainStatusPill.skipped TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextFaintBrush}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowSpacing="6">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="1.15*" MinHeight="240" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" MinHeight="220" />
+        </Grid.RowDefinitions>
+
+        <!-- HAUT : Liste des étapes à gauche + Éditeur de l'étape sélectionnée à droite -->
+        <Grid Grid.Row="0" ColumnSpacing="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="264" MinWidth="210" MaxWidth="380" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="420" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Colonne gauche : Étapes -->
+            <Border Grid.Column="0"
+                    Background="{DynamicResource SurfaceBrush}"
+                    CornerRadius="{DynamicResource PanelCornerRadius}"
+                    Padding="8">
+                <Grid RowDefinitions="Auto,*" RowSpacing="6">
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBlock Grid.Column="0"
+                                   Text="Étapes"
+                                   FontSize="{DynamicResource FontSizeBase}"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                Classes="secondary"
+                                Command="{Binding AddStepCommand}"
+                                AutomationProperties.Name="Ajouter une étape à la chaîne">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                                <TextBlock Text="Ajouter" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+
+                    <TextBlock Grid.Row="1"
+                               IsVisible="{Binding !HasSteps}"
+                               Text="Aucune étape. Clique sur « + Ajouter »."
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap" />
+
+                    <ListBox Grid.Row="1"
+                             IsVisible="{Binding HasSteps}"
+                             ItemsSource="{Binding Steps}"
+                             SelectedItem="{Binding SelectedStep}"
+                             ScrollViewer.AllowAutoHide="False"
+                             AutomationProperties.Name="Liste des étapes de la chaîne">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="models:ChainStep">
+                                <Border Padding="2,4">
+                                    <Grid RowDefinitions="Auto,Auto" RowSpacing="3">
+                                        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+                                            <Border Grid.Column="0"
+                                                    Background="{DynamicResource SurfaceAltBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                    Padding="5,1"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Method, Converter={x:Static conv:HttpMethodConverters.ToUpper}}"
+                                                           Classes="httpMethod"
+                                                           Classes.get="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsGet}}"
+                                                           Classes.post="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPost}}"
+                                                           Classes.put="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPutOrPatch}}"
+                                                           Classes.delete="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsDelete}}" />
+                                            </Border>
+
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding StepHeaderLabel}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       FontWeight="Medium"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding StepHeaderLabel}"
+                                                       VerticalAlignment="Center" />
+
+                                            <Border Grid.Column="2"
+                                                    IsVisible="{Binding IsLooping}"
+                                                    Background="{DynamicResource AccentSoftBrush}"
+                                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                    Padding="5,1"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding IterationsBadgeText}"
+                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource AccentBrush}" />
+                                            </Border>
+                                        </Grid>
+
+                                        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="4">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding Extractions.Count, StringFormat='{}{0} extr.'}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextFaintBrush}"
+                                                       VerticalAlignment="Center" />
+
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
+                                                <Button Classes="icon"
+                                                        Command="{Binding #ChainRoot.ViewModel.MoveStepUpCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip.Tip="Monter l'étape"
+                                                        AutomationProperties.Name="{Binding MoveUpAutomationName}">
+                                                    <Path Classes="iconStroke" Data="{StaticResource IconArrowUp}" />
+                                                </Button>
+                                                <Button Classes="icon"
+                                                        Command="{Binding #ChainRoot.ViewModel.MoveStepDownCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip.Tip="Descendre l'étape"
+                                                        AutomationProperties.Name="{Binding MoveDownAutomationName}">
+                                                    <Path Classes="iconStroke" Data="{StaticResource IconArrowDown}" />
+                                                </Button>
+                                                <Button Classes="icon"
+                                                        Command="{Binding #ChainRoot.ViewModel.DuplicateStepCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip.Tip="Dupliquer l'étape"
+                                                        AutomationProperties.Name="Dupliquer l'étape">
+                                                    <Path Classes="iconStroke" Data="{StaticResource IconCopy}" />
+                                                </Button>
+                                                <Button Classes="icon danger"
+                                                        Command="{Binding #ChainRoot.ViewModel.RemoveStepCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip.Tip="Supprimer l'étape"
+                                                        AutomationProperties.Name="Supprimer l'étape">
+                                                    <Path Classes="iconStroke" Data="{StaticResource IconTrash}" />
+                                                </Button>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="1"
+                          Classes="vertical"
+                          ResizeDirection="Columns" />
+
+            <!-- Colonne droite : Éditeur de l'étape sélectionnée -->
+            <Border Grid.Column="2"
+                    Background="{DynamicResource SurfaceBrush}"
+                    CornerRadius="{DynamicResource PanelCornerRadius}"
+                    Padding="10">
+                <Panel>
+                    <TextBlock IsVisible="{Binding !HasSelectedStep}"
+                               Text="Sélectionne ou ajoute une étape à gauche."
+                               FontSize="{DynamicResource FontSizeBase}"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+
+                    <Panel IsVisible="{Binding HasSelectedStep}">
+                        <Panel DataContext="{Binding SelectedStep}">
+                            <Grid x:DataType="models:ChainStep"
+                                  RowDefinitions="Auto,Auto,Auto,*"
+                                  RowSpacing="6">
+
+                        <!-- Nom + import curl -->
+                        <Grid Grid.Row="0" ColumnDefinitions="200,*,Auto,Auto" ColumnSpacing="8">
+                            <TextBox Grid.Column="0"
+                                     Text="{Binding Name}"
+                                     PlaceholderText="Nom de l'étape"
+                                     AutomationProperties.Name="Nom de l'étape" />
+
+                            <TextBox Grid.Column="1"
+                                     Classes="mono"
+                                     Text="{Binding CurlText}"
+                                     AcceptsReturn="True"
+                                     Height="32"
+                                     MaxHeight="72"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     PlaceholderText="Colle une commande curl pour cette étape..."
+                                     AutomationProperties.Name="Commande curl de l'étape" />
+
+                            <Button Grid.Column="2"
+                                    Classes="primary"
+                                    Content="Analyser"
+                                    Command="{Binding #ChainRoot.ViewModel.ParseStepCurlCommand}"
+                                    AutomationProperties.Name="Analyser la commande curl de l'étape" />
+
+                            <Button Grid.Column="3"
+                                    Classes="ghost"
+                                    Content="Manuel"
+                                    IsVisible="{Binding !HasParsed}"
+                                    Command="{Binding #ChainRoot.ViewModel.InitManualStepCommand}"
+                                    ToolTip.Tip="Configurer cette étape manuellement sans curl"
+                                    AutomationProperties.Name="Configurer l'étape manuellement" />
+                        </Grid>
+
+                        <!-- Avertissements parse curl -->
+                        <Border Grid.Row="1"
+                                IsVisible="{Binding HasWarnings}"
+                                Background="{DynamicResource WarningSoftBrush}"
+                                BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{DynamicResource ControlCornerRadius}">
+                            <Expander Classes="warningExpander" IsExpanded="False">
+                                <Expander.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Path Classes="iconStroke"
+                                              Data="{StaticResource IconWarning}"
+                                              Stroke="{DynamicResource WarningBrush}" />
+                                        <TextBlock Text="{Binding WarningsSummaryText}"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   FontWeight="Medium"
+                                                   Foreground="{DynamicResource WarningBrush}" />
+                                    </StackPanel>
+                                </Expander.Header>
+                                <ItemsControl ItemsSource="{Binding Warnings}" Margin="26,0,8,6">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="x:String">
+                                            <TextBlock Text="{Binding}"
+                                                       Foreground="{DynamicResource WarningBrush}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       TextWrapping="Wrap" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Expander>
+                        </Border>
+
+                        <!-- Méthode + URL éditable -->
+                        <Grid Grid.Row="2" ColumnDefinitions="110,*" ColumnSpacing="8">
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{x:Static vm:ChainViewModel.HttpMethods}"
+                                      SelectedItem="{Binding Method}"
+                                      AutomationProperties.Name="Méthode HTTP de l'étape" />
+
+                            <TextBox Grid.Column="1"
+                                     Classes="mono"
+                                     Text="{Binding Url}"
+                                     PlaceholderText="https://api.exemple.com/endpoint (accepte {{variables}})"
+                                     ToolTip.Tip="{Binding Url, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
+                                     AutomationProperties.Name="URL de l'étape" />
+                        </Grid>
+
+                        <!-- Onglets de configuration de l'étape -->
+                        <TabControl Grid.Row="3" Classes="sub">
+                            <TabItem>
+                                <TabItem.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="Paramètres" VerticalAlignment="Center" />
+                                        <Border IsVisible="{Binding VaryingParams.Count, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding VaryingParams.Count}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource AccentBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                </TabItem.Header>
+                                <views:VaryingParamEditor Margin="0,6,0,0"
+                                                          Items="{Binding VaryingParams}"
+                                                          AddCommand="{Binding #ChainRoot.ViewModel.AddStepVaryingParamCommand}"
+                                                          RemoveCommand="{Binding #ChainRoot.ViewModel.RemoveStepVaryingParamCommand}" />
+                            </TabItem>
+
+                            <TabItem>
+                                <TabItem.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="En-têtes" VerticalAlignment="Center" />
+                                        <Border IsVisible="{Binding Headers.Count, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Headers.Count}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource AccentBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                </TabItem.Header>
+                                <views:KeyValueEditor Margin="0,6,0,0"
+                                                      Items="{Binding Headers}"
+                                                      AddCommand="{Binding #ChainRoot.ViewModel.AddStepHeaderCommand}"
+                                                      RemoveCommand="{Binding #ChainRoot.ViewModel.RemoveStepHeaderCommand}"
+                                                      AddButtonText="Ajouter un en-tête"
+                                                      KeyPlaceholder="Nom de l'en-tête"
+                                                      ValuePlaceholder="Valeur (ex. Bearer {{token}})" />
+                            </TabItem>
+
+                            <TabItem Header="Corps">
+                                <Grid RowDefinitions="Auto,*,Auto" RowSpacing="6" Margin="0,6,0,0">
+                                    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="Type de corps"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <ComboBox ItemsSource="{x:Static vm:ChainViewModel.BodyTypes}"
+                                                  SelectedItem="{Binding BodyType}"
+                                                  MinWidth="150"
+                                                  AutomationProperties.Name="Type de corps de l'étape" />
+                                    </StackPanel>
+
+                                    <TextBox Grid.Row="1"
+                                             IsVisible="{Binding !IsFormBody}"
+                                             Classes="mono"
+                                             Text="{Binding Body}"
+                                             AcceptsReturn="True"
+                                             TextWrapping="NoWrap"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             PlaceholderText="Corps JSON ou texte (accepte {{variables}})..."
+                                             AutomationProperties.Name="Corps de la requête de l'étape" />
+
+                                    <views:KeyValueEditor Grid.Row="1"
+                                                          IsVisible="{Binding IsFormBody}"
+                                                          Items="{Binding FormFields}"
+                                                          AddCommand="{Binding #ChainRoot.ViewModel.AddStepFormFieldCommand}"
+                                                          RemoveCommand="{Binding #ChainRoot.ViewModel.RemoveStepFormFieldCommand}"
+                                                          AddButtonText="Ajouter un champ"
+                                                          KeyPlaceholder="Champ"
+                                                          ValuePlaceholder="Valeur" />
+
+                                    <TextBlock Grid.Row="2"
+                                               Text="Utilise {{nom}} pour réutiliser une variable extraite d'une étape précédente ou définie localement."
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource TextFaintBrush}"
+                                               TextWrapping="Wrap" />
+                                </Grid>
+                            </TabItem>
+
+                            <TabItem>
+                                <TabItem.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="Variables" VerticalAlignment="Center" />
+                                        <Border IsVisible="{Binding UsedVariablesCount, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding UsedVariablesCount}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource AccentBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                </TabItem.Header>
+                                <Grid RowDefinitions="Auto,*,Auto" RowSpacing="6" Margin="0,6,0,0">
+                                    <TextBlock Grid.Row="0"
+                                               IsVisible="{Binding #ChainRoot.ViewModel.HasAvailableExtractedVariables}"
+                                               Text="{Binding #ChainRoot.ViewModel.AvailableExtractedVariablesText}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource AccentBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <views:BatchVariableEditor Grid.Row="1"
+                                                               Items="{Binding Variables}" />
+
+                                    <TextBlock Grid.Row="2"
+                                               IsVisible="{Binding HasVariablesError}"
+                                               Text="{Binding VariablesError}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource WarningBrush}"
+                                               TextWrapping="Wrap" />
+                                </Grid>
+                            </TabItem>
+
+                            <TabItem>
+                                <TabItem.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="Extractions" VerticalAlignment="Center" />
+                                        <Border IsVisible="{Binding Extractions.Count, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Extractions.Count}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource AccentBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                </TabItem.Header>
+                                <views:ChainExtractionEditor Margin="0,6,0,0"
+                                                             Items="{Binding Extractions}"
+                                                             AddCommand="{Binding #ChainRoot.ViewModel.AddExtractionCommand}"
+                                                             RemoveCommand="{Binding #ChainRoot.ViewModel.RemoveExtractionCommand}"
+                                                             TestCommand="{Binding #ChainRoot.ViewModel.TestExtractionCommand}"
+                                                             HasLastResponse="{Binding HasLastResponse}"
+                                                             LastResponseSummary="{Binding LastResponseSummary}" />
+                            </TabItem>
+
+                            <TabItem Header="Options">
+                                <ScrollViewer Margin="0,6,0,0"
+                                              AllowAutoHide="False"
+                                              VerticalScrollBarVisibility="Auto">
+                                    <StackPanel Spacing="10" Margin="0,0,12,4">
+                                        <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,16,4" VerticalAlignment="Center">
+                                                <TextBlock Text="Délai après cette étape (ms)"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <NumericUpDown Value="{Binding DelayAfterMs, Converter={x:Static conv:ChainDelayMsToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                               Minimum="0"
+                                                               Maximum="60000"
+                                                               Increment="100"
+                                                               FormatString="0"
+                                                               Width="140"
+                                                               AutomationProperties.Name="Délai après l'étape en millisecondes" />
+                                            </StackPanel>
+
+                                            <CheckBox IsChecked="{Binding ContinueOnError}"
+                                                      Content="Continuer la chaîne si cette étape échoue"
+                                                      Margin="0,0,16,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Continuer en cas d'erreur" />
+
+                                            <CheckBox IsChecked="{Binding StepRateLimitUsesGlobalPolicy}"
+                                                      Content="Appliquer la politique globale de rate limit"
+                                                      Margin="0,0,0,4"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="Appliquer la politique globale de rate limit" />
+                                        </WrapPanel>
+
+                                        <StackPanel IsVisible="{Binding HasMultipleAxes}" Spacing="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <TextBlock Text="Mode de boucle de l'étape"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <ComboBox ItemsSource="{x:Static vm:ChainViewModel.BatchModes}"
+                                                          SelectedItem="{Binding SelectedMode}"
+                                                          MinWidth="148"
+                                                          AutomationProperties.Name="Mode de boucle de l'étape">
+                                                    <ComboBox.ItemTemplate>
+                                                        <DataTemplate x:DataType="models:BatchMode">
+                                                            <TextBlock Text="{Binding Converter={x:Static conv:BatchModeConverters.ToLabel}}" />
+                                                        </DataTemplate>
+                                                    </ComboBox.ItemTemplate>
+                                                </ComboBox>
+                                            </StackPanel>
+
+                                            <ItemsControl ItemsSource="{Binding Axes}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="models:BatchAxis">
+                                                        <Border Classes="kvRow"
+                                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                                BorderThickness="0,0,0,1"
+                                                                Padding="6,3">
+                                                            <Grid ColumnDefinitions="24,*,Auto,Auto" ColumnSpacing="8">
+                                                                <TextBlock Grid.Column="0"
+                                                                           Text="{Binding Rank}"
+                                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                                           VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="1"
+                                                                           Text="{Binding DisplayName}"
+                                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                                           VerticalAlignment="Center" />
+                                                                <TextBlock Grid.Column="2"
+                                                                           Text="{Binding ValueCountText}"
+                                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                                           VerticalAlignment="Center" />
+                                                                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="2">
+                                                                    <Button Classes="icon"
+                                                                            Command="{Binding #ChainRoot.ViewModel.MoveStepAxisUpCommand}"
+                                                                            CommandParameter="{Binding}"
+                                                                            ToolTip.Tip="Monter l'axe"
+                                                                            AutomationProperties.Name="{Binding MoveUpAutomationName}">
+                                                                        <Path Classes="iconStroke" Data="{StaticResource IconArrowUp}" />
+                                                                    </Button>
+                                                                    <Button Classes="icon"
+                                                                            Command="{Binding #ChainRoot.ViewModel.MoveStepAxisDownCommand}"
+                                                                            CommandParameter="{Binding}"
+                                                                            ToolTip.Tip="Descendre l'axe"
+                                                                            AutomationProperties.Name="{Binding MoveDownAutomationName}">
+                                                                        <Path Classes="iconStroke" Data="{StaticResource IconArrowDown}" />
+                                                                    </Button>
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </TabItem>
+                        </TabControl>
+                            </Grid>
+                        </Panel>
+                    </Panel>
+                </Panel>
+            </Border>
+        </Grid>
+
+        <GridSplitter Grid.Row="1"
+                      Classes="horizontal"
+                      ResizeDirection="Rows" />
+
+        <!-- BAS : Barre d'exécution + Sections repliables + Résultats & Réponse -->
+        <Grid Grid.Row="2" RowDefinitions="Auto,*" RowSpacing="6">
+            <!-- Barre de contrôle de la chaîne -->
+            <Border Grid.Row="0"
+                    Background="{DynamicResource SurfaceBrush}"
+                    CornerRadius="{DynamicResource PanelCornerRadius}"
+                    Padding="10,8">
+                <StackPanel Spacing="6">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <CheckBox IsChecked="{Binding KeepBodies}"
+                                      Content="Conserver les corps"
+                                      Margin="0,0,14,0"
+                                      VerticalAlignment="Center"
+                                      AutomationProperties.Name="Conserver les corps des réponses" />
+
+                            <CheckBox IsChecked="{Binding GlobalRateLimitPolicy.IsEnabled}"
+                                      IsEnabled="{Binding !IsRunning}"
+                                      Content="Politique globale de rate limit"
+                                      Margin="0,0,14,0"
+                                      VerticalAlignment="Center"
+                                      AutomationProperties.Name="Activer la politique globale de rate limit" />
+
+                            <CheckBox IsVisible="{Binding NeedsConfirmation}"
+                                      IsChecked="{Binding IsConfirmed}"
+                                      Content="Confirmer (> 500 requêtes)"
+                                      FontWeight="Medium"
+                                      VerticalAlignment="Center"
+                                      AutomationProperties.Name="Confirmer le lancement de plus de 500 requêtes" />
+                        </WrapPanel>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding TotalRequestsText}"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       VerticalAlignment="Center" />
+
+                            <Panel VerticalAlignment="Center">
+                                <Button Classes="primary"
+                                        Command="{Binding RunCommand}"
+                                        IsVisible="{Binding !IsRunning}"
+                                        MinWidth="132"
+                                        AutomationProperties.Name="Lancer la chaîne">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconSend}" />
+                                        <TextBlock Text="Lancer la chaîne" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Classes="secondary"
+                                        Command="{Binding RunCancelCommand}"
+                                        IsVisible="{Binding IsRunning}"
+                                        MinWidth="132"
+                                        AutomationProperties.Name="Annuler la chaîne">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconStop}" />
+                                        <TextBlock Text="Annuler" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </Panel>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock IsVisible="{Binding HasPlanError}"
+                               Text="{Binding PlanError}"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               FontWeight="Medium"
+                               Foreground="{DynamicResource DangerBrush}"
+                               TextWrapping="Wrap" />
+
+                    <!-- Avertissements chaîne -->
+                    <Border IsVisible="{Binding HasChainWarnings}"
+                            Background="{DynamicResource WarningSoftBrush}"
+                            BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource ControlCornerRadius}">
+                        <Expander Classes="warningExpander" IsExpanded="False">
+                            <Expander.Header>
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Path Classes="iconStroke"
+                                          Data="{StaticResource IconWarning}"
+                                          Stroke="{DynamicResource WarningBrush}" />
+                                    <TextBlock Text="{Binding ChainWarnings.Count, StringFormat='{}{0} avertissement(s) sur la chaîne'}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               Foreground="{DynamicResource WarningBrush}" />
+                                </StackPanel>
+                            </Expander.Header>
+                            <ItemsControl ItemsSource="{Binding ChainWarnings}" Margin="26,0,8,6">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                        <TextBlock Text="{Binding}"
+                                                   Foreground="{DynamicResource WarningBrush}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   TextWrapping="Wrap" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Expander>
+                    </Border>
+
+                    <!-- Variables accumulées (section repliable, valeurs sensibles masquées) -->
+                    <Border IsVisible="{Binding HasAccumulatedVariables}"
+                            BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="0,4,0,0">
+                        <Expander Classes="sectionExpander" IsExpanded="False">
+                            <Expander.Header>
+                                <TextBlock Text="{Binding AccumulatedVariables.Count, StringFormat='Variables accumulées ({0})'}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource TextMutedBrush}" />
+                            </Expander.Header>
+                            <ItemsControl ItemsSource="{Binding AccumulatedVariables}" Margin="0,4,0,2">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:ChainAccumulatedVariableItem">
+                                        <Grid ColumnDefinitions="180,*" ColumnSpacing="8" Margin="0,1">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding Name}"
+                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <SelectableTextBlock Grid.Column="1"
+                                                                 Text="{Binding DisplayValue}"
+                                                                 FontFamily="{DynamicResource MonoFontFamily}"
+                                                                 FontSize="{DynamicResource FontSizeCaption}"
+                                                                 TextTrimming="CharacterEllipsis" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Expander>
+                    </Border>
+
+                    <!-- Enregistrement des réponses (replié par défaut) -->
+                    <Border BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="0,4,0,0">
+                        <Expander Classes="sectionExpander" IsExpanded="False">
+                            <Expander.Header>
+                                <TextBlock Text="Enregistrement des réponses sur disque"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource TextMutedBrush}" />
+                            </Expander.Header>
+                            <StackPanel IsEnabled="{Binding !IsRunning}" Spacing="6" Margin="0,6,0,2">
+                                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ComboBox ItemsSource="{x:Static vm:ChainViewModel.SaveModes}"
+                                              SelectedItem="{Binding SaveMode}"
+                                              MinWidth="190"
+                                              Margin="0,0,12,0"
+                                              AutomationProperties.Name="Mode d'enregistrement de la chaîne">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="models:SaveMode">
+                                                <TextBlock Text="{Binding Converter={x:Static conv:SaveModeConverters.ToLabel}}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+
+                                    <CheckBox IsVisible="{Binding CanChooseFolder}"
+                                              IsChecked="{Binding CreateTimestampSubfolder}"
+                                              Content="Sous-dossier horodaté"
+                                              Margin="0,0,12,0"
+                                              VerticalAlignment="Center"
+                                              AutomationProperties.Name="Créer un sous-dossier horodaté" />
+
+                                    <CheckBox IsVisible="{Binding ShowPerRequestOptions}"
+                                              IsChecked="{Binding IncludeSummaryCsv}"
+                                              Content="Inclure _resume.csv"
+                                              Margin="0,0,12,0"
+                                              VerticalAlignment="Center"
+                                              AutomationProperties.Name="Inclure _resume.csv" />
+
+                                    <ComboBox IsVisible="{Binding ShowGroupedOptions}"
+                                              ItemsSource="{x:Static vm:ChainViewModel.GroupedFormats}"
+                                              SelectedItem="{Binding GroupedFormat}"
+                                              MinWidth="210"
+                                              AutomationProperties.Name="Format groupé de la chaîne">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="models:GroupedFormat">
+                                                <TextBlock Text="{Binding Converter={x:Static conv:GroupedFormatConverters.ToLabel}}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </WrapPanel>
+
+                                <Grid IsVisible="{Binding CanChooseFolder}"
+                                      ColumnDefinitions="*,Auto"
+                                      ColumnSpacing="8">
+                                    <TextBox Grid.Column="0"
+                                             Classes="mono"
+                                             Text="{Binding OutputFolder}"
+                                             PlaceholderText="Dossier de destination"
+                                             AutomationProperties.Name="Dossier d'enregistrement de la chaîne" />
+                                    <Button Grid.Column="1"
+                                            Classes="secondary"
+                                            Command="{Binding BrowseFolderCommand}"
+                                            AutomationProperties.Name="Choisir le dossier d'enregistrement">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Path Classes="iconStroke" Data="{StaticResource IconFolder}" />
+                                            <TextBlock Text="Choisir…" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+
+                                <TextBlock IsVisible="{Binding HasSaveError}"
+                                           Text="{Binding SaveError}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource DangerBrush}"
+                                           TextWrapping="Wrap" />
+
+                                <StackPanel IsVisible="{Binding HasSaveSummary}"
+                                            Orientation="Horizontal"
+                                            Spacing="10">
+                                    <TextBlock Text="{Binding SaveSummaryText}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               VerticalAlignment="Center" />
+                                    <Button Classes="secondary"
+                                            Content="Ouvrir le dossier"
+                                            Command="{Binding OpenOutputFolderCommand}"
+                                            AutomationProperties.Name="Ouvrir le dossier d'enregistrement" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Résultats de la chaîne à gauche + ResponseView à droite -->
+            <Grid Grid.Row="1" ColumnSpacing="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" MinWidth="320" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" MinWidth="320" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0"
+                        Background="{DynamicResource SurfaceBrush}"
+                        CornerRadius="{DynamicResource PanelCornerRadius}"
+                        Padding="10">
+                    <Grid RowDefinitions="Auto,*" RowSpacing="6">
+                        <StackPanel Grid.Row="0" IsVisible="{Binding HasChainStats}" Spacing="4">
+                            <Grid IsVisible="{Binding IsRunning}"
+                                  ColumnDefinitions="*,Auto"
+                                  ColumnSpacing="10">
+                                <ProgressBar Grid.Column="0"
+                                             Minimum="0"
+                                             Maximum="{Binding ProgressTotal}"
+                                             Value="{Binding ProgressCurrent}"
+                                             Height="2"
+                                             VerticalAlignment="Center"
+                                             AutomationProperties.Name="Progression de la chaîne" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding ProgressText}"
+                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource TextMutedBrush}" />
+                            </Grid>
+
+                            <WrapPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding ChainStatsSummaryText}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           Margin="0,0,10,0" />
+                                <TextBlock IsVisible="{Binding HasFinalStatusText}"
+                                           Text="{Binding FinalStatusText}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           FontWeight="Medium"
+                                           Foreground="{DynamicResource TextBrush}" />
+                            </WrapPanel>
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="1"
+                                   IsVisible="{Binding !HasResults}"
+                                   Text="Configure tes étapes puis clique sur « Lancer la chaîne »."
+                                   FontSize="{DynamicResource FontSizeBase}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+
+                        <ListBox Grid.Row="1"
+                                 IsVisible="{Binding HasResults}"
+                                 ItemsSource="{Binding Results}"
+                                 SelectedItem="{Binding SelectedResult}"
+                                 ScrollViewer.AllowAutoHide="False"
+                                 AutomationProperties.Name="Résultats de la chaîne">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:ChainStepResult">
+                                    <StackPanel Spacing="2" Margin="0,2,8,2">
+                                        <Grid ColumnDefinitions="*,Auto,64" ColumnSpacing="8">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding StepIterationLabel}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       FontWeight="Medium"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding RequestSummary}"
+                                                       VerticalAlignment="Center" />
+
+                                            <Border Grid.Column="1"
+                                                    Classes="chainStatusPill"
+                                                    Classes.success="{Binding IsSuccessStatus}"
+                                                    Classes.failed="{Binding IsFailedStatus}"
+                                                    Classes.skipped="{Binding IsSkippedStatus}"
+                                                    VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                                    <Ellipse Classes="chainDot"
+                                                             Width="6"
+                                                             Height="6"
+                                                             VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding StatusBadgeText}"
+                                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                               FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" />
+                                                    <TextBlock IsVisible="{Binding WasRateLimited}"
+                                                               Text="{Binding RateLimitSuffixText}"
+                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding DurationMs, StringFormat='{}{0} ms'}"
+                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+
+                                        <TextBlock IsVisible="{Binding HasExtractedSummary}"
+                                                   Text="{Binding ExtractedSummaryText}"
+                                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   Foreground="{DynamicResource AccentBrush}"
+                                                   TextTrimming="CharacterEllipsis" />
+
+                                        <TextBlock IsVisible="{Binding HasErrorMessage}"
+                                                   Text="{Binding ErrorMessage}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   Foreground="{DynamicResource DangerBrush}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding ErrorMessage}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Border>
+
+                <GridSplitter Grid.Column="1"
+                              Classes="vertical"
+                              ResizeDirection="Columns" />
+
+                <views:ResponseView Grid.Column="2"
+                                    DataContext="{Binding SelectedResponse}" />
+            </Grid>
+        </Grid>
+    </Grid>
+
+</UserControl>

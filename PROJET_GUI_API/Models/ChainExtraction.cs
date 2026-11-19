@@ -1,0 +1,111 @@
+using System;
+using ApiTester.Services;
+using CommunityToolkit.Mvvm.ComponentModel;
+
+namespace ApiTester.Models;
+
+public partial class ChainExtraction : ObservableObject
+{
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LastExtractedDisplay))]
+    [NotifyPropertyChangedFor(nameof(VariablePlaceholderHint))]
+    public partial string VariableName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsJsonPathKind))]
+    [NotifyPropertyChangedFor(nameof(IsRegexKind))]
+    [NotifyPropertyChangedFor(nameof(ShowRegexGroup))]
+    [NotifyPropertyChangedFor(nameof(ExpressionPlaceholder))]
+    public partial ExtractionKind Kind { get; set; } = ExtractionKind.JsonPath;
+
+    [ObservableProperty]
+    public partial string Expression { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial int RegexGroup { get; set; } = 1;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBodySource))]
+    [NotifyPropertyChangedFor(nameof(IsHeaderSource))]
+    [NotifyPropertyChangedFor(nameof(ExpressionPlaceholder))]
+    public partial ChainExtractionSource Source { get; set; } = ChainExtractionSource.Body;
+
+    [ObservableProperty]
+    public partial string HeaderName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsOptional))]
+    public partial bool IsRequired { get; set; } = true;
+
+    [ObservableProperty]
+    public partial string DefaultValueIfMissing { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLastExtractedValue))]
+    [NotifyPropertyChangedFor(nameof(LastExtractedDisplay))]
+    public partial string? LastExtractedValue { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasError))]
+    public partial string? ErrorText { get; set; }
+
+    public bool IsBodySource => Source == ChainExtractionSource.Body;
+
+    public bool IsHeaderSource => Source == ChainExtractionSource.Header;
+
+    public bool IsJsonPathKind => Kind == ExtractionKind.JsonPath;
+
+    public bool IsRegexKind => Kind == ExtractionKind.Regex;
+
+    public bool ShowRegexGroup => Kind == ExtractionKind.Regex || Source == ChainExtractionSource.Header;
+
+    public bool IsOptional => !IsRequired;
+
+    public bool HasLastExtractedValue => LastExtractedValue is not null;
+
+    public bool HasError => !string.IsNullOrWhiteSpace(ErrorText);
+
+    public string LastExtractedDisplay => LastExtractedValue is null
+        ? string.Empty
+        : BatchExecutionHelper.IsSensitiveName(VariableName)
+            ? $"*** ({LastExtractedValue.Length} car.)"
+            : LastExtractedValue;
+
+    public string VariablePlaceholderHint => string.IsNullOrWhiteSpace(VariableName)
+        ? "nom_variable"
+        : $"{{{{{VariableName.Trim()}}}}}";
+
+    public string ExpressionPlaceholder => Source == ChainExtractionSource.Header
+        ? "ex. Bearer (.+)"
+        : Kind == ExtractionKind.JsonPath
+            ? "ex. data.token ou items[0].id"
+            : "ex. \"token\":\"([^\"]+)\"";
+
+    partial void OnSourceChanged(ChainExtractionSource value)
+    {
+        if (value == ChainExtractionSource.Header && Kind == ExtractionKind.JsonPath)
+        {
+            Kind = ExtractionKind.Regex;
+        }
+    }
+
+    partial void OnRegexGroupChanged(int value)
+    {
+        if (value < 0)
+        {
+            RegexGroup = 0;
+        }
+    }
+
+    public ChainExtraction Clone() => new()
+    {
+        VariableName = VariableName,
+        Kind = Kind,
+        Expression = Expression,
+        RegexGroup = RegexGroup,
+        Source = Source,
+        HeaderName = HeaderName,
+        IsRequired = IsRequired,
+        DefaultValueIfMissing = DefaultValueIfMissing
+    };
+}

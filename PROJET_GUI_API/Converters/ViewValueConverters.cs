@@ -276,3 +276,76 @@ public sealed class ZeroPadToDecimalConverter : IValueConverter
         return 0;
     }
 }
+
+public static class ExtractionKindConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ExtractionKind, string>(kind => kind switch
+        {
+            ExtractionKind.JsonPath => "JSONPath",
+            ExtractionKind.Regex => "Regex",
+            _ => kind.ToString()
+        });
+}
+
+public static class ChainExtractionSourceConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ChainExtractionSource, string>(source => source switch
+        {
+            ChainExtractionSource.Body => "Corps",
+            ChainExtractionSource.Header => "En-tête",
+            _ => source.ToString()
+        });
+}
+
+public sealed class RegexGroupToDecimalConverter : IValueConverter
+{
+    public static readonly RegexGroupToDecimalConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int intValue)
+        {
+            return (decimal)Math.Clamp(intValue, 0, 99);
+        }
+
+        return 1m;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is decimal decValue)
+        {
+            return Math.Clamp((int)decValue, 0, 99);
+        }
+
+        return 1;
+    }
+}
+
+public sealed class ChainDelayMsToDecimalConverter : IValueConverter
+{
+    public static readonly ChainDelayMsToDecimalConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int intValue)
+        {
+            return (decimal)Math.Clamp(intValue, 0, 60_000);
+        }
+
+        return 500m;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is decimal decValue)
+        {
+            return Math.Clamp((int)decValue, 0, 60_000);
+        }
+
+        return 500;
+    }
+}
+

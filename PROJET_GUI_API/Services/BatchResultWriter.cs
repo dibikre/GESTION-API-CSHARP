@@ -401,6 +401,29 @@ public sealed class BatchResultWriter : IBatchResultWriter
         writer.WriteBoolean("rate_limited", item.WasRateLimited);
         writer.WriteNumber("tentatives", item.RetryAttempts);
 
+        if (item.StepIndex > 0)
+        {
+            writer.WriteNumber("step_index", item.StepIndex);
+            writer.WriteString("step_name", item.StepName ?? string.Empty);
+            writer.WriteNumber("iteration", item.Iteration);
+
+            writer.WritePropertyName("extracted");
+            writer.WriteStartObject();
+            if (item.ExtractedValues is not null)
+            {
+                foreach (var kvp in item.ExtractedValues)
+                {
+                    if (string.IsNullOrWhiteSpace(kvp.Key))
+                    {
+                        continue;
+                    }
+
+                    writer.WriteString(kvp.Key, BatchExecutionHelper.MaskIfSensitive(kvp.Key, kvp.Value));
+                }
+            }
+            writer.WriteEndObject();
+        }
+
         writer.WriteEndObject();
     }
 
@@ -412,8 +435,17 @@ public sealed class BatchResultWriter : IBatchResultWriter
             : "erreur";
         var extension = GetExtensionFromContentType(item.ContentType);
 
+        var stepPrefixSegment = item.StepIndex > 0 && !string.IsNullOrWhiteSpace(item.StepName)
+            ? SanitizeFileNameSegment(item.StepName.Trim())
+            : null;
+
         var combinedAxes = GetCombinedAxisValues(item);
-        var varyingSegments = new List<string>(combinedAxes.Count);
+        var varyingSegments = new List<string>(combinedAxes.Count + (stepPrefixSegment is not null ? 1 : 0));
+        if (stepPrefixSegment is not null)
+        {
+            varyingSegments.Add(stepPrefixSegment);
+        }
+
         foreach (var param in combinedAxes)
         {
             if (string.IsNullOrWhiteSpace(param.Key))
@@ -422,7 +454,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
             }
 
             var safeKey = SanitizeFileNameSegment(param.Key.Trim());
-            var rawVal = IsSensitiveParamName(param.Key) ? "***" : (param.Value ?? string.Empty);
+            var rawVal = BatchExecutionHelper.MaskIfSensitive(param.Key, param.Value);
             var safeVal = SanitizeFileNameSegment(rawVal);
             varyingSegments.Add($"{safeKey}={safeVal}");
         }
@@ -582,7 +614,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
 
         return string.Join(", ", source.Select(p =>
         {
-            var val = IsSensitiveParamName(p.Key) ? "***" : p.Value;
+            var val = BatchExecutionHelper.MaskIfSensitive(p.Key, p.Value);
             return $"{p.Key}={val}";
         }));
     }
@@ -601,20 +633,6 @@ public sealed class BatchResultWriter : IBatchResultWriter
         }
 
         return $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
-    }
-
-    private static bool IsSensitiveParamName(string? name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return false;
-        }
-
-        return name.Contains("token", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("key", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("secret", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("password", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("auth", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GetUniqueFilePath(string folder, string stem, string extension)

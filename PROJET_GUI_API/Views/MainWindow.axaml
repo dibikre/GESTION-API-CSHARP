@@ -25,6 +25,10 @@
         <TabItem Header="Lot (curl)">
             <views:BatchView DataContext="{Binding Batch}" />
         </TabItem>
+
+        <TabItem Header="Chaîne">
+            <views:ChainView DataContext="{Binding Chain}" />
+        </TabItem>
     </TabControl>
 
 </Window>

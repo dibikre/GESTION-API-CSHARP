@@ -61,11 +61,14 @@ public partial class App : Application
         services.AddSingleton<ICurlParser, CurlParser>();
         services.AddSingleton<ITemplateEngine, TemplateEngine>();
         services.AddSingleton<IRateLimitDetector, RateLimitDetector>();
+        services.AddSingleton<IResponseExtractor, ResponseExtractor>();
         services.AddSingleton<IBatchRunner, BatchRunner>();
+        services.AddSingleton<IChainRunner, ChainRunner>();
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
         services.AddSingleton<IBatchResultWriter, BatchResultWriter>();
         services.AddSingleton<SingleRequestViewModel>();
         services.AddSingleton<BatchViewModel>();
+        services.AddSingleton<ChainViewModel>();
         services.AddSingleton<MainWindowViewModel>();
     }
 }

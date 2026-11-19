@@ -25,6 +25,10 @@ public class BatchResultItem
     public bool WasRateLimited { get; set; }
     public int RetryAttempts { get; set; }
     public long FinalWaitMs { get; set; }
+    public int StepIndex { get; set; }
+    public string? StepName { get; set; }
+    public int Iteration { get; set; }
+    public IReadOnlyDictionary<string, string>? ExtractedValues { get; set; }
 
     public string RateLimitSuffixText => !WasRateLimited
         ? string.Empty
