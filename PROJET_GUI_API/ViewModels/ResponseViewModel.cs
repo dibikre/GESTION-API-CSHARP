@@ -21,9 +21,15 @@ public enum StatusCategory
 
 public partial class ResponseViewModel : ViewModelBase
 {
+    private static readonly JsonDocumentOptions JsonParseOptions = new()
+    {
+        MaxDepth = 1024
+    };
+
     private static readonly JsonSerializerOptions IndentedJsonOptions = new()
     {
-        WriteIndented = true
+        WriteIndented = true,
+        MaxDepth = 1024
     };
 
     private readonly IOverlayEditorService? _overlayEditor;
@@ -202,7 +208,7 @@ public partial class ResponseViewModel : ViewModelBase
 
         try
         {
-            using var document = JsonDocument.Parse(rawBody);
+            using var document = JsonDocument.Parse(rawBody.TrimStart('\uFEFF'), JsonParseOptions);
             return JsonSerializer.Serialize(document.RootElement, IndentedJsonOptions);
         }
         catch (JsonException)

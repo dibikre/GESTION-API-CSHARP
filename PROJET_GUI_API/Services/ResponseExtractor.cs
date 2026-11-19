@@ -9,6 +9,14 @@ namespace ApiTester.Services;
 
 public sealed class ResponseExtractor : IResponseExtractor
 {
+    private static readonly JsonDocumentOptions JsonParseOptions = new()
+    {
+        MaxDepth = 1024
+    };
+    private static readonly JsonSerializerOptions JsonSerializeOptions = new()
+    {
+        MaxDepth = 1024
+    };
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
     private static readonly Regex VariableNameRegex = new(
         @"^[\p{L}_][\p{L}\p{N}_]*$",
@@ -187,7 +195,7 @@ public sealed class ResponseExtractor : IResponseExtractor
         JsonDocument document;
         try
         {
-            document = JsonDocument.Parse(body);
+            document = JsonDocument.Parse(body.TrimStart('\uFEFF'), JsonParseOptions);
         }
         catch (JsonException)
         {
@@ -240,7 +248,7 @@ public sealed class ResponseExtractor : IResponseExtractor
             var value = current.ValueKind switch
             {
                 JsonValueKind.String => current.GetString() ?? string.Empty,
-                JsonValueKind.Object or JsonValueKind.Array => JsonSerializer.Serialize(current),
+                JsonValueKind.Object or JsonValueKind.Array => JsonSerializer.Serialize(current, JsonSerializeOptions),
                 _ => current.GetRawText()
             };
 

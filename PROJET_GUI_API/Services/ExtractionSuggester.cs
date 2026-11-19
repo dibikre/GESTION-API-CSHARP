@@ -16,6 +16,11 @@ public sealed class ExtractionSuggester : IExtractionSuggester
     private const string HtmlFallbackMessage =
         "Ce HTML est trop irrégulier pour être analysé automatiquement : sélectionne le texte directement ci-dessous.";
 
+    private static readonly JsonDocumentOptions JsonParseOptions = new()
+    {
+        MaxDepth = 1024
+    };
+
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
 
     private static readonly Regex HtmlDoctypeRegex = new(
@@ -40,7 +45,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             return ResponseFormat.Text;
         }
 
-        var trimmed = text.TrimStart();
+        var trimmed = text.TrimStart('\uFEFF').TrimStart();
         if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
         {
             return ResponseFormat.Json;
@@ -202,7 +207,8 @@ public sealed class ExtractionSuggester : IExtractionSuggester
     {
         try
         {
-            using var doc = JsonDocument.Parse(text);
+            var normalized = text.TrimStart('\uFEFF');
+            using var doc = JsonDocument.Parse(normalized, JsonParseOptions);
             var rootNode = BuildJsonNode(doc.RootElement, keyLabel: null, jsonPath: string.Empty, depth: 0);
             var nodes = new ObservableCollection<ExtractorNode> { rootNode };
             return new FormatAnalysisResult(ResponseFormat.Json, FallbackToText: false, StatusMessage: null, RootNodes: nodes);

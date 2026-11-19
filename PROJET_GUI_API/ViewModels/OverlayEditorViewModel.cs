@@ -9,9 +9,15 @@ namespace ApiTester.ViewModels;
 
 public partial class OverlayEditorViewModel : ViewModelBase
 {
+    private static readonly JsonDocumentOptions JsonParseOptions = new()
+    {
+        MaxDepth = 1024
+    };
+
     private static readonly JsonSerializerOptions IndentedJsonOptions = new()
     {
-        WriteIndented = true
+        WriteIndented = true,
+        MaxDepth = 1024
     };
 
     private readonly IClipboardService? _clipboardService;
@@ -67,7 +73,7 @@ public partial class OverlayEditorViewModel : ViewModelBase
 
         try
         {
-            using var document = JsonDocument.Parse(Text);
+            using var document = JsonDocument.Parse(Text.TrimStart('\uFEFF'), JsonParseOptions);
             Text = JsonSerializer.Serialize(document.RootElement, IndentedJsonOptions);
         }
         catch (JsonException)
@@ -119,7 +125,7 @@ public partial class OverlayEditorViewModel : ViewModelBase
 
         try
         {
-            using var document = JsonDocument.Parse(text);
+            using var document = JsonDocument.Parse(text.TrimStart('\uFEFF'), JsonParseOptions);
             return true;
         }
         catch (JsonException)
