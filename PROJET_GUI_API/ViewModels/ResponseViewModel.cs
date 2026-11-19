@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text.Json;
 using ApiTester.Models;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 
 namespace ApiTester.ViewModels;
 
@@ -25,7 +26,10 @@ public partial class ResponseViewModel : ViewModelBase
     };
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RequestExtractCommand))]
     public partial bool HasResponse { get; set; }
+
+    public event EventHandler<ExtractRequestedEventArgs>? ExtractRequested;
 
     [ObservableProperty]
     public partial bool IsBusy { get; set; }
@@ -61,6 +65,18 @@ public partial class ResponseViewModel : ViewModelBase
     public partial StatusCategory StatusCategory { get; set; } = StatusCategory.None;
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
+
+    [RelayCommand(CanExecute = nameof(HasResponse))]
+    private void RequestExtract()
+    {
+        if (!HasResponse)
+        {
+            return;
+        }
+
+        var content = string.IsNullOrEmpty(RawBody) ? Body : RawBody;
+        ExtractRequested?.Invoke(this, new ExtractRequestedEventArgs(content, ContentType));
+    }
 
     public void Update(ResponseModel response)
     {
@@ -199,4 +215,16 @@ public partial class ResponseViewModel : ViewModelBase
 
         return string.Create(CultureInfo.InvariantCulture, $"{bytes / gb:0.##} GB");
     }
+}
+
+public sealed class ExtractRequestedEventArgs : EventArgs
+{
+    public ExtractRequestedEventArgs(string body, string contentType)
+    {
+        Body = body ?? string.Empty;
+        ContentType = contentType ?? string.Empty;
+    }
+
+    public string Body { get; }
+    public string ContentType { get; }
 }

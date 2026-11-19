@@ -16,5 +16,8 @@ public interface IResponseExtractor
 {
     bool TryValidateVariableName(string? variableName, out string? errorMessage);
 
+    /// <summary>
+    /// Extrait une valeur depuis le corps (JSONPath simplifié incluant l'indexation directe sur tableau racine [index], ou Regex) ou un en-tête.
+    /// </summary>
     ExtractionOutcome Extract(ResponseModel response, ChainExtraction extraction);
 }

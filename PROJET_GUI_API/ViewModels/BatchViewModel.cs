@@ -65,6 +65,7 @@ public partial class BatchViewModel : ViewModelBase
         Axes.CollectionChanged += (_, _) => NotifyOrderPanelStateChanged();
         OrderPreview.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasOrderPreview));
         RateLimitPolicy.PropertyChanged += (_, _) => ValidateAndSyncRateLimitPolicy();
+        SelectedResponse.ExtractRequested += (_, args) => ExtractToLabCallback?.Invoke(args.Body, args.ContentType);
     }
 
     public static IReadOnlyList<BatchMode> BatchModes { get; } = Enum.GetValues<BatchMode>();
@@ -382,6 +383,8 @@ public partial class BatchViewModel : ViewModelBase
     public partial BatchResultItem? SelectedResult { get; set; }
 
     public ResponseViewModel SelectedResponse { get; } = new();
+
+    public Action<string, string>? ExtractToLabCallback { get; set; }
 
     partial void OnUrlChanged(string value)
     {

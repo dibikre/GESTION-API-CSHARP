@@ -349,3 +349,67 @@ public sealed class ChainDelayMsToDecimalConverter : IValueConverter
     }
 }
 
+public static class ResponseFormatConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ResponseFormat, string>(format => format switch
+        {
+            ResponseFormat.Auto => "Auto",
+            ResponseFormat.Json => "JSON",
+            ResponseFormat.Xml => "XML",
+            ResponseFormat.Html => "HTML",
+            ResponseFormat.Text => "Texte",
+            _ => format.ToString()
+        });
+}
+
+public static class ExtractorValueKindConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ExtractorValueKind, string>(kind => kind switch
+        {
+            ExtractorValueKind.Digits => "Chiffres (\\d+)",
+            ExtractorValueKind.NonWhitespace => "Non-espaces (\\S+)",
+            ExtractorValueKind.UntilEndOfLine => "Jusqu'à fin de ligne",
+            ExtractorValueKind.Custom => "Personnalisé",
+            _ => kind.ToString()
+        });
+}
+
+public sealed class ExtractorContextLengthConverter : IValueConverter
+{
+    public static readonly ExtractorContextLengthConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int intValue)
+        {
+            return (decimal)Math.Clamp(intValue, 1, 100);
+        }
+
+        return 15m;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is decimal decValue)
+        {
+            return Math.Clamp((int)decValue, 1, 100);
+        }
+
+        return 15;
+    }
+}
+
+public static class LiveTestStatusConverters
+{
+    public static readonly IValueConverter IsSuccess =
+        new FuncValueConverter<LiveTestStatus, bool>(status => status == LiveTestStatus.Success);
+
+    public static readonly IValueConverter IsWarning =
+        new FuncValueConverter<LiveTestStatus, bool>(status => status == LiveTestStatus.Warning);
+
+    public static readonly IValueConverter IsError =
+        new FuncValueConverter<LiveTestStatus, bool>(status => status == LiveTestStatus.Error);
+}
+

@@ -62,6 +62,8 @@ public partial class App : Application
         services.AddSingleton<ITemplateEngine, TemplateEngine>();
         services.AddSingleton<IRateLimitDetector, RateLimitDetector>();
         services.AddSingleton<IResponseExtractor, ResponseExtractor>();
+        services.AddSingleton<IExtractionSuggester, ExtractionSuggester>();
+        services.AddSingleton<IClipboardService, ClipboardService>();
         services.AddSingleton<IBatchRunner, BatchRunner>();
         services.AddSingleton<IChainRunner, ChainRunner>();
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
@@ -69,6 +71,7 @@ public partial class App : Application
         services.AddSingleton<SingleRequestViewModel>();
         services.AddSingleton<BatchViewModel>();
         services.AddSingleton<ChainViewModel>();
+        services.AddSingleton<ExtractorViewModel>();
         services.AddSingleton<MainWindowViewModel>();
     }
 }

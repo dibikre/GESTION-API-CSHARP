@@ -171,7 +171,7 @@
                         BorderThickness="1"
                         CornerRadius="{DynamicResource BadgeCornerRadius}"
                         Padding="8,3"
-                        Margin="0,0,0,4"
+                        Margin="0,0,8,4"
                         VerticalAlignment="Center"
                         IsVisible="{Binding ContentType, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                     <TextBlock Text="{Binding ContentType}"
@@ -180,6 +180,17 @@
                                Foreground="{DynamicResource TextMutedBrush}"
                                VerticalAlignment="Center" />
                 </Border>
+
+                <Button Classes="ghost"
+                        Command="{Binding RequestExtractCommand}"
+                        Content="Extraire une valeur..."
+                        FontSize="{DynamicResource FontSizeSmall}"
+                        Height="24"
+                        MinHeight="24"
+                        Padding="8,0"
+                        Margin="0,0,0,4"
+                        VerticalAlignment="Center"
+                        AutomationProperties.Name="Extraire une valeur dans l'onglet Extracteur" />
             </WrapPanel>
 
             <!-- Bandeau d'erreur fin -->

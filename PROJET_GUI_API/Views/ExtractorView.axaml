@@ -1,0 +1,499 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1060" d:DesignHeight="660"
+             x:Class="ApiTester.Views.ExtractorView"
+             x:Name="ExtractorRoot"
+             x:DataType="vm:ExtractorViewModel">
+
+    <UserControl.Resources>
+        <DataTemplate x:Key="ExtractorNodeTemplate" x:DataType="models:ExtractorNode">
+            <StackPanel Spacing="1">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="4">
+                    <Button Grid.Column="0"
+                            Classes="icon"
+                            IsVisible="{Binding HasChildren}"
+                            Command="{Binding #ExtractorRoot.ViewModel.ToggleNodeExpandCommand}"
+                            CommandParameter="{Binding}"
+                            AutomationProperties.Name="Déplier ou replier le nœud">
+                        <Panel>
+                            <Path Classes="iconStroke"
+                                  IsVisible="{Binding !IsExpanded}"
+                                  Data="{StaticResource IconChevronRight}" />
+                            <Path Classes="iconStroke"
+                                  IsVisible="{Binding IsExpanded}"
+                                  Data="{StaticResource IconChevronDown}" />
+                        </Panel>
+                    </Button>
+                    <Border Grid.Column="0"
+                            Width="24"
+                            IsVisible="{Binding !HasChildren}" />
+
+                    <Button Grid.Column="1"
+                            Classes="ghost treeNodeButton"
+                            Classes.selected="{Binding IsSelected}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            Height="26"
+                            MinHeight="26"
+                            Padding="6,0"
+                            Command="{Binding #ExtractorRoot.ViewModel.SelectNodeCommand}"
+                            CommandParameter="{Binding}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Border Background="{DynamicResource SurfaceAltBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                    Padding="4,0"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="{Binding KindTag}"
+                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                           FontSize="{DynamicResource FontSizeCaption}"
+                                           Foreground="{DynamicResource TextMutedBrush}" />
+                            </Border>
+                            <TextBlock Text="{Binding Label}"
+                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{DynamicResource TextBrush}"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+
+                <ItemsControl ItemsSource="{Binding Children}"
+                              ItemTemplate="{StaticResource ExtractorNodeTemplate}"
+                              IsVisible="{Binding IsExpanded}"
+                              Margin="18,0,0,0" />
+            </StackPanel>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Button.treeNodeButton.selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <Style Selector="Border.testPill">
+            <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource BadgeCornerRadius}" />
+            <Setter Property="Padding" Value="8,3" />
+        </Style>
+        <Style Selector="Border.testPill TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        </Style>
+        <Style Selector="Border.testPill.success">
+            <Setter Property="Background" Value="{DynamicResource SuccessSoftBrush}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.testPill.success TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+        </Style>
+        <Style Selector="Border.testPill.warning">
+            <Setter Property="Background" Value="{DynamicResource WarningBadgeSoftBrush}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.testPill.warning TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+        </Style>
+        <Style Selector="Border.testPill.error">
+            <Setter Property="Background" Value="{DynamicResource DangerBadgeSoftBrush}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.testPill.error TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
+        <!-- Zone haute : collage, format, bouton Charger -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource SurfaceBrush}"
+                CornerRadius="{DynamicResource PanelCornerRadius}"
+                Padding="10">
+            <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="Auto,130,Auto,*" ColumnSpacing="8">
+                    <TextBlock Grid.Column="0"
+                               Text="Réponse collée"
+                               FontSize="{DynamicResource FontSizeBase}"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextBrush}"
+                               VerticalAlignment="Center" />
+
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{x:Static vm:ExtractorViewModel.Formats}"
+                              SelectedItem="{Binding Format}"
+                              AutomationProperties.Name="Format de la réponse">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="models:ResponseFormat">
+                                <TextBlock Text="{Binding Converter={x:Static conv:ResponseFormatConverters.ToLabel}}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <Button Grid.Column="2"
+                            Classes="primary"
+                            Content="Charger"
+                            Command="{Binding LoadCommand}"
+                            AutomationProperties.Name="Charger et analyser la réponse" />
+
+                    <TextBlock Grid.Column="3"
+                               Text="{Binding DetectedFormatText}"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Right" />
+                </Grid>
+
+                <TextBox Classes="mono"
+                         Text="{Binding InputText}"
+                         AcceptsReturn="True"
+                         TextWrapping="NoWrap"
+                         Height="120"
+                         ScrollViewer.AllowAutoHide="False"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         PlaceholderText="Colle une réponse JSON, XML, HTML ou texte brut..."
+                         AutomationProperties.Name="Texte de réponse à analyser" />
+
+                <Border IsVisible="{Binding HasAnalysisMessage}"
+                        Background="{DynamicResource WarningSoftBrush}"
+                        BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                        Padding="8,5">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Path Classes="iconStroke"
+                              Data="{StaticResource IconWarning}"
+                              Stroke="{DynamicResource WarningBrush}"
+                              VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding AnalysisMessage}"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{DynamicResource WarningBrush}"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <!-- Zone centrale : arbre JSON/XML OU sélection manuelle HTML/Text -->
+        <Border Grid.Row="1"
+                Background="{DynamicResource SurfaceBrush}"
+                CornerRadius="{DynamicResource PanelCornerRadius}"
+                Padding="10"
+                MinHeight="180">
+            <Panel>
+                <!-- État initial avant premier chargement -->
+                <TextBlock IsVisible="{Binding !HasLoaded}"
+                           Text="Colle une réponse ci-dessus puis clique sur « Charger » (ou utilise « Extraire une valeur... » depuis une réponse)."
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap" />
+
+                <!-- Mode Arbre (JSON / XML / HTML structuré) -->
+                <Grid IsVisible="{Binding IsTreeMode}"
+                      RowDefinitions="Auto,*"
+                      RowSpacing="6">
+                    <TextBlock Grid.Row="0"
+                               Text="Clique sur un élément ci-dessous pour générer son extracteur :"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource TextMutedBrush}" />
+
+                    <Border Grid.Row="1"
+                            Background="{DynamicResource SurfaceAltBrush}"
+                            BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource ControlCornerRadius}"
+                            Padding="6">
+                        <ScrollViewer AllowAutoHide="False"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding TreeNodes}"
+                                          ItemTemplate="{StaticResource ExtractorNodeTemplate}"
+                                          Margin="0,0,10,4" />
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+
+                <!-- Mode Sélection Manuelle (Text / HTML irrégulier / JSON invalide) -->
+                <Grid IsVisible="{Binding IsManualMode}"
+                      RowDefinitions="*,Auto"
+                      RowSpacing="8">
+                    <TextBox Grid.Row="0"
+                             Classes="mono"
+                             Text="{Binding AnalyzedText, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             SelectionStart="{Binding SelectionStart, Mode=TwoWay}"
+                             SelectionEnd="{Binding SelectionEnd, Mode=TwoWay}"
+                             ScrollViewer.AllowAutoHide="False"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             AutomationProperties.Name="Texte analysé pour sélection manuelle" />
+
+                    <WrapPanel Grid.Row="1" Orientation="Horizontal">
+                        <Button Classes="primary"
+                                Content="Utiliser la sélection"
+                                Command="{Binding UseSelectionCommand}"
+                                Margin="0,0,12,4"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Utiliser le passage sélectionné" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                            <TextBlock Text="Contexte (car.)"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       VerticalAlignment="Center" />
+                            <NumericUpDown Value="{Binding ContextLength, Converter={x:Static conv:ExtractorContextLengthConverter.Instance}, Mode=TwoWay}"
+                                           Minimum="1"
+                                           Maximum="100"
+                                           Increment="1"
+                                           FormatString="0"
+                                           Width="110"
+                                           AutomationProperties.Name="Longueur du contexte avant la sélection" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                            <TextBlock Text="Type"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       VerticalAlignment="Center" />
+                            <ComboBox ItemsSource="{x:Static vm:ExtractorViewModel.ValueKinds}"
+                                      SelectedItem="{Binding ValueKind}"
+                                      MinWidth="170"
+                                      AutomationProperties.Name="Type de valeur capturée">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:ExtractorValueKind">
+                                        <TextBlock Text="{Binding Converter={x:Static conv:ExtractorValueKindConverters.ToLabel}}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <TextBox IsVisible="{Binding IsCustomValueKind}"
+                                 Classes="mono"
+                                 Text="{Binding CustomPattern}"
+                                 Width="180"
+                                 Margin="0,0,12,4"
+                                 PlaceholderText="Motif regex, ex. [A-Z0-9]+"
+                                 VerticalAlignment="Center"
+                                 AutomationProperties.Name="Motif regex personnalisé" />
+
+                        <CheckBox IsChecked="{Binding UseTrailingAnchor}"
+                                  Content="Ancre de fin"
+                                  Margin="0,0,0,4"
+                                  VerticalAlignment="Center"
+                                  AutomationProperties.Name="Ajouter une ancre après la sélection" />
+                    </WrapPanel>
+                </Grid>
+            </Panel>
+        </Border>
+
+        <!-- Panneau de résultat sous la zone centrale -->
+        <Border Grid.Row="2"
+                Background="{DynamicResource SurfaceBrush}"
+                CornerRadius="{DynamicResource PanelCornerRadius}"
+                Padding="10">
+            <StackPanel Spacing="8">
+                <TextBlock IsVisible="{Binding !HasAnySuggestion}"
+                           Text="Sélectionne un nœud dans l'arbre ou un passage de texte pour obtenir le JSONPath / regex et le tester en direct."
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           TextWrapping="Wrap" />
+
+                <!-- Bloc JSONPath (recommandé en mode JSON) -->
+                <StackPanel IsVisible="{Binding HasSuggestedJsonPath}" Spacing="4">
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                        <TextBlock Grid.Column="0"
+                                   Text="Chemin JSONPath (recommandé)"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1"
+                                   Text="Résiste aux changements d'ordre ou d'ajout de champs."
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                        <TextBox Grid.Column="0"
+                                 Classes="mono"
+                                 Text="{Binding SuggestedJsonPath, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 AutomationProperties.Name="Chemin JSONPath proposé" />
+                        <Button Grid.Column="1"
+                                Classes="secondary"
+                                Command="{Binding CopyJsonPathCommand}"
+                                AutomationProperties.Name="Copier le chemin JSONPath">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <Path Classes="iconStroke" Data="{StaticResource IconCopy}" />
+                                <TextBlock Text="Copier" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+
+                <!-- Mention pas de JSONPath pour XML / HTML -->
+                <TextBlock IsVisible="{Binding ShowNoJsonPathNote}"
+                           Text="Aucun chemin JSONPath : ce format n'en a pas."
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource TextMutedBrush}" />
+
+                <!-- Bloc Regex alternatif repliable en JSON -->
+                <Expander Classes="sectionExpander" IsExpanded="False">
+                    <Expander.IsVisible>
+                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                            <Binding Path="HasSuggestedRegex" />
+                            <Binding Path="IsJsonResult" />
+                        </MultiBinding>
+                    </Expander.IsVisible>
+                    <Expander.Header>
+                        <TextBlock Text="Regex alternatif"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   FontWeight="Medium"
+                                   Foreground="{DynamicResource TextMutedBrush}" />
+                    </Expander.Header>
+                    <StackPanel Spacing="4" Margin="0,4,0,0">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                            <TextBox Grid.Column="0"
+                                     Classes="mono"
+                                     Text="{Binding SuggestedRegex, Mode=OneWay}"
+                                     IsReadOnly="True"
+                                     AutomationProperties.Name="Expression régulière alternative proposée" />
+                            <Button Grid.Column="1"
+                                    Classes="secondary"
+                                    Command="{Binding CopyRegexCommand}"
+                                    AutomationProperties.Name="Copier le regex alternatif">
+                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                    <Path Classes="iconStroke" Data="{StaticResource IconCopy}" />
+                                    <TextBlock Text="Copier" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <TextBlock IsVisible="{Binding HasOccurrenceWarning}"
+                                   Text="{Binding OccurrenceWarningText}"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{DynamicResource WarningBrush}"
+                                   TextWrapping="Wrap" />
+
+                        <TextBlock IsVisible="{Binding HasRegexTestResult}"
+                                   Text="{Binding RegexTestResultText}"
+                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Expander>
+
+                <!-- Bloc Regex principal (XML / HTML / Texte) -->
+                <StackPanel Spacing="4">
+                    <StackPanel.IsVisible>
+                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                            <Binding Path="HasSuggestedRegex" />
+                            <Binding Path="!IsJsonResult" />
+                        </MultiBinding>
+                    </StackPanel.IsVisible>
+                    <TextBlock Text="Expression régulière proposée"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextBrush}" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                        <TextBox Grid.Column="0"
+                                 Classes="mono"
+                                 Text="{Binding SuggestedRegex, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 AutomationProperties.Name="Expression régulière proposée" />
+                        <Button Grid.Column="1"
+                                Classes="secondary"
+                                Command="{Binding CopyRegexCommand}"
+                                AutomationProperties.Name="Copier l'expression régulière">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <Path Classes="iconStroke" Data="{StaticResource IconCopy}" />
+                                <TextBlock Text="Copier" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                    <TextBlock IsVisible="{Binding HasOccurrenceWarning}"
+                               Text="{Binding OccurrenceWarningText}"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource WarningBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <TextBlock IsVisible="{Binding HasCopyFeedback}"
+                           Text="{Binding CopyFeedbackText}"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource AccentBrush}" />
+
+                <!-- Résultat du test en direct + action Chaîne -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <Grid Grid.Column="0"
+                          IsVisible="{Binding HasTestResult}"
+                          ColumnDefinitions="Auto,*"
+                          ColumnSpacing="8"
+                          VerticalAlignment="Center">
+                        <Border Grid.Column="0"
+                                Classes="testPill"
+                                Classes.success="{Binding TestStatus, Converter={x:Static conv:LiveTestStatusConverters.IsSuccess}}"
+                                Classes.warning="{Binding TestStatus, Converter={x:Static conv:LiveTestStatusConverters.IsWarning}}"
+                                Classes.error="{Binding TestStatus, Converter={x:Static conv:LiveTestStatusConverters.IsError}}"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="{Binding TestStatusBadgeText}"
+                                       FontSize="{DynamicResource FontSizeCaption}"
+                                       FontWeight="SemiBold" />
+                        </Border>
+
+                        <SelectableTextBlock Grid.Column="1"
+                                             Text="{Binding TestResultText}"
+                                             FontFamily="{DynamicResource MonoFontFamily}"
+                                             FontSize="{DynamicResource FontSizeSmall}"
+                                             Foreground="{DynamicResource TextBrush}"
+                                             TextWrapping="Wrap"
+                                             VerticalAlignment="Center" />
+                    </Grid>
+
+                    <StackPanel Grid.Column="1"
+                                IsVisible="{Binding IsChainAvailable}"
+                                Orientation="Horizontal"
+                                Spacing="6"
+                                VerticalAlignment="Center">
+                        <ComboBox ItemsSource="{Binding ChainSteps}"
+                                  SelectedItem="{Binding SelectedTargetStep}"
+                                  MinWidth="140"
+                                  MaxWidth="220"
+                                  AutomationProperties.Name="Étape cible de la chaîne">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:ChainStep">
+                                    <TextBlock Text="{Binding StepHeaderLabel}"
+                                               TextTrimming="CharacterEllipsis" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+
+                        <Button Classes="secondary"
+                                Content="Envoyer vers une extraction de chaîne"
+                                Command="{Binding SendToChainCommand}"
+                                AutomationProperties.Name="Envoyer vers une extraction de chaîne" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+</UserControl>

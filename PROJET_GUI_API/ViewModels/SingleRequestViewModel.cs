@@ -14,10 +14,13 @@ public partial class SingleRequestViewModel : ViewModelBase
     public SingleRequestViewModel(IHttpService httpService)
     {
         _httpService = httpService ?? throw new ArgumentNullException(nameof(httpService));
+        Response.ExtractRequested += (_, args) => ExtractToLabCallback?.Invoke(args.Body, args.ContentType);
     }
 
     public RequestViewModel Request { get; } = new();
     public ResponseViewModel Response { get; } = new();
+
+    public Action<string, string>? ExtractToLabCallback { get; set; }
 
     public event EventHandler<RequestCompletedEventArgs>? RequestCompleted;
 

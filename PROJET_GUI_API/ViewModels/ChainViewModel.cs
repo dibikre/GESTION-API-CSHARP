@@ -49,6 +49,7 @@ public partial class ChainViewModel : ViewModelBase
         };
         AccumulatedVariables.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasAccumulatedVariables));
         Steps.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasSteps));
+        SelectedResponse.ExtractRequested += (_, args) => ExtractToLabCallback?.Invoke(args.Body, args.ContentType);
 
         AddStep();
     }
@@ -189,6 +190,8 @@ public partial class ChainViewModel : ViewModelBase
     public partial ChainStepResult? SelectedResult { get; set; }
 
     public ResponseViewModel SelectedResponse { get; } = new();
+
+    public Action<string, string>? ExtractToLabCallback { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowPerRequestOptions))]
