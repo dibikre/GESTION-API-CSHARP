@@ -352,7 +352,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
                 continue;
             }
 
-            var value = IsSensitiveParamName(param.Key) ? "***" : (param.Value ?? string.Empty);
+            var value = BatchExecutionHelper.MaskIfSensitive(param.Key, param.Value);
             writer.WriteString(param.Key, value);
         }
         writer.WriteEndObject();
