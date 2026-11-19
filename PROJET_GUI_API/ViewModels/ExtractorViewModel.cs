@@ -19,6 +19,7 @@ public partial class ExtractorViewModel : ViewModelBase
     private readonly IExtractionSuggester _suggester;
     private readonly IResponseExtractor _responseExtractor;
     private readonly IClipboardService? _clipboardService;
+    private readonly IOverlayEditorService? _overlayEditor;
     private readonly ChainViewModel? _chainViewModel;
     private readonly ObservableCollection<ChainStep> _emptyChainSteps = [];
     private bool _hasCapturedSelection;
@@ -30,12 +31,14 @@ public partial class ExtractorViewModel : ViewModelBase
         IExtractionSuggester suggester,
         IResponseExtractor responseExtractor,
         IClipboardService? clipboardService = null,
-        ChainViewModel? chainViewModel = null)
+        ChainViewModel? chainViewModel = null,
+        IOverlayEditorService? overlayEditor = null)
     {
         _suggester = suggester ?? throw new ArgumentNullException(nameof(suggester));
         _responseExtractor = responseExtractor ?? throw new ArgumentNullException(nameof(responseExtractor));
         _clipboardService = clipboardService;
         _chainViewModel = chainViewModel;
+        _overlayEditor = overlayEditor;
 
         if (_chainViewModel is not null)
         {
@@ -245,6 +248,20 @@ public partial class ExtractorViewModel : ViewModelBase
     partial void OnUseTrailingAnchorChanged(bool value)
     {
         RefreshManualSelectionIfActive();
+    }
+
+    [RelayCommand]
+    private void EnlargeInputText()
+    {
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Réponse collée",
+            InputText,
+            IsReadOnly: false,
+            OnSave: text =>
+            {
+                InputText = text;
+                Load();
+            }));
     }
 
     [RelayCommand]

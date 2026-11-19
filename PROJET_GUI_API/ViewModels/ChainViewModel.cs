@@ -22,6 +22,7 @@ public partial class ChainViewModel : ViewModelBase
     private readonly IResponseExtractor _responseExtractor;
     private readonly IFolderPickerService _folderPickerService;
     private readonly IBatchResultWriter _batchResultWriter;
+    private readonly IOverlayEditorService? _overlayEditor;
     private readonly RateLimitPolicy _sharedRateLimitPolicy;
     private bool _isBulkUpdating;
 
@@ -32,7 +33,8 @@ public partial class ChainViewModel : ViewModelBase
         IResponseExtractor responseExtractor,
         IFolderPickerService folderPickerService,
         IBatchResultWriter batchResultWriter,
-        BatchViewModel? batchViewModel = null)
+        BatchViewModel? batchViewModel = null,
+        IOverlayEditorService? overlayEditor = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
@@ -40,7 +42,9 @@ public partial class ChainViewModel : ViewModelBase
         _responseExtractor = responseExtractor ?? throw new ArgumentNullException(nameof(responseExtractor));
         _folderPickerService = folderPickerService ?? throw new ArgumentNullException(nameof(folderPickerService));
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
+        _overlayEditor = overlayEditor;
         _sharedRateLimitPolicy = batchViewModel?.RateLimitPolicy ?? new RateLimitPolicy();
+        SelectedResponse = new ResponseViewModel(overlayEditor);
 
         Results.CollectionChanged += (_, _) =>
         {
@@ -189,7 +193,7 @@ public partial class ChainViewModel : ViewModelBase
     [ObservableProperty]
     public partial ChainStepResult? SelectedResult { get; set; }
 
-    public ResponseViewModel SelectedResponse { get; } = new();
+    public ResponseViewModel SelectedResponse { get; }
 
     public Action<string, string>? ExtractToLabCallback { get; set; }
 
@@ -384,6 +388,53 @@ public partial class ChainViewModel : ViewModelBase
         Steps.Move(idx, idx + 1);
         SelectedStep = step;
         RefreshAllStepsAndPlan();
+    }
+
+    [RelayCommand]
+    private void EnlargeStepCurl()
+    {
+        if (SelectedStep is null)
+        {
+            return;
+        }
+
+        var step = SelectedStep;
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Commande curl",
+            step.CurlText,
+            IsReadOnly: false,
+            OnSave: text => step.CurlText = text));
+    }
+
+    [RelayCommand]
+    private void EnlargeStepBody()
+    {
+        if (SelectedStep is null)
+        {
+            return;
+        }
+
+        var step = SelectedStep;
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Corps de la requête",
+            step.Body,
+            IsReadOnly: false,
+            OnSave: text => step.Body = text));
+    }
+
+    [RelayCommand]
+    private void EnlargeVariableList(BatchVariable? variable)
+    {
+        if (variable is null)
+        {
+            return;
+        }
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            $"Liste de valeurs : {variable.Name}",
+            variable.ListText,
+            IsReadOnly: false,
+            OnSave: text => variable.ListText = text));
     }
 
     [RelayCommand]

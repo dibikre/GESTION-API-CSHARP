@@ -64,6 +64,7 @@ public partial class App : Application
         services.AddSingleton<IResponseExtractor, ResponseExtractor>();
         services.AddSingleton<IExtractionSuggester, ExtractionSuggester>();
         services.AddSingleton<IClipboardService, ClipboardService>();
+        services.AddSingleton<IOverlayEditorService, OverlayEditorService>();
         services.AddSingleton<IBatchRunner, BatchRunner>();
         services.AddSingleton<IChainRunner, ChainRunner>();
         services.AddSingleton<IFolderPickerService, FolderPickerService>();

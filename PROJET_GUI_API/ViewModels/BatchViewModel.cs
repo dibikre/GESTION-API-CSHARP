@@ -27,6 +27,7 @@ public partial class BatchViewModel : ViewModelBase
     private readonly IBatchRunner _batchRunner;
     private readonly IFolderPickerService _folderPickerService;
     private readonly IBatchResultWriter _batchResultWriter;
+    private readonly IOverlayEditorService? _overlayEditor;
     private readonly List<string> _parseWarnings = [];
     private readonly List<AxisIdentity> _rememberedAxisOrder = [];
     private AuthConfig _parsedAuth = new();
@@ -40,13 +41,16 @@ public partial class BatchViewModel : ViewModelBase
         ITemplateEngine templateEngine,
         IBatchRunner batchRunner,
         IFolderPickerService folderPickerService,
-        IBatchResultWriter batchResultWriter)
+        IBatchResultWriter batchResultWriter,
+        IOverlayEditorService? overlayEditor = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
         _batchRunner = batchRunner ?? throw new ArgumentNullException(nameof(batchRunner));
         _folderPickerService = folderPickerService ?? throw new ArgumentNullException(nameof(folderPickerService));
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
+        _overlayEditor = overlayEditor;
+        SelectedResponse = new ResponseViewModel(overlayEditor);
 
         VaryingParams.CollectionChanged += OnVaryingParamsCollectionChanged;
         Headers.CollectionChanged += OnEditableItemsCollectionChanged;
@@ -108,9 +112,12 @@ public partial class BatchViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsFormBody))]
+    [NotifyPropertyChangedFor(nameof(IsBodyNotNone))]
     public partial BodyType BodyType { get; set; } = BodyType.None;
 
     public bool IsFormBody => BodyType == BodyType.FormUrlEncoded;
+
+    public bool IsBodyNotNone => BodyType != BodyType.None && BodyType != BodyType.FormUrlEncoded;
 
     public ObservableCollection<KeyValueItem> FormFields { get; } = [];
 
@@ -382,7 +389,7 @@ public partial class BatchViewModel : ViewModelBase
     [ObservableProperty]
     public partial BatchResultItem? SelectedResult { get; set; }
 
-    public ResponseViewModel SelectedResponse { get; } = new();
+    public ResponseViewModel SelectedResponse { get; }
 
     public Action<string, string>? ExtractToLabCallback { get; set; }
 
@@ -482,6 +489,41 @@ public partial class BatchViewModel : ViewModelBase
             ContentType = "text/plain",
             Body = "(Corps non conservé — cochez « Conserver les corps » avant le lancement pour inspecter le détail.)"
         });
+    }
+
+    [RelayCommand]
+    private void EnlargeCurl()
+    {
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Commande curl",
+            CurlText,
+            IsReadOnly: false,
+            OnSave: text => CurlText = text));
+    }
+
+    [RelayCommand]
+    private void EnlargeBody()
+    {
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Corps de la requête",
+            Body,
+            IsReadOnly: false,
+            OnSave: text => Body = text));
+    }
+
+    [RelayCommand]
+    private void EnlargeVariableList(BatchVariable? variable)
+    {
+        if (variable is null)
+        {
+            return;
+        }
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            $"Liste de valeurs : {variable.Name}",
+            variable.ListText,
+            IsReadOnly: false,
+            OnSave: text => variable.ListText = text));
     }
 
     [RelayCommand]

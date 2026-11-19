@@ -153,16 +153,28 @@
                                HorizontalAlignment="Right" />
                 </Grid>
 
-                <TextBox Classes="mono"
-                         Text="{Binding InputText}"
-                         AcceptsReturn="True"
-                         TextWrapping="NoWrap"
-                         Height="120"
-                         ScrollViewer.AllowAutoHide="False"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                         PlaceholderText="Colle une réponse JSON, XML, HTML ou texte brut..."
-                         AutomationProperties.Name="Texte de réponse à analyser" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                    <TextBox Grid.Column="0"
+                             Classes="mono"
+                             Text="{Binding InputText}"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             Height="120"
+                             ScrollViewer.AllowAutoHide="False"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             PlaceholderText="Colle une réponse JSON, XML, HTML ou texte brut..."
+                             AutomationProperties.Name="Texte de réponse à analyser" />
+
+                    <Button Grid.Column="1"
+                            Classes="icon"
+                            VerticalAlignment="Top"
+                            Command="{Binding EnlargeInputTextCommand}"
+                            ToolTip.Tip="Agrandir"
+                            AutomationProperties.Name="Agrandir la réponse collée">
+                        <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                    </Button>
+                </Grid>
 
                 <Border IsVisible="{Binding HasAnalysisMessage}"
                         Background="{DynamicResource WarningSoftBrush}"

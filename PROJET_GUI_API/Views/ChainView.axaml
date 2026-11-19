@@ -217,7 +217,7 @@
                                   RowSpacing="6">
 
                         <!-- Nom + import curl -->
-                        <Grid Grid.Row="0" ColumnDefinitions="200,*,Auto,Auto" ColumnSpacing="8">
+                        <Grid Grid.Row="0" ColumnDefinitions="200,*,Auto,Auto,Auto" ColumnSpacing="8">
                             <TextBox Grid.Column="0"
                                      Text="{Binding Name}"
                                      PlaceholderText="Nom de l'étape"
@@ -234,12 +234,21 @@
                                      AutomationProperties.Name="Commande curl de l'étape" />
 
                             <Button Grid.Column="2"
+                                    Classes="icon"
+                                    VerticalAlignment="Center"
+                                    Command="{Binding #ChainRoot.ViewModel.EnlargeStepCurlCommand}"
+                                    ToolTip.Tip="Agrandir"
+                                    AutomationProperties.Name="Agrandir la commande curl de l'étape">
+                                <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                            </Button>
+
+                            <Button Grid.Column="3"
                                     Classes="primary"
                                     Content="Analyser"
                                     Command="{Binding #ChainRoot.ViewModel.ParseStepCurlCommand}"
                                     AutomationProperties.Name="Analyser la commande curl de l'étape" />
 
-                            <Button Grid.Column="3"
+                            <Button Grid.Column="4"
                                     Classes="ghost"
                                     Content="Manuel"
                                     IsVisible="{Binding !HasParsed}"
@@ -351,16 +360,28 @@
 
                             <TabItem Header="Corps">
                                 <Grid RowDefinitions="Auto,*,Auto" RowSpacing="6" Margin="0,6,0,0">
-                                    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-                                        <TextBlock Text="Type de corps"
-                                                   FontSize="{DynamicResource FontSizeSmall}"
-                                                   Foreground="{DynamicResource TextMutedBrush}"
-                                                   VerticalAlignment="Center" />
-                                        <ComboBox ItemsSource="{x:Static vm:ChainViewModel.BodyTypes}"
-                                                  SelectedItem="{Binding BodyType}"
-                                                  MinWidth="150"
-                                                  AutomationProperties.Name="Type de corps de l'étape" />
-                                    </StackPanel>
+                                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="Type de corps"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <ComboBox ItemsSource="{x:Static vm:ChainViewModel.BodyTypes}"
+                                                      SelectedItem="{Binding BodyType}"
+                                                      MinWidth="150"
+                                                      AutomationProperties.Name="Type de corps de l'étape" />
+                                        </StackPanel>
+
+                                        <Button Grid.Column="1"
+                                                Classes="icon"
+                                                VerticalAlignment="Center"
+                                                IsVisible="{Binding IsBodyNotNone}"
+                                                Command="{Binding #ChainRoot.ViewModel.EnlargeStepBodyCommand}"
+                                                ToolTip.Tip="Agrandir"
+                                                AutomationProperties.Name="Agrandir le corps de la requête de l'étape">
+                                            <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                                        </Button>
+                                    </Grid>
 
                                     <TextBox Grid.Row="1"
                                              IsVisible="{Binding !IsFormBody}"
@@ -415,7 +436,8 @@
                                                TextWrapping="Wrap" />
 
                                     <views:BatchVariableEditor Grid.Row="1"
-                                                               Items="{Binding Variables}" />
+                                                               Items="{Binding Variables}"
+                                                               EnlargeListCommand="{Binding #ChainRoot.ViewModel.EnlargeVariableListCommand}" />
 
                                     <TextBlock Grid.Row="2"
                                                IsVisible="{Binding HasVariablesError}"

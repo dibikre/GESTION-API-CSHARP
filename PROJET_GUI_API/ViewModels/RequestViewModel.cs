@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using ApiTester.Models;
+using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -10,6 +11,13 @@ namespace ApiTester.ViewModels;
 
 public partial class RequestViewModel : ViewModelBase
 {
+    private readonly IOverlayEditorService? _overlayEditor;
+
+    public RequestViewModel(IOverlayEditorService? overlayEditor = null)
+    {
+        _overlayEditor = overlayEditor;
+    }
+
     public static IReadOnlyList<HttpMethodType> Methods { get; } = Enum.GetValues<HttpMethodType>();
     public static IReadOnlyList<BodyType> BodyTypes { get; } = Enum.GetValues<BodyType>();
     public static IReadOnlyList<AuthType> AuthTypes { get; } = Enum.GetValues<AuthType>();
@@ -24,6 +32,7 @@ public partial class RequestViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsJsonBody))]
     [NotifyPropertyChangedFor(nameof(IsTextBody))]
     [NotifyPropertyChangedFor(nameof(IsFormBody))]
+    [NotifyPropertyChangedFor(nameof(CanEnlargeBody))]
     public partial BodyType BodyType { get; set; } = BodyType.None;
 
     [ObservableProperty]
@@ -67,6 +76,17 @@ public partial class RequestViewModel : ViewModelBase
     public bool IsJsonBody => BodyType == BodyType.Json;
     public bool IsTextBody => BodyType == BodyType.Text;
     public bool IsFormBody => BodyType == BodyType.FormUrlEncoded;
+    public bool CanEnlargeBody => BodyType is BodyType.Json or BodyType.Text;
+
+    [RelayCommand]
+    private void EnlargeBody()
+    {
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Corps de la requête",
+            Body,
+            IsReadOnly: false,
+            OnSave: text => Body = text));
+    }
 
     [RelayCommand]
     private void AddQueryParam()

@@ -11,14 +11,16 @@ public partial class SingleRequestViewModel : ViewModelBase
 {
     private readonly IHttpService _httpService;
 
-    public SingleRequestViewModel(IHttpService httpService)
+    public SingleRequestViewModel(IHttpService httpService, IOverlayEditorService? overlayEditor = null)
     {
         _httpService = httpService ?? throw new ArgumentNullException(nameof(httpService));
+        Request = new RequestViewModel(overlayEditor);
+        Response = new ResponseViewModel(overlayEditor);
         Response.ExtractRequested += (_, args) => ExtractToLabCallback?.Invoke(args.Body, args.ContentType);
     }
 
-    public RequestViewModel Request { get; } = new();
-    public ResponseViewModel Response { get; } = new();
+    public RequestViewModel Request { get; }
+    public ResponseViewModel Response { get; }
 
     public Action<string, string>? ExtractToLabCallback { get; set; }
 

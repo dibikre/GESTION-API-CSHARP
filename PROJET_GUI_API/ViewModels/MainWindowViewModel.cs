@@ -1,4 +1,5 @@
 using System;
+using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace ApiTester.ViewModels;
@@ -9,12 +10,19 @@ public partial class MainWindowViewModel : ViewModelBase
         SingleRequestViewModel singleRequest,
         BatchViewModel batch,
         ChainViewModel chain,
-        ExtractorViewModel extractor)
+        ExtractorViewModel extractor,
+        IOverlayEditorService overlayEditorService,
+        IClipboardService clipboardService)
     {
         SingleRequest = singleRequest ?? throw new ArgumentNullException(nameof(singleRequest));
         Batch = batch ?? throw new ArgumentNullException(nameof(batch));
         Chain = chain ?? throw new ArgumentNullException(nameof(chain));
         Extractor = extractor ?? throw new ArgumentNullException(nameof(extractor));
+        ArgumentNullException.ThrowIfNull(overlayEditorService);
+        ArgumentNullException.ThrowIfNull(clipboardService);
+
+        Overlay = new OverlayEditorViewModel(clipboardService);
+        overlayEditorService.OpenRequested += (_, request) => Overlay.Open(request);
 
         Batch.OpenInSingleRequestCallback = requestModel =>
         {
@@ -32,6 +40,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public BatchViewModel Batch { get; }
     public ChainViewModel Chain { get; }
     public ExtractorViewModel Extractor { get; }
+    public OverlayEditorViewModel Overlay { get; }
 
     [ObservableProperty]
     public partial int SelectedTabIndex { get; set; }

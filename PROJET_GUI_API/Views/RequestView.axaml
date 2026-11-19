@@ -200,23 +200,30 @@
                                VerticalAlignment="Center" />
 
                     <!-- Éditeur JSON ou Texte -->
-                    <TextBox Grid.Row="1"
-                             Classes="mono"
-                             Text="{Binding Body}"
-                             AcceptsReturn="True"
-                             TextWrapping="NoWrap"
-                             LineHeight="19"
-                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             PlaceholderText="Saisissez le contenu du corps de la requête..."
-                             AutomationProperties.Name="Corps de la requête">
-                        <TextBox.IsVisible>
-                            <MultiBinding Converter="{x:Static BoolConverters.Or}">
-                                <Binding Path="IsJsonBody" />
-                                <Binding Path="IsTextBody" />
-                            </MultiBinding>
-                        </TextBox.IsVisible>
-                    </TextBox>
+                    <Grid Grid.Row="1"
+                          IsVisible="{Binding CanEnlargeBody}"
+                          ColumnDefinitions="*,Auto"
+                          ColumnSpacing="6">
+                        <TextBox Grid.Column="0"
+                                 Classes="mono"
+                                 Text="{Binding Body}"
+                                 AcceptsReturn="True"
+                                 TextWrapping="NoWrap"
+                                 LineHeight="19"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 PlaceholderText="Saisissez le contenu du corps de la requête..."
+                                 AutomationProperties.Name="Corps de la requête" />
+
+                        <Button Grid.Column="1"
+                                Classes="icon"
+                                VerticalAlignment="Top"
+                                Command="{Binding EnlargeBodyCommand}"
+                                ToolTip.Tip="Agrandir"
+                                AutomationProperties.Name="Agrandir le corps de la requête">
+                            <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                        </Button>
+                    </Grid>
 
                     <!-- Éditeur FormUrlEncoded -->
                     <views:KeyValueEditor Grid.Row="1"

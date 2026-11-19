@@ -37,6 +37,7 @@ public partial class ChainStep : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsFormBody))]
+    [NotifyPropertyChangedFor(nameof(IsBodyNotNone))]
     public partial BodyType BodyType { get; set; } = BodyType.None;
 
     [ObservableProperty]
@@ -94,6 +95,7 @@ public partial class ChainStep : ObservableObject
     public ObservableCollection<ChainExtraction> Extractions { get; } = [];
 
     public bool IsFormBody => BodyType == BodyType.FormUrlEncoded;
+    public bool IsBodyNotNone => BodyType != BodyType.None && BodyType != BodyType.FormUrlEncoded;
     public bool HasWarnings => Warnings.Count > 0;
     public string WarningsSummaryText => Warnings.Count <= 1
         ? $"{Warnings.Count} avertissement"

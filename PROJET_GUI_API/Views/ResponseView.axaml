@@ -222,17 +222,30 @@
                         Classes="sub"
                         IsVisible="{Binding StatusCode, Converter={x:Static conv:StatusCategoryConverters.IsPositiveInt}}">
                 <TabItem Header="Corps">
-                    <TextBox Margin="0,8,0,0"
-                             Classes="mono"
-                             Text="{Binding Body, Mode=OneWay}"
-                             IsReadOnly="True"
-                             AcceptsReturn="True"
-                             TextWrapping="NoWrap"
-                             LineHeight="19"
-                             ScrollViewer.AllowAutoHide="False"
-                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             AutomationProperties.Name="Corps de la réponse" />
+                    <Grid Margin="0,8,0,0"
+                          ColumnDefinitions="*,Auto"
+                          ColumnSpacing="6">
+                        <TextBox Grid.Column="0"
+                                 Classes="mono"
+                                 Text="{Binding Body, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 AcceptsReturn="True"
+                                 TextWrapping="NoWrap"
+                                 LineHeight="19"
+                                 ScrollViewer.AllowAutoHide="False"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 AutomationProperties.Name="Corps de la réponse" />
+
+                        <Button Grid.Column="1"
+                                Classes="icon"
+                                VerticalAlignment="Top"
+                                Command="{Binding EnlargeBodyCommand}"
+                                ToolTip.Tip="Agrandir"
+                                AutomationProperties.Name="Agrandir le corps de la réponse">
+                            <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                        </Button>
+                    </Grid>
                 </TabItem>
 
                 <TabItem>

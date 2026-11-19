@@ -229,16 +229,30 @@
                                     </WrapPanel>
 
                                     <!-- Liste de valeurs -->
-                                    <TextBox IsVisible="{Binding IsListMode}"
-                                             Classes="mono"
-                                             Text="{Binding ListText}"
-                                             AcceptsReturn="True"
-                                             TextWrapping="NoWrap"
-                                             Height="68"
-                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                             PlaceholderText="Une valeur par ligne (ex. valeur1, valeur2)"
-                                             AutomationProperties.Name="Liste des valeurs de la variable" />
+                                    <Grid IsVisible="{Binding IsListMode}"
+                                          ColumnDefinitions="*,Auto"
+                                          ColumnSpacing="6">
+                                        <TextBox Grid.Column="0"
+                                                 Classes="mono"
+                                                 Text="{Binding ListText}"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="NoWrap"
+                                                 Height="68"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                 PlaceholderText="Une valeur par ligne (ex. valeur1, valeur2)"
+                                                 AutomationProperties.Name="Liste des valeurs de la variable" />
+
+                                        <Button Grid.Column="1"
+                                                Classes="icon"
+                                                VerticalAlignment="Top"
+                                                Command="{Binding #Root.EnlargeListCommand}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip.Tip="Agrandir"
+                                                AutomationProperties.Name="Agrandir la liste des valeurs">
+                                            <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                                        </Button>
+                                    </Grid>
 
                                     <!-- Générateur aléatoire -->
                                     <StackPanel IsVisible="{Binding IsRandomMode}" Spacing="6">
@@ -454,16 +468,30 @@
                                         </WrapPanel>
 
                                         <!-- Aléatoire : Choix dans une liste -->
-                                        <TextBox IsVisible="{Binding IsRandomPickFromList}"
-                                                 Classes="mono"
-                                                 Text="{Binding ListText}"
-                                                 AcceptsReturn="True"
-                                                 TextWrapping="NoWrap"
-                                                 Height="68"
-                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                                 PlaceholderText="Une valeur par ligne pour le tirage aléatoire"
-                                                 AutomationProperties.Name="Liste source du tirage aléatoire" />
+                                        <Grid IsVisible="{Binding IsRandomPickFromList}"
+                                              ColumnDefinitions="*,Auto"
+                                              ColumnSpacing="6">
+                                            <TextBox Grid.Column="0"
+                                                     Classes="mono"
+                                                     Text="{Binding ListText}"
+                                                     AcceptsReturn="True"
+                                                     TextWrapping="NoWrap"
+                                                     Height="68"
+                                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                     PlaceholderText="Une valeur par ligne pour le tirage aléatoire"
+                                                     AutomationProperties.Name="Liste source du tirage aléatoire" />
+
+                                            <Button Grid.Column="1"
+                                                    Classes="icon"
+                                                    VerticalAlignment="Top"
+                                                    Command="{Binding #Root.EnlargeListCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    ToolTip.Tip="Agrandir"
+                                                    AutomationProperties.Name="Agrandir la liste source du tirage aléatoire">
+                                                <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                                            </Button>
+                                        </Grid>
 
                                         <TextBlock Text="Aléatoire non cryptographique : sert à varier les requêtes, pas à produire des secrets."
                                                    FontSize="{DynamicResource FontSizeCaption}"

@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text.Json;
 using ApiTester.Models;
+using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -25,8 +26,16 @@ public partial class ResponseViewModel : ViewModelBase
         WriteIndented = true
     };
 
+    private readonly IOverlayEditorService? _overlayEditor;
+
+    public ResponseViewModel(IOverlayEditorService? overlayEditor = null)
+    {
+        _overlayEditor = overlayEditor;
+    }
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RequestExtractCommand))]
+    [NotifyCanExecuteChangedFor(nameof(EnlargeBodyCommand))]
     public partial bool HasResponse { get; set; }
 
     public event EventHandler<ExtractRequestedEventArgs>? ExtractRequested;
@@ -76,6 +85,21 @@ public partial class ResponseViewModel : ViewModelBase
 
         var content = string.IsNullOrEmpty(RawBody) ? Body : RawBody;
         ExtractRequested?.Invoke(this, new ExtractRequestedEventArgs(content, ContentType));
+    }
+
+    [RelayCommand(CanExecute = nameof(HasResponse))]
+    private void EnlargeBody()
+    {
+        if (!HasResponse)
+        {
+            return;
+        }
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Corps de la réponse",
+            Body,
+            IsReadOnly: true,
+            OnSave: null));
     }
 
     public void Update(ResponseModel response)
