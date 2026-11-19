@@ -120,7 +120,7 @@
                 CornerRadius="{DynamicResource PanelCornerRadius}"
                 Padding="10">
             <StackPanel Spacing="8">
-                <Grid ColumnDefinitions="Auto,130,Auto,*" ColumnSpacing="8">
+                <Grid ColumnDefinitions="Auto,Auto,130,Auto,*" ColumnSpacing="8">
                     <TextBlock Grid.Column="0"
                                Text="Réponse collée"
                                FontSize="{DynamicResource FontSizeBase}"
@@ -128,7 +128,13 @@
                                Foreground="{DynamicResource TextBrush}"
                                VerticalAlignment="Center" />
 
-                    <ComboBox Grid.Column="1"
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding InputCharCountText}"
+                               FontSize="{DynamicResource FontSizeCaption}"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               VerticalAlignment="Center" />
+
+                    <ComboBox Grid.Column="2"
                               ItemsSource="{x:Static vm:ExtractorViewModel.Formats}"
                               SelectedItem="{Binding Format}"
                               AutomationProperties.Name="Format de la réponse">
@@ -139,13 +145,13 @@
                         </ComboBox.ItemTemplate>
                     </ComboBox>
 
-                    <Button Grid.Column="2"
+                    <Button Grid.Column="3"
                             Classes="primary"
                             Content="Charger"
                             Command="{Binding LoadCommand}"
                             AutomationProperties.Name="Charger et analyser la réponse" />
 
-                    <TextBlock Grid.Column="3"
+                    <TextBlock Grid.Column="4"
                                Text="{Binding DetectedFormatText}"
                                FontSize="{DynamicResource FontSizeSmall}"
                                Foreground="{DynamicResource TextMutedBrush}"
@@ -158,11 +164,11 @@
                              Classes="mono"
                              Text="{Binding InputText}"
                              AcceptsReturn="True"
-                             TextWrapping="NoWrap"
+                             TextWrapping="Wrap"
                              Height="120"
                              ScrollViewer.AllowAutoHide="False"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              PlaceholderText="Colle une réponse JSON, XML, HTML ou texte brut..."
                              AutomationProperties.Name="Texte de réponse à analyser" />
 
@@ -244,15 +250,15 @@
                       RowSpacing="8">
                     <TextBox Grid.Row="0"
                              Classes="mono"
-                             Text="{Binding AnalyzedText, Mode=OneWay}"
+                             Text="{Binding InputText, Mode=OneWay}"
                              IsReadOnly="True"
                              AcceptsReturn="True"
-                             TextWrapping="NoWrap"
+                             TextWrapping="Wrap"
                              SelectionStart="{Binding SelectionStart, Mode=TwoWay}"
                              SelectionEnd="{Binding SelectionEnd, Mode=TwoWay}"
                              ScrollViewer.AllowAutoHide="False"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              AutomationProperties.Name="Texte analysé pour sélection manuelle" />
 
                     <WrapPanel Grid.Row="1" Orientation="Horizontal">

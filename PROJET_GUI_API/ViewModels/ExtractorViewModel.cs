@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -16,6 +17,7 @@ namespace ApiTester.ViewModels;
 public partial class ExtractorViewModel : ViewModelBase
 {
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
+    private static readonly CultureInfo FrenchCulture = CultureInfo.GetCultureInfo("fr-FR");
     private readonly IExtractionSuggester _suggester;
     private readonly IResponseExtractor _responseExtractor;
     private readonly IClipboardService? _clipboardService;
@@ -61,10 +63,22 @@ public partial class ExtractorViewModel : ViewModelBase
     public bool IsChainAvailable => _chainViewModel is not null && _chainViewModel.Steps.Count > 0;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(InputCharCountText))]
     public partial string InputText { get; set; } = string.Empty;
 
-    [ObservableProperty]
-    public partial string AnalyzedText { get; set; } = string.Empty;
+    public string InputCharCountText
+    {
+        get
+        {
+            var count = InputText?.Length ?? 0;
+            return count switch
+            {
+                0 => "0 caractère",
+                1 => "1 caractère",
+                _ => $"{count.ToString("N0", FrenchCulture).Replace('\u202F', ' ').Replace('\u00A0', ' ')} caractères"
+            };
+        }
+    }
 
     [ObservableProperty]
     public partial ResponseFormat Format { get; set; } = ResponseFormat.Auto;
@@ -207,6 +221,11 @@ public partial class ExtractorViewModel : ViewModelBase
         Load();
     }
 
+    partial void OnInputTextChanged(string value)
+    {
+        _hasCapturedSelection = false;
+    }
+
     partial void OnFormatChanged(ResponseFormat value)
     {
         if (!_suppressAutoLoad && !string.IsNullOrWhiteSpace(InputText))
@@ -274,8 +293,8 @@ public partial class ExtractorViewModel : ViewModelBase
         SelectionEnd = 0;
         SelectedNode = null;
 
-        AnalyzedText = InputText ?? string.Empty;
-        var analysis = _suggester.Analyze(AnalyzedText, Format);
+        var sourceText = InputText ?? string.Empty;
+        var analysis = _suggester.Analyze(sourceText, Format);
 
         HasLoaded = true;
         DetectedFormat = analysis.DetectedFormat;
@@ -335,7 +354,7 @@ public partial class ExtractorViewModel : ViewModelBase
         SelectedNode = node;
         CopyFeedbackText = null;
 
-        var suggestion = _suggester.SuggestForNode(AnalyzedText, node);
+        var suggestion = _suggester.SuggestForNode(InputText ?? string.Empty, node);
         ApplySuggestionAndTest(suggestion);
     }
 
@@ -363,7 +382,7 @@ public partial class ExtractorViewModel : ViewModelBase
         _capturedLength = length;
 
         var suggestion = _suggester.SuggestManualRegex(
-            AnalyzedText,
+            InputText ?? string.Empty,
             _capturedStart,
             _capturedLength,
             ContextLength,
@@ -445,7 +464,7 @@ public partial class ExtractorViewModel : ViewModelBase
         }
 
         var suggestion = _suggester.SuggestManualRegex(
-            AnalyzedText,
+            InputText ?? string.Empty,
             _capturedStart,
             _capturedLength,
             ContextLength,
@@ -473,7 +492,8 @@ public partial class ExtractorViewModel : ViewModelBase
             return;
         }
 
-        var tempResponse = new ResponseModel { Body = AnalyzedText };
+        var sourceText = InputText ?? string.Empty;
+        var tempResponse = new ResponseModel { Body = sourceText };
 
         if (HasSuggestedJsonPath)
         {
@@ -509,7 +529,7 @@ public partial class ExtractorViewModel : ViewModelBase
 
                 if (regexOutcome.IsSuccess)
                 {
-                    var count = CountMatchesSafe(AnalyzedText, SuggestedRegex!);
+                    var count = CountMatchesSafe(sourceText, SuggestedRegex!);
                     RegexTestResultText = count > 1
                         ? $"Test regex : {count} correspondances (1re capturée : « {regexOutcome.Value} »)"
                         : $"Test regex : valeur capturée « {regexOutcome.Value} »";
@@ -539,7 +559,7 @@ public partial class ExtractorViewModel : ViewModelBase
 
         if (outcome.IsSuccess)
         {
-            var matchCount = CountMatchesSafe(AnalyzedText, SuggestedRegex!);
+            var matchCount = CountMatchesSafe(sourceText, SuggestedRegex!);
             if (matchCount > 1)
             {
                 TestStatus = LiveTestStatus.Warning;
