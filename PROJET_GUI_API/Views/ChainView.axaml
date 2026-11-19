@@ -267,16 +267,21 @@
                                                    Foreground="{DynamicResource WarningBrush}" />
                                     </StackPanel>
                                 </Expander.Header>
-                                <ItemsControl ItemsSource="{Binding Warnings}" Margin="26,0,8,6">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="x:String">
-                                            <TextBlock Text="{Binding}"
-                                                       Foreground="{DynamicResource WarningBrush}"
-                                                       FontSize="{DynamicResource FontSizeSmall}"
-                                                       TextWrapping="Wrap" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                                <ScrollViewer MaxHeight="240"
+                                              AllowAutoHide="False"
+                                              VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled">
+                                    <ItemsControl ItemsSource="{Binding Warnings}" Margin="26,0,12,6">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="x:String">
+                                                <TextBlock Text="{Binding}"
+                                                           Foreground="{DynamicResource WarningBrush}"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           TextWrapping="Wrap" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
                             </Expander>
                         </Border>
 
@@ -644,16 +649,21 @@
                                                Foreground="{DynamicResource WarningBrush}" />
                                 </StackPanel>
                             </Expander.Header>
-                            <ItemsControl ItemsSource="{Binding ChainWarnings}" Margin="26,0,8,6">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="x:String">
-                                        <TextBlock Text="{Binding}"
-                                                   Foreground="{DynamicResource WarningBrush}"
-                                                   FontSize="{DynamicResource FontSizeCaption}"
-                                                   TextWrapping="Wrap" />
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="240"
+                                          AllowAutoHide="False"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                                <ItemsControl ItemsSource="{Binding ChainWarnings}" Margin="26,0,12,6">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="x:String">
+                                            <TextBlock Text="{Binding}"
+                                                       Foreground="{DynamicResource WarningBrush}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       TextWrapping="Wrap" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </Expander>
                     </Border>
 

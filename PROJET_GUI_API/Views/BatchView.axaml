@@ -141,17 +141,22 @@
                                        VerticalAlignment="Center" />
                         </StackPanel>
                     </Expander.Header>
-                    <ItemsControl ItemsSource="{Binding Warnings}" Margin="26,0,8,6">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="x:String">
-                                <TextBlock Text="{Binding}"
-                                           Foreground="{DynamicResource WarningBrush}"
-                                           FontSize="12"
-                                           TextWrapping="Wrap"
-                                           Margin="0,1" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <ScrollViewer MaxHeight="240"
+                                  AllowAutoHide="False"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding Warnings}" Margin="26,0,12,6">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <TextBlock Text="{Binding}"
+                                               Foreground="{DynamicResource WarningBrush}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,1" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
                 </Expander>
             </Border>
         </StackPanel>

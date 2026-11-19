@@ -1669,12 +1669,7 @@ public partial class BatchViewModel : ViewModelBase
     private void RefreshWarnings(IEnumerable<string> planWarnings)
     {
         Warnings.Clear();
-        foreach (var w in _parseWarnings)
-        {
-            Warnings.Add(w);
-        }
-
-        foreach (var w in planWarnings)
+        foreach (var w in CurlParser.MergeAndOrderWarnings(_parseWarnings, planWarnings))
         {
             Warnings.Add(w);
         }

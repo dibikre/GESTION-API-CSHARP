@@ -30,6 +30,8 @@ public class CurlParser : ICurlParser
     {
         var result = new CurlParseResult();
 
+        var rawWarnings = new List<(string Message, bool IsImportant)>();
+
         if (string.IsNullOrWhiteSpace(input))
         {
             result.Warnings.Add("La commande curl est vide.");
@@ -75,7 +77,7 @@ public class CurlParser : ICurlParser
                 }
                 else
                 {
-                    result.Warnings.Add($"Argument supplémentaire ignoré : {token}");
+                    rawWarnings.Add(($"Argument supplémentaire ignoré : {token}", false));
                 }
                 continue;
             }
@@ -97,7 +99,7 @@ public class CurlParser : ICurlParser
             switch (optionName)
             {
                 case "--url":
-                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, result.Warnings, out var urlVal))
+                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, rawWarnings, out var urlVal))
                     {
                         rawUrl = urlVal;
                     }
@@ -105,17 +107,17 @@ public class CurlParser : ICurlParser
 
                 case "-X":
                 case "--request":
-                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, result.Warnings, out var methodVal))
+                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, rawWarnings, out var methodVal))
                     {
-                        explicitMethod = ParseHttpMethod(methodVal, result.Warnings);
+                        explicitMethod = ParseHttpMethod(methodVal, rawWarnings);
                     }
                     break;
 
                 case "-H":
                 case "--header":
-                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, result.Warnings, out var headerVal))
+                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, rawWarnings, out var headerVal))
                     {
-                        ParseHeader(headerVal, result.Request.Headers, result.Warnings);
+                        ParseHeader(headerVal, result.Request.Headers, rawWarnings);
                     }
                     break;
 
@@ -124,7 +126,7 @@ public class CurlParser : ICurlParser
                 case "--data-raw":
                 case "--data-binary":
                 case "--data-urlencode":
-                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, result.Warnings, out var dataVal))
+                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, rawWarnings, out var dataVal))
                     {
                         dataParts.Add(dataVal);
                     }
@@ -132,7 +134,7 @@ public class CurlParser : ICurlParser
 
                 case "-b":
                 case "--cookie":
-                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, result.Warnings, out var cookieVal))
+                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, rawWarnings, out var cookieVal))
                     {
                         result.Request.Headers.Add(new KeyValueItem("Cookie", cookieVal, true));
                     }
@@ -140,7 +142,7 @@ public class CurlParser : ICurlParser
 
                 case "-u":
                 case "--user":
-                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, result.Warnings, out var userVal))
+                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, rawWarnings, out var userVal))
                     {
                         ApplyBasicAuth(userVal, result.Request.Auth);
                     }
@@ -148,7 +150,7 @@ public class CurlParser : ICurlParser
 
                 case "-A":
                 case "--user-agent":
-                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, result.Warnings, out var uaVal))
+                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, rawWarnings, out var uaVal))
                     {
                         result.Request.Headers.Add(new KeyValueItem("User-Agent", uaVal, true));
                     }
@@ -156,7 +158,7 @@ public class CurlParser : ICurlParser
 
                 case "-e":
                 case "--referer":
-                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, result.Warnings, out var refVal))
+                    if (TryConsumeOptionValue(tokens, ref i, inlineValue, optionName, rawWarnings, out var refVal))
                     {
                         result.Request.Headers.Add(new KeyValueItem("Referer", refVal, true));
                     }
@@ -180,23 +182,23 @@ public class CurlParser : ICurlParser
 
                 case "-L":
                 case "--location":
-                    result.Warnings.Add($"Option {optionName} ignorée : les redirections suivent le comportement par défaut du client HTTP.");
+                    rawWarnings.Add(($"Option {optionName} ignorée : les redirections suivent le comportement par défaut du client HTTP.", true));
                     break;
 
                 case "-k":
                 case "--insecure":
-                    result.Warnings.Add($"Option {optionName} ignorée : la validation des certificats TLS reste active.");
+                    rawWarnings.Add(($"Option {optionName} ignorée : la validation des certificats TLS reste active.", true));
                     break;
 
                 case "-i":
                 case "--include":
-                    result.Warnings.Add($"Option {optionName} ignorée : les en-têtes de réponse sont affichés séparément.");
+                    rawWarnings.Add(($"Option {optionName} ignorée : les en-têtes de réponse sont affichés séparément.", true));
                     break;
 
                 default:
                     if (optionName.StartsWith("-X", StringComparison.Ordinal) && optionName.Length > 2)
                     {
-                        explicitMethod = ParseHttpMethod(optionName[2..], result.Warnings);
+                        explicitMethod = ParseHttpMethod(optionName[2..], rawWarnings);
                     }
                     else if (KnownValueOptionsToIgnore.Contains(optionName))
                     {
@@ -204,11 +206,11 @@ public class CurlParser : ICurlParser
                         {
                             i++;
                         }
-                        result.Warnings.Add($"Option curl ignorée : {optionName}");
+                        rawWarnings.Add(($"Option curl ignorée : {optionName}", false));
                     }
                     else
                     {
-                        result.Warnings.Add($"Option curl inconnue ignorée : {optionName}");
+                        rawWarnings.Add(($"Option curl inconnue ignorée : {optionName}", false));
                     }
                     break;
             }
@@ -216,11 +218,11 @@ public class CurlParser : ICurlParser
 
         if (string.IsNullOrWhiteSpace(rawUrl))
         {
-            result.Warnings.Add("Aucune URL trouvée dans la commande curl.");
+            rawWarnings.Add(("Aucune URL trouvée dans la commande curl.", true));
         }
         else
         {
-            SplitUrlAndQueryParams(rawUrl, result.Request, result.Warnings);
+            SplitUrlAndQueryParams(rawUrl, result.Request, rawWarnings);
         }
 
         var combinedData = dataParts.Count > 0 ? string.Join("&", dataParts) : string.Empty;
@@ -259,6 +261,7 @@ public class CurlParser : ICurlParser
         result.Request.Method = explicitMethod
             ?? (result.Request.BodyType != BodyType.None ? HttpMethodType.Post : HttpMethodType.Get);
 
+        result.Warnings = BuildGroupedSortedWarnings(rawWarnings);
         return result;
     }
 
@@ -284,90 +287,40 @@ public class CurlParser : ICurlParser
 
     private static List<string> TokenizeCmd(string input)
     {
-        var normalized = input.Replace("\r\n", "\n", StringComparison.Ordinal)
-                              .Replace('\r', '\n');
+        // PASSE 1.1 : jointure des lignes (^ suivi immédiatement de CRLF ou LF, sans espace ajouté)
+        var joined = input.Replace("^\r\n", string.Empty, StringComparison.Ordinal)
+                          .Replace("^\n", string.Empty, StringComparison.Ordinal);
 
-        // Supprimer les continuations de ligne cmd (^ suivi de \n), sans casser ^^ suivi de \n
-        var preprocessed = new StringBuilder(normalized.Length);
-        for (var i = 0; i < normalized.Length; i++)
+        // PASSE 1.2 : dé-échappement cmd (^X -> X) sur une seule ligne logique
+        var unescaped = new StringBuilder(joined.Length);
+        for (var i = 0; i < joined.Length; i++)
         {
-            if (normalized[i] == '^' && i + 1 < normalized.Length)
+            if (joined[i] == '^' && i + 1 < joined.Length)
             {
-                if (normalized[i + 1] == '^')
-                {
-                    preprocessed.Append("^^");
-                    i++;
-                    continue;
-                }
-
-                if (normalized[i + 1] == '\n')
-                {
-                    i++;
-                    continue;
-                }
+                unescaped.Append(joined[++i]);
             }
-
-            preprocessed.Append(normalized[i]);
+            else
+            {
+                unescaped.Append(joined[i]);
+            }
         }
 
-        var text = preprocessed.ToString();
+        // PASSE 2 : découpage selon les règles CommandLineToArgvW
+        return SplitWindowsCommandLineArgs(unescaped.ToString());
+    }
+
+    private static List<string> SplitWindowsCommandLineArgs(string text)
+    {
         var tokens = new List<string>();
         var current = new StringBuilder();
         var hasToken = false;
-        var inCmdQuotes = false;
-        var inDoubleQuotes = false;
+        var inQuotes = false;
 
         for (var i = 0; i < text.Length; i++)
         {
             var c = text[i];
 
-            if (inCmdQuotes)
-            {
-                if (c == '\\' && i + 2 < text.Length && text[i + 1] == '^' && text[i + 2] == '"')
-                {
-                    current.Append('"');
-                    i += 2;
-                }
-                else if (c == '^' && i + 1 < text.Length)
-                {
-                    var next = text[i + 1];
-                    if (next == '"')
-                    {
-                        inCmdQuotes = false;
-                        i++;
-                    }
-                    else
-                    {
-                        current.Append(next);
-                        i++;
-                    }
-                }
-                else
-                {
-                    current.Append(c);
-                }
-                continue;
-            }
-
-            if (inDoubleQuotes)
-            {
-                if (c == '\\' && i + 1 < text.Length && text[i + 1] == '"')
-                {
-                    current.Append('"');
-                    i++;
-                }
-                else if (c == '"')
-                {
-                    inDoubleQuotes = false;
-                }
-                else
-                {
-                    current.Append(c);
-                }
-                continue;
-            }
-
-            if (char.IsWhiteSpace(c))
+            if (!inQuotes && char.IsWhiteSpace(c))
             {
                 if (hasToken)
                 {
@@ -378,30 +331,47 @@ public class CurlParser : ICurlParser
                 continue;
             }
 
-            hasToken = true;
-
-            if (c == '^' && i + 1 < text.Length)
+            if (c == '\\')
             {
-                var next = text[i + 1];
-                if (next == '"')
+                var slashCount = 1;
+                while (i + 1 < text.Length && text[i + 1] == '\\')
                 {
-                    inCmdQuotes = true;
+                    slashCount++;
+                    i++;
+                }
+
+                hasToken = true;
+                if (i + 1 < text.Length && text[i + 1] == '"')
+                {
+                    current.Append('\\', slashCount / 2);
+                    if (slashCount % 2 == 0)
+                    {
+                        inQuotes = !inQuotes;
+                    }
+                    else
+                    {
+                        current.Append('"');
+                    }
+
                     i++;
                 }
                 else
                 {
-                    current.Append(next);
-                    i++;
+                    current.Append('\\', slashCount);
                 }
+
+                continue;
             }
-            else if (c == '"')
+
+            if (c == '"')
             {
-                inDoubleQuotes = true;
+                hasToken = true;
+                inQuotes = !inQuotes;
+                continue;
             }
-            else
-            {
-                current.Append(c);
-            }
+
+            hasToken = true;
+            current.Append(c);
         }
 
         if (hasToken)
@@ -610,7 +580,7 @@ public class CurlParser : ICurlParser
         ref int index,
         string? inlineValue,
         string optionName,
-        List<string> warnings,
+        List<(string Message, bool IsImportant)> warnings,
         out string value)
     {
         if (inlineValue is not null)
@@ -626,12 +596,14 @@ public class CurlParser : ICurlParser
             return true;
         }
 
-        warnings.Add($"Valeur manquante pour l'option {optionName}.");
+        warnings.Add(($"Valeur manquante pour l'option {optionName}.", true));
         value = string.Empty;
         return false;
     }
 
-    private static HttpMethodType? ParseHttpMethod(string rawMethod, List<string> warnings)
+    private static HttpMethodType? ParseHttpMethod(
+        string rawMethod,
+        List<(string Message, bool IsImportant)> warnings)
     {
         return rawMethod.Trim().ToUpperInvariant() switch
         {
@@ -644,18 +616,23 @@ public class CurlParser : ICurlParser
         };
     }
 
-    private static HttpMethodType? AddUnsupportedMethodWarning(string methodName, List<string> warnings)
+    private static HttpMethodType? AddUnsupportedMethodWarning(
+        string methodName,
+        List<(string Message, bool IsImportant)> warnings)
     {
-        warnings.Add($"Méthode HTTP « {methodName} » non prise en charge ; GET sera utilisée par défaut.");
+        warnings.Add(($"Méthode HTTP « {methodName} » non prise en charge ; GET sera utilisée par défaut.", true));
         return HttpMethodType.Get;
     }
 
-    private static void ParseHeader(string rawHeader, List<KeyValueItem> headers, List<string> warnings)
+    private static void ParseHeader(
+        string rawHeader,
+        List<KeyValueItem> headers,
+        List<(string Message, bool IsImportant)> warnings)
     {
         var colonIndex = rawHeader.IndexOf(':');
         if (colonIndex <= 0)
         {
-            warnings.Add($"En-tête mal formé ignoré : « {rawHeader} ».");
+            warnings.Add(($"En-tête mal formé ignoré : « {rawHeader} ».", true));
             return;
         }
 
@@ -664,7 +641,7 @@ public class CurlParser : ICurlParser
 
         if (IgnoredHeaders.Contains(name))
         {
-            warnings.Add($"En-tête « {name} » ignoré : géré automatiquement par l'application.");
+            warnings.Add(($"En-tête « {name} » ignoré : géré automatiquement par l'application.", true));
             return;
         }
 
@@ -687,7 +664,10 @@ public class CurlParser : ICurlParser
         }
     }
 
-    private static void SplitUrlAndQueryParams(string rawUrl, RequestModel request, List<string> warnings)
+    private static void SplitUrlAndQueryParams(
+        string rawUrl,
+        RequestModel request,
+        List<(string Message, bool IsImportant)> warnings)
     {
         var trimmed = rawUrl.Trim();
         var fragmentIndex = trimmed.IndexOf('#');
@@ -712,7 +692,7 @@ public class CurlParser : ICurlParser
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var parsed) ||
             (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
         {
-            warnings.Add($"L'URL extraite semble invalide ou incomplète : {request.Url}");
+            warnings.Add(($"L'URL extraite semble invalide ou incomplète : {request.Url}", true));
         }
     }
 
@@ -743,5 +723,90 @@ public class CurlParser : ICurlParser
     private static string? FindHeaderValue(IEnumerable<KeyValueItem> headers, string headerName)
     {
         return headers.LastOrDefault(h => h.IsEnabled && h.Key.Equals(headerName, StringComparison.OrdinalIgnoreCase))?.Value;
+    }
+
+    public static bool IsImportantWarning(string warning)
+    {
+        if (string.IsNullOrWhiteSpace(warning))
+        {
+            return false;
+        }
+
+        return !warning.StartsWith("Argument supplémentaire ignoré :", StringComparison.Ordinal)
+            && !warning.StartsWith("Option curl ignorée :", StringComparison.Ordinal)
+            && !warning.StartsWith("Option curl inconnue ignorée :", StringComparison.Ordinal);
+    }
+
+    public static List<string> GroupAndOrderWarnings(IEnumerable<string> warnings)
+    {
+        var list = new List<(string Message, bool IsImportant)>();
+        foreach (var warning in warnings)
+        {
+            if (!string.IsNullOrWhiteSpace(warning))
+            {
+                list.Add((warning, IsImportantWarning(warning)));
+            }
+        }
+
+        return BuildGroupedSortedWarnings(list);
+    }
+
+    public static List<string> MergeAndOrderWarnings(
+        IEnumerable<string> primaryWarnings,
+        IEnumerable<string> secondaryWarnings)
+    {
+        var ordered = new List<(string Message, bool IsImportant)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var warning in primaryWarnings)
+        {
+            if (!string.IsNullOrWhiteSpace(warning) && seen.Add(warning))
+            {
+                ordered.Add((warning, IsImportantWarning(warning)));
+            }
+        }
+
+        foreach (var warning in secondaryWarnings)
+        {
+            if (!string.IsNullOrWhiteSpace(warning) && seen.Add(warning))
+            {
+                ordered.Add((warning, IsImportantWarning(warning)));
+            }
+        }
+
+        return ordered
+            .OrderByDescending(w => w.IsImportant)
+            .Select(w => w.Message)
+            .ToList();
+    }
+
+    private static List<string> BuildGroupedSortedWarnings(List<(string Message, bool IsImportant)> rawWarnings)
+    {
+        if (rawWarnings.Count == 0)
+        {
+            return [];
+        }
+
+        var grouped = new List<(string Message, bool IsImportant, int Count)>();
+        var indexByMessage = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var (message, isImportant) in rawWarnings)
+        {
+            if (indexByMessage.TryGetValue(message, out var idx))
+            {
+                var existing = grouped[idx];
+                grouped[idx] = (existing.Message, existing.IsImportant || isImportant, existing.Count + 1);
+            }
+            else
+            {
+                indexByMessage[message] = grouped.Count;
+                grouped.Add((message, isImportant, 1));
+            }
+        }
+
+        return grouped
+            .OrderByDescending(g => g.IsImportant)
+            .Select(g => g.Count > 1 ? $"{g.Message} (×{g.Count})" : g.Message)
+            .ToList();
     }
 }

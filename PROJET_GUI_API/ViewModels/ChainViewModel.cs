@@ -969,7 +969,7 @@ public partial class ChainViewModel : ViewModelBase
         }
 
         ChainWarnings.Clear();
-        foreach (var w in plan.Warnings)
+        foreach (var w in CurlParser.GroupAndOrderWarnings(plan.Warnings))
         {
             ChainWarnings.Add(w);
         }
@@ -1088,7 +1088,7 @@ public partial class ChainViewModel : ViewModelBase
         RefreshAxisMetadata(step);
 
         step.Warnings.Clear();
-        foreach (var w in step.ParseWarnings)
+        foreach (var w in CurlParser.GroupAndOrderWarnings(step.ParseWarnings))
         {
             step.Warnings.Add(w);
         }
