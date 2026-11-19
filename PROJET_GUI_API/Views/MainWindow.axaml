@@ -57,8 +57,8 @@
                         Padding="14"
                         PointerPressed="OnOverlayCardPointerPressed">
                     <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
-                        <!-- En-tête : titre + Copier + Fermer -->
-                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <!-- En-tête : titre + Indenter le JSON + Copier + Fermer -->
+                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
                             <TextBlock Grid.Column="0"
                                        Text="{Binding Overlay.Title}"
                                        FontSize="{DynamicResource FontSizeBase}"
@@ -69,6 +69,13 @@
 
                             <Button Grid.Column="1"
                                     Classes="ghost"
+                                    Content="Indenter le JSON"
+                                    IsVisible="{Binding Overlay.IsValidJson}"
+                                    Command="{Binding Overlay.FormatJsonCommand}"
+                                    AutomationProperties.Name="Indenter le JSON" />
+
+                            <Button Grid.Column="2"
+                                    Classes="ghost"
                                     Command="{Binding Overlay.CopyCommand}"
                                     AutomationProperties.Name="Copier le contenu">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
@@ -77,7 +84,7 @@
                                 </StackPanel>
                             </Button>
 
-                            <Button Grid.Column="2"
+                            <Button Grid.Column="3"
                                     Classes="icon"
                                     Command="{Binding Overlay.CloseCommand}"
                                     ToolTip.Tip="Fermer (Échap)"

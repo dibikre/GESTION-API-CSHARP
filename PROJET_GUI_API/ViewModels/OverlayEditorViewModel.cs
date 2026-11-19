@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json;
 using System.Threading.Tasks;
 using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -8,6 +9,11 @@ namespace ApiTester.ViewModels;
 
 public partial class OverlayEditorViewModel : ViewModelBase
 {
+    private static readonly JsonSerializerOptions IndentedJsonOptions = new()
+    {
+        WriteIndented = true
+    };
+
     private readonly IClipboardService? _clipboardService;
     private Action<string>? _onSave;
 
@@ -28,7 +34,16 @@ public partial class OverlayEditorViewModel : ViewModelBase
     public partial string Text { get; set; } = string.Empty;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(FormatJsonCommand))]
+    public partial bool IsValidJson { get; private set; }
+
+    [ObservableProperty]
     public partial bool IsReadOnly { get; set; }
+
+    partial void OnTextChanged(string value)
+    {
+        IsValidJson = CheckIsValidJson(value);
+    }
 
     public void Open(OverlayEditorRequest request)
     {
@@ -36,9 +51,29 @@ public partial class OverlayEditorViewModel : ViewModelBase
 
         Title = request.Title ?? string.Empty;
         Text = request.InitialText ?? string.Empty;
+        IsValidJson = CheckIsValidJson(Text);
         IsReadOnly = request.IsReadOnly;
         _onSave = request.IsReadOnly ? null : request.OnSave;
         IsOpen = true;
+    }
+
+    [RelayCommand(CanExecute = nameof(IsValidJson))]
+    private void FormatJson()
+    {
+        if (string.IsNullOrWhiteSpace(Text))
+        {
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(Text);
+            Text = JsonSerializer.Serialize(document.RootElement, IndentedJsonOptions);
+        }
+        catch (JsonException)
+        {
+            IsValidJson = false;
+        }
     }
 
     [RelayCommand(CanExecute = nameof(IsOpen))]
@@ -73,5 +108,27 @@ public partial class OverlayEditorViewModel : ViewModelBase
         }
 
         await _clipboardService.SetTextAsync(Text ?? string.Empty);
+    }
+
+    private static bool CheckIsValidJson(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 }
