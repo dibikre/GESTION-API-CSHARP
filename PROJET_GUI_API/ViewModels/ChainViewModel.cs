@@ -738,6 +738,10 @@ public partial class ChainViewModel : ViewModelBase
             if (!report.IsRetryUpdate && report.Item is not null)
             {
                 Results.Add(report.Item);
+                if (SelectedResult is null)
+                {
+                    SelectedResult = report.Item;
+                }
 
                 switch (report.Item.Status)
                 {

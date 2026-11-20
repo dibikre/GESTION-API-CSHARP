@@ -929,6 +929,10 @@ public partial class BatchViewModel : ViewModelBase
             if (!report.IsRetryUpdate)
             {
                 Results.Add(report.Item);
+                if (SelectedResult is null)
+                {
+                    SelectedResult = report.Item;
+                }
                 RecordBatchItemStats(report.Item);
             }
             else
