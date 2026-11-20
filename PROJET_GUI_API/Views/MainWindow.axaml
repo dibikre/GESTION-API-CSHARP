@@ -18,7 +18,7 @@
 
     <Window.KeyBindings>
         <KeyBinding Gesture="Escape"
-                    Command="{Binding Overlay.CloseCommand}" />
+                    Command="{Binding CloseActiveOverlayCommand}" />
     </Window.KeyBindings>
 
     <Grid>
@@ -129,6 +129,26 @@
                                     AutomationProperties.Name="Fermer l'éditeur" />
                         </StackPanel>
                     </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- Éditeur de cookies en popup -->
+        <Grid x:Name="CookieScrim"
+              IsVisible="{Binding CookieEditor.IsOpen}"
+              Background="{DynamicResource ScrimBrush}"
+              PointerPressed="OnCookieScrimPointerPressed">
+            <Grid RowDefinitions="*,18*,*"
+                  ColumnDefinitions="*,20*,*">
+                <Border Grid.Row="1"
+                        Grid.Column="1"
+                        Background="{DynamicResource SurfaceBrush}"
+                        BorderBrush="{DynamicResource BorderStrongBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource PanelCornerRadius}"
+                        Padding="14"
+                        PointerPressed="OnOverlayCardPointerPressed">
+                    <views:CookieEditorView DataContext="{Binding CookieEditor}" />
                 </Border>
             </Grid>
         </Grid>

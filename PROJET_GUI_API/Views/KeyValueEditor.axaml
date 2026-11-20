@@ -85,23 +85,48 @@
                                              VerticalAlignment="Center"
                                              AutomationProperties.Name="Clé" />
 
-                                    <Panel Grid.Column="2"
-                                           Classes="kvValueCell"
-                                           Classes.hasValue="{Binding Value, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                                           ToolTip.Tip="{Binding Value, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
-                                           VerticalAlignment="Center">
-                                        <TextBox Classes="kvCell"
-                                                 Text="{Binding Value}"
-                                                 PlaceholderText="{Binding #Root.ValuePlaceholder}"
-                                                 AutomationProperties.Name="Valeur" />
-                                        <TextBlock Classes="kvTruncatedOverlay"
-                                                   Text="{Binding Value}"
-                                                   FontSize="12.5"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   IsHitTestVisible="False"
-                                                   VerticalAlignment="Center"
-                                                   Margin="6,0" />
-                                    </Panel>
+                                    <Grid Grid.Column="2"
+                                          ColumnDefinitions="*,Auto"
+                                          ColumnSpacing="4"
+                                          VerticalAlignment="Center">
+                                        <Panel Grid.Column="0"
+                                               Classes="kvValueCell"
+                                               Classes.hasValue="{Binding Value, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                               ToolTip.Tip="{Binding Value, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
+                                               VerticalAlignment="Center">
+                                            <TextBox Classes="kvCell"
+                                                     Text="{Binding Value}"
+                                                     PlaceholderText="{Binding #Root.ValuePlaceholder}"
+                                                     AutomationProperties.Name="Valeur" />
+                                            <TextBlock Classes="kvTruncatedOverlay"
+                                                       Text="{Binding Value}"
+                                                       FontSize="12.5"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       IsHitTestVisible="False"
+                                                       VerticalAlignment="Center"
+                                                       Margin="6,0" />
+                                        </Panel>
+
+                                        <Button Grid.Column="1"
+                                                Classes="secondary"
+                                                Height="22"
+                                                MinHeight="22"
+                                                Padding="8,0"
+                                                FontSize="11.5"
+                                                Content="Éditer"
+                                                Command="{Binding #Root.EditCookieCommand}"
+                                                CommandParameter="{Binding}"
+                                                ToolTip.Tip="Éditer les cookies dans un tableau"
+                                                VerticalAlignment="Center"
+                                                AutomationProperties.Name="Éditer les cookies">
+                                            <Button.IsVisible>
+                                                <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                                    <Binding ElementName="Root" Path="EnableCookieEditor" />
+                                                    <Binding Path="Key" Converter="{x:Static conv:HeaderKeyConverters.IsCookie}" />
+                                                </MultiBinding>
+                                            </Button.IsVisible>
+                                        </Button>
+                                    </Grid>
 
                                     <Button Grid.Column="3"
                                             Classes="icon danger kvDelete"

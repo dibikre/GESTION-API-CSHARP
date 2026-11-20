@@ -26,6 +26,12 @@ public partial class KeyValueEditor : UserControl
     public static readonly StyledProperty<string> ValuePlaceholderProperty =
         AvaloniaProperty.Register<KeyValueEditor, string>(nameof(ValuePlaceholder), "Valeur");
 
+    public static readonly StyledProperty<bool> EnableCookieEditorProperty =
+        AvaloniaProperty.Register<KeyValueEditor, bool>(nameof(EnableCookieEditor));
+
+    public static readonly StyledProperty<ICommand?> EditCookieCommandProperty =
+        AvaloniaProperty.Register<KeyValueEditor, ICommand?>(nameof(EditCookieCommand));
+
     public KeyValueEditor()
     {
         InitializeComponent();
@@ -65,5 +71,17 @@ public partial class KeyValueEditor : UserControl
     {
         get => GetValue(ValuePlaceholderProperty);
         set => SetValue(ValuePlaceholderProperty, value);
+    }
+
+    public bool EnableCookieEditor
+    {
+        get => GetValue(EnableCookieEditorProperty);
+        set => SetValue(EnableCookieEditorProperty, value);
+    }
+
+    public ICommand? EditCookieCommand
+    {
+        get => GetValue(EditCookieCommandProperty);
+        set => SetValue(EditCookieCommandProperty, value);
     }
 }

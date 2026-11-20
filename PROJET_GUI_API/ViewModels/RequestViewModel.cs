@@ -12,10 +12,14 @@ namespace ApiTester.ViewModels;
 public partial class RequestViewModel : ViewModelBase
 {
     private readonly IOverlayEditorService? _overlayEditor;
+    private readonly ICookieEditorService? _cookieEditor;
 
-    public RequestViewModel(IOverlayEditorService? overlayEditor = null)
+    public RequestViewModel(
+        IOverlayEditorService? overlayEditor = null,
+        ICookieEditorService? cookieEditor = null)
     {
         _overlayEditor = overlayEditor;
+        _cookieEditor = cookieEditor;
     }
 
     public static IReadOnlyList<HttpMethodType> Methods { get; } = Enum.GetValues<HttpMethodType>();
@@ -116,6 +120,19 @@ public partial class RequestViewModel : ViewModelBase
         {
             Headers.Remove(item);
         }
+    }
+
+    [RelayCommand]
+    private void EditCookieHeader(KeyValueItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        _cookieEditor?.RequestOpen(new CookieEditorRequest(
+            item.Value,
+            updatedHeader => item.Value = updatedHeader));
     }
 
     [RelayCommand]

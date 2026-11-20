@@ -28,6 +28,7 @@ public partial class BatchViewModel : ViewModelBase
     private readonly IFolderPickerService _folderPickerService;
     private readonly IBatchResultWriter _batchResultWriter;
     private readonly IOverlayEditorService? _overlayEditor;
+    private readonly ICookieEditorService? _cookieEditor;
     private readonly List<string> _parseWarnings = [];
     private readonly List<AxisIdentity> _rememberedAxisOrder = [];
     private AuthConfig _parsedAuth = new();
@@ -42,7 +43,8 @@ public partial class BatchViewModel : ViewModelBase
         IBatchRunner batchRunner,
         IFolderPickerService folderPickerService,
         IBatchResultWriter batchResultWriter,
-        IOverlayEditorService? overlayEditor = null)
+        IOverlayEditorService? overlayEditor = null,
+        ICookieEditorService? cookieEditor = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
@@ -50,6 +52,7 @@ public partial class BatchViewModel : ViewModelBase
         _folderPickerService = folderPickerService ?? throw new ArgumentNullException(nameof(folderPickerService));
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
         _overlayEditor = overlayEditor;
+        _cookieEditor = cookieEditor;
         SelectedResponse = new ResponseViewModel(overlayEditor);
 
         VaryingParams.CollectionChanged += OnVaryingParamsCollectionChanged;
@@ -671,6 +674,19 @@ public partial class BatchViewModel : ViewModelBase
         {
             Headers.Remove(item);
         }
+    }
+
+    [RelayCommand]
+    private void EditCookieHeader(KeyValueItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        _cookieEditor?.RequestOpen(new CookieEditorRequest(
+            item.Value,
+            updatedHeader => item.Value = updatedHeader));
     }
 
     [RelayCommand]

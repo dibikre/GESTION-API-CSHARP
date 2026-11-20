@@ -51,6 +51,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnCookieScrimPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm && vm.CookieEditor.CloseCommand.CanExecute(null))
+        {
+            vm.CookieEditor.CloseCommand.Execute(null);
+            e.Handled = true;
+        }
+    }
+
     private void OnOverlayCardPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         e.Handled = true;

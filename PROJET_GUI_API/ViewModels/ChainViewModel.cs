@@ -23,6 +23,7 @@ public partial class ChainViewModel : ViewModelBase
     private readonly IFolderPickerService _folderPickerService;
     private readonly IBatchResultWriter _batchResultWriter;
     private readonly IOverlayEditorService? _overlayEditor;
+    private readonly ICookieEditorService? _cookieEditor;
     private readonly IChainCliGenerator _chainCliGenerator;
     private readonly RateLimitPolicy _sharedRateLimitPolicy;
     private bool _isBulkUpdating;
@@ -36,7 +37,8 @@ public partial class ChainViewModel : ViewModelBase
         IBatchResultWriter batchResultWriter,
         BatchViewModel? batchViewModel = null,
         IOverlayEditorService? overlayEditor = null,
-        IChainCliGenerator? chainCliGenerator = null)
+        IChainCliGenerator? chainCliGenerator = null,
+        ICookieEditorService? cookieEditor = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
@@ -45,6 +47,7 @@ public partial class ChainViewModel : ViewModelBase
         _folderPickerService = folderPickerService ?? throw new ArgumentNullException(nameof(folderPickerService));
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
         _overlayEditor = overlayEditor;
+        _cookieEditor = cookieEditor;
         _chainCliGenerator = chainCliGenerator ?? new ChainCliGenerator();
         _sharedRateLimitPolicy = batchViewModel?.RateLimitPolicy ?? new RateLimitPolicy();
         SelectedResponse = new ResponseViewModel(overlayEditor);
@@ -528,6 +531,19 @@ public partial class ChainViewModel : ViewModelBase
         {
             SelectedStep?.Headers.Remove(item);
         }
+    }
+
+    [RelayCommand]
+    private void EditCookieHeader(KeyValueItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        _cookieEditor?.RequestOpen(new CookieEditorRequest(
+            item.Value,
+            updatedHeader => item.Value = updatedHeader));
     }
 
     [RelayCommand]

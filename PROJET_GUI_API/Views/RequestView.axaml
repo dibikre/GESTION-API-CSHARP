@@ -60,6 +60,8 @@
                                       Items="{Binding Headers}"
                                       AddCommand="{Binding AddHeaderCommand}"
                                       RemoveCommand="{Binding RemoveHeaderCommand}"
+                                      EnableCookieEditor="True"
+                                      EditCookieCommand="{Binding EditCookieHeaderCommand}"
                                       AddButtonText="Ajouter un en-tête"
                                       KeyPlaceholder="Nom de l'en-tête"
                                       ValuePlaceholder="Valeur" />

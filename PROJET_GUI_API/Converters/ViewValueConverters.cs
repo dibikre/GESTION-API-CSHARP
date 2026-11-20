@@ -438,4 +438,9 @@ public static class ResponseFilterModeConverters
         });
 }
 
-
+public static class HeaderKeyConverters
+{
+    public static readonly IValueConverter IsCookie =
+        new FuncValueConverter<string?, bool>(key =>
+            string.Equals(key?.Trim(), "Cookie", StringComparison.OrdinalIgnoreCase));
+}

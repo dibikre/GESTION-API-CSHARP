@@ -439,6 +439,8 @@
                                                       Items="{Binding Headers}"
                                                       AddCommand="{Binding #ChainRoot.ViewModel.AddStepHeaderCommand}"
                                                       RemoveCommand="{Binding #ChainRoot.ViewModel.RemoveStepHeaderCommand}"
+                                                      EnableCookieEditor="True"
+                                                      EditCookieCommand="{Binding #ChainRoot.ViewModel.EditCookieHeaderCommand}"
                                                       AddButtonText="Ajouter un en-tête"
                                                       KeyPlaceholder="Nom de l'en-tête"
                                                       ValuePlaceholder="Valeur (ex. Bearer {{token}})" />
