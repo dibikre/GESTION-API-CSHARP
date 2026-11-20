@@ -22,9 +22,11 @@ public partial class ChainViewModel : ViewModelBase
     private readonly IResponseExtractor _responseExtractor;
     private readonly IFolderPickerService _folderPickerService;
     private readonly IBatchResultWriter _batchResultWriter;
+    private readonly IClipboardService? _clipboardService;
     private readonly IOverlayEditorService? _overlayEditor;
     private readonly ICookieEditorService? _cookieEditor;
     private readonly IChainCliGenerator _chainCliGenerator;
+    private readonly IReturnExpressionService _returnExpressionService;
     private readonly RateLimitPolicy _sharedRateLimitPolicy;
     private bool _isBulkUpdating;
 
@@ -38,7 +40,8 @@ public partial class ChainViewModel : ViewModelBase
         BatchViewModel? batchViewModel = null,
         IOverlayEditorService? overlayEditor = null,
         IChainCliGenerator? chainCliGenerator = null,
-        ICookieEditorService? cookieEditor = null)
+        ICookieEditorService? cookieEditor = null,
+        IReturnExpressionService? returnExpressionService = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
@@ -48,7 +51,8 @@ public partial class ChainViewModel : ViewModelBase
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
         _overlayEditor = overlayEditor;
         _cookieEditor = cookieEditor;
-        _chainCliGenerator = chainCliGenerator ?? new ChainCliGenerator();
+        _returnExpressionService = returnExpressionService ?? new ReturnExpressionService();
+        _chainCliGenerator = chainCliGenerator ?? new ChainCliGenerator(_returnExpressionService);
         _sharedRateLimitPolicy = batchViewModel?.RateLimitPolicy ?? new RateLimitPolicy();
         SelectedResponse = new ResponseViewModel(overlayEditor);
 
@@ -284,7 +288,7 @@ public partial class ChainViewModel : ViewModelBase
         SelectedResponse.Update(new ResponseModel
         {
             StatusCode = value.StatusCode,
-            ReasonPhrase = string.Empty,
+            ReasonPhrase = value.IsReturnStep ? "RETURN" : string.Empty,
             IsSuccess = value.Status == ChainStepStatus.Success,
             DurationMs = value.DurationMs,
             SizeBytes = 0,
@@ -425,6 +429,22 @@ public partial class ChainViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void EnlargeStepReturn()
+    {
+        if (SelectedStep is null)
+        {
+            return;
+        }
+
+        var step = SelectedStep;
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Expression de retour",
+            step.ReturnExpression,
+            IsReadOnly: false,
+            OnSave: text => step.ReturnExpression = text));
+    }
+
+    [RelayCommand]
     private void EnlargeStepBody()
     {
         if (SelectedStep is null)
@@ -464,6 +484,27 @@ public partial class ChainViewModel : ViewModelBase
         }
 
         var step = SelectedStep;
+        if (_returnExpressionService.IsReturnStatement(step.CurlText))
+        {
+            _isBulkUpdating = true;
+            try
+            {
+                step.ParseWarnings.Clear();
+                step.Warnings.Clear();
+                step.StepKind = ChainStepKind.Return;
+                step.ReturnExpression = step.CurlText.Trim();
+                step.HasParsed = true;
+                IsConfirmed = false;
+            }
+            finally
+            {
+                _isBulkUpdating = false;
+            }
+
+            RefreshAllStepsAndPlan();
+            return;
+        }
+
         var parseResult = _curlParser.Parse(step.CurlText);
 
         step.ParseWarnings.Clear();
@@ -472,6 +513,7 @@ public partial class ChainViewModel : ViewModelBase
         _isBulkUpdating = true;
         try
         {
+            step.StepKind = ChainStepKind.HttpRequest;
             var req = parseResult.Request;
             step.Method = req.Method;
             step.Url = req.Url;
@@ -517,7 +559,76 @@ public partial class ChainViewModel : ViewModelBase
             return;
         }
 
-        SelectedStep.HasParsed = true;
+        _isBulkUpdating = true;
+        try
+        {
+            if (_returnExpressionService.IsReturnStatement(SelectedStep.CurlText))
+            {
+                SelectedStep.StepKind = ChainStepKind.Return;
+                SelectedStep.ReturnExpression = SelectedStep.CurlText.Trim();
+            }
+            else
+            {
+                SelectedStep.StepKind = ChainStepKind.HttpRequest;
+            }
+            SelectedStep.HasParsed = true;
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
+
+        RefreshAllStepsAndPlan();
+    }
+
+    [RelayCommand]
+    private void SwitchStepToReturn()
+    {
+        if (SelectedStep is null)
+        {
+            return;
+        }
+
+        _isBulkUpdating = true;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(SelectedStep.ReturnExpression) &&
+                _returnExpressionService.IsReturnStatement(SelectedStep.CurlText))
+            {
+                SelectedStep.ReturnExpression = SelectedStep.CurlText.Trim();
+            }
+            SelectedStep.StepKind = ChainStepKind.Return;
+            SelectedStep.HasParsed = true;
+            IsConfirmed = false;
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
+
+        RefreshAllStepsAndPlan();
+    }
+
+    [RelayCommand]
+    private void SwitchStepToHttp()
+    {
+        if (SelectedStep is null)
+        {
+            return;
+        }
+
+        _isBulkUpdating = true;
+        try
+        {
+            SelectedStep.StepKind = ChainStepKind.HttpRequest;
+            SelectedStep.HasParsed = true;
+            IsConfirmed = false;
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
+
         RefreshAllStepsAndPlan();
     }
 
@@ -881,9 +992,11 @@ public partial class ChainViewModel : ViewModelBase
                 {
                     var liveStep = stepByRank[report.Item.StepIndex - 1];
                     liveStep.LastResponse = report.Item.Response;
-                    liveStep.LastResponseSummary = report.Item.StatusCode > 0
-                        ? $"HTTP {report.Item.StatusCode} ({report.Item.DurationMs} ms)"
-                        : "Erreur réseau";
+                    liveStep.LastResponseSummary = report.Item.IsReturnStep
+                        ? $"RETURN ({report.Item.DurationMs} ms)"
+                        : (report.Item.StatusCode > 0
+                            ? $"HTTP {report.Item.StatusCode} ({report.Item.DurationMs} ms)"
+                            : "Erreur réseau");
                 }
             }
 
@@ -1001,12 +1114,21 @@ public partial class ChainViewModel : ViewModelBase
             return;
         }
 
+        if (e.PropertyName == nameof(ChainStep.CurlText) && !step.HasParsed)
+        {
+            IsConfirmed = false;
+            RefreshAllStepsAndPlan();
+            return;
+        }
+
         if (e.PropertyName is nameof(ChainStep.Url)
             or nameof(ChainStep.Body)
             or nameof(ChainStep.BodyType)
             or nameof(ChainStep.SelectedMode)
             or nameof(ChainStep.Name)
-            or nameof(ChainStep.HasParsed))
+            or nameof(ChainStep.HasParsed)
+            or nameof(ChainStep.StepKind)
+            or nameof(ChainStep.ReturnExpression))
         {
             if (e.PropertyName == nameof(ChainStep.Body) &&
                 step.BodyType == BodyType.None &&
@@ -1226,6 +1348,42 @@ public partial class ChainViewModel : ViewModelBase
         HashSet<string> availableScalars,
         HashSet<string> availableLists)
     {
+        var isExplicitReturn = step.StepKind == ChainStepKind.Return;
+        var isImplicitReturn = !step.HasParsed && _returnExpressionService.IsReturnStatement(step.CurlText);
+        if (isExplicitReturn || isImplicitReturn)
+        {
+            var expr = isExplicitReturn
+                ? (!string.IsNullOrWhiteSpace(step.ReturnExpression)
+                    ? step.ReturnExpression
+                    : (_returnExpressionService.IsReturnStatement(step.CurlText) ? step.CurlText.Trim() : string.Empty))
+                : step.CurlText.Trim();
+
+            foreach (var v in step.Variables)
+            {
+                v.PropertyChanged -= OnStepVariablePropertyChanged;
+            }
+            step.Variables.Clear();
+            step.Axes.Clear();
+            step.UsedExtractedListsText = string.Empty;
+
+            if (!_returnExpressionService.TryParse(expr, out var ast, out var parseError) || ast is null)
+            {
+                step.UsedVariablesCount = 0;
+                step.VariablesError = parseError;
+            }
+            else
+            {
+                var refs = _returnExpressionService.CollectVariableReferences(ast);
+                step.UsedVariablesCount = refs.Count;
+                var refErrors = _returnExpressionService.ValidateReferences(ast, availableScalars, availableLists);
+                step.VariablesError = refErrors.Count == 0 ? null : string.Join(Environment.NewLine, refErrors);
+            }
+
+            step.Warnings.Clear();
+            step.NotifyCollectionsChanged();
+            return;
+        }
+
         var template = step.BuildTemplateRequest();
         var extracted = _templateEngine.ExtractVariables(template);
         var extractedLists = _templateEngine.ExtractListVariables(template);
