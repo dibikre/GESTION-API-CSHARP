@@ -321,7 +321,7 @@ public partial class ResponseViewModel : ViewModelBase
             >= 300 and < 400 => StatusCategory.Redirect,
             >= 400 and < 500 => StatusCategory.ClientError,
             >= 500 and < 600 => StatusCategory.ServerError,
-            _ => response.IsSuccess ? StatusCategory.Success : StatusCategory.None
+            _ => StatusCategory.None
         };
     }
 

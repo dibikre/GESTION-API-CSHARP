@@ -64,7 +64,6 @@ public partial class App : Application
         services.AddSingleton<IResponseExtractor, ResponseExtractor>();
         services.AddSingleton<IResponseRefiner, ResponseRefiner>();
         services.AddSingleton<IExtractionSuggester, ExtractionSuggester>();
-        services.AddSingleton<IReturnExpressionService, ReturnExpressionService>();
         services.AddSingleton<IClipboardService, ClipboardService>();
         services.AddSingleton<IOverlayEditorService, OverlayEditorService>();
         services.AddSingleton<ICookieEditorService, CookieEditorService>();

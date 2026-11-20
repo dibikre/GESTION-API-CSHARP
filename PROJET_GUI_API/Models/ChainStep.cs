@@ -21,16 +21,7 @@ public partial class ChainStep : ObservableObject
     public partial int Rank { get; set; } = 1;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsHttpRequestStep))]
-    [NotifyPropertyChangedFor(nameof(IsReturnStep))]
-    [NotifyPropertyChangedFor(nameof(StepKindBadgeText))]
-    public partial ChainStepKind StepKind { get; set; } = ChainStepKind.HttpRequest;
-
-    [ObservableProperty]
     public partial string CurlText { get; set; } = string.Empty;
-
-    [ObservableProperty]
-    public partial string ReturnExpression { get; set; } = string.Empty;
 
     [ObservableProperty]
     public partial bool HasParsed { get; set; }
@@ -112,9 +103,6 @@ public partial class ChainStep : ObservableObject
     public ObservableCollection<BatchAxis> Axes { get; } = [];
     public ObservableCollection<ChainExtraction> Extractions { get; } = [];
 
-    public bool IsHttpRequestStep => StepKind == ChainStepKind.HttpRequest;
-    public bool IsReturnStep => StepKind == ChainStepKind.Return;
-    public string StepKindBadgeText => IsReturnStep ? "RETURN" : Method.ToString().ToUpperInvariant();
     public bool IsFormBody => BodyType == BodyType.FormUrlEncoded;
     public bool IsBodyNotNone => BodyType != BodyType.None && BodyType != BodyType.FormUrlEncoded;
     public bool HasWarnings => Warnings.Count > 0;
@@ -183,9 +171,7 @@ public partial class ChainStep : ObservableObject
             Id = Id,
             Name = Name,
             Rank = Rank,
-            StepKind = StepKind,
             CurlText = CurlText,
-            ReturnExpression = ReturnExpression,
             HasParsed = HasParsed,
             Method = Method,
             Url = Url,

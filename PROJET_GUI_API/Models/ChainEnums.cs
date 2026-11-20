@@ -32,9 +32,3 @@ public enum ChainCliLanguage
     JavaScript,
     Php
 }
-
-public enum ChainStepKind
-{
-    HttpRequest,
-    Return
-}

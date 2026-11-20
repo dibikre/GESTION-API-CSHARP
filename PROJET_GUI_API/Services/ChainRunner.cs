@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ApiTester.Models;
@@ -17,20 +16,17 @@ public sealed class ChainRunner : IChainRunner
     private readonly ITemplateEngine _templateEngine;
     private readonly IResponseExtractor _responseExtractor;
     private readonly IRateLimitDetector _rateLimitDetector;
-    private readonly IReturnExpressionService _returnExpressionService;
 
     public ChainRunner(
         IHttpService httpService,
         ITemplateEngine templateEngine,
         IResponseExtractor responseExtractor,
-        IRateLimitDetector? rateLimitDetector = null,
-        IReturnExpressionService? returnExpressionService = null)
+        IRateLimitDetector? rateLimitDetector = null)
     {
         _httpService = httpService ?? throw new ArgumentNullException(nameof(httpService));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
         _responseExtractor = responseExtractor ?? throw new ArgumentNullException(nameof(responseExtractor));
         _rateLimitDetector = rateLimitDetector ?? new RateLimitDetector();
-        _returnExpressionService = returnExpressionService ?? new ReturnExpressionService();
     }
 
     public ChainPlanResult BuildPlan(IReadOnlyList<ChainStep> steps)
@@ -56,42 +52,9 @@ public sealed class ChainRunner : IChainRunner
             var stepNumber = i + 1;
             var stepLabel = string.IsNullOrWhiteSpace(step.Name) ? $"Étape {stepNumber}" : step.Name.Trim();
 
-            if (TryGetReturnStepExpression(step, out var returnExpr))
-            {
-                if (!_returnExpressionService.TryParse(returnExpr, out var ast, out var parseError) || ast is null)
-                {
-                    result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : {parseError}";
-                    return result;
-                }
-
-                var refErrors = _returnExpressionService.ValidateReferences(
-                    ast,
-                    availableFromPreviousSteps,
-                    availableListsFromPreviousSteps);
-                if (refErrors.Count > 0)
-                {
-                    result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : {refErrors[0]}";
-                    return result;
-                }
-
-                dynamicFlags.Add(false);
-                counts.Add(1);
-                totalRequests += 1;
-
-                if (totalRequests > BatchRunner.HardMaxRequests)
-                {
-                    result.TotalRequests = BatchRunner.HardMaxRequests + 1;
-                    result.ExceedsHardLimit = true;
-                    result.ValidationError = $"Plafond maximal de {BatchRunner.HardMaxRequests:N0} requêtes dépassé.";
-                    return result;
-                }
-
-                continue;
-            }
-
             if (!step.HasParsed && string.IsNullOrWhiteSpace(step.Url))
             {
-                result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : analyse une commande curl, saisis « return ... » ou une URL.";
+                result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : analyse une commande curl ou saisis une URL.";
                 return result;
             }
 
@@ -300,159 +263,6 @@ public sealed class ChainRunner : IChainRunner
                         AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal),
                         AccumulatedLists = CloneListsSnapshot(accumulatedLists)
                     });
-                    continue;
-                }
-
-                if (TryGetReturnStepExpression(step, out var returnExpr))
-                {
-                    globalIndex++;
-                    var stepSw = Stopwatch.StartNew();
-                    var returnSummary = BatchExecutionHelper.TruncateForDisplay(
-                        returnExpr.Trim().Replace("\r\n", " ").Replace("\n", " "),
-                        120);
-
-                    ReturnAstNode? ast = null;
-                    ReturnEvaluationResult? evalResult = null;
-                    string? parseError = null;
-                    if (_returnExpressionService.TryParse(returnExpr, out ast, out parseError) && ast is not null)
-                    {
-                        evalResult = _returnExpressionService.Evaluate(
-                            ast,
-                            accumulatedVariables,
-                            accumulatedLists,
-                            globalIndex);
-                    }
-
-                    stepSw.Stop();
-                    var elapsedMs = stepSw.ElapsedMilliseconds;
-                    ChainStepResult returnStepResult;
-
-                    if (ast is not null && evalResult is { IsSuccess: true })
-                    {
-                        var refs = _returnExpressionService.CollectVariableReferences(ast);
-                        var hasSensitiveRef = refs.Any(r => BatchExecutionHelper.IsSensitiveName(r.Name));
-                        var outputText = evalResult.OutputText;
-                        var sizeBytes = Encoding.UTF8.GetByteCount(outputText);
-                        var contentType = evalResult.IsJson
-                            ? "application/json; charset=utf-8"
-                            : "text/plain; charset=utf-8";
-
-                        var preview = hasSensitiveRef
-                            ? "RETURN ***"
-                            : string.IsNullOrWhiteSpace(outputText)
-                                ? "(vide)"
-                                : BatchExecutionHelper.TruncateForDisplay(
-                                    outputText.Replace("\r\n", " ").Replace("\n", " "),
-                                    120);
-
-                        var returnResponse = new ResponseModel
-                        {
-                            StatusCode = 0,
-                            ReasonPhrase = "RETURN",
-                            IsSuccess = true,
-                            DurationMs = elapsedMs,
-                            SizeBytes = sizeBytes,
-                            ContentType = contentType,
-                            Body = outputText
-                        };
-
-                        returnStepResult = new ChainStepResult
-                        {
-                            Index = globalIndex,
-                            StepIndex = stepNumber,
-                            StepName = stepName,
-                            Iteration = 1,
-                            TotalIterationsForStep = 1,
-                            RequestSummary = returnSummary,
-                            RequestUrl = string.Empty,
-                            StatusCode = 0,
-                            StatusCategory = StatusCategory.Success,
-                            DurationMs = elapsedMs,
-                            SizeBytes = sizeBytes,
-                            SizeText = BatchExecutionHelper.FormatSize(sizeBytes),
-                            ContentType = contentType,
-                            Response = returnResponse,
-                            Status = ChainStepStatus.Success,
-                            IsReturnStep = true,
-                            ReturnPreviewText = preview,
-                            TimestampUtc = DateTimeOffset.UtcNow
-                        };
-
-                        Log.Information(
-                            "Étape {StepNumber} ({StepName}) [RETURN] évaluée avec succès ({SizeText}, {DurationMs} ms).",
-                            stepNumber, stepName, returnStepResult.SizeText, elapsedMs);
-                    }
-                    else
-                    {
-                        var errMsg = !string.IsNullOrEmpty(parseError)
-                            ? parseError
-                            : (evalResult?.ErrorMessage ?? "Erreur lors de l'évaluation du retour.");
-
-                        returnStepResult = new ChainStepResult
-                        {
-                            Index = globalIndex,
-                            StepIndex = stepNumber,
-                            StepName = stepName,
-                            Iteration = 1,
-                            TotalIterationsForStep = 1,
-                            RequestSummary = returnSummary,
-                            RequestUrl = string.Empty,
-                            StatusCode = 0,
-                            StatusCategory = StatusCategory.NetworkError,
-                            DurationMs = elapsedMs,
-                            SizeBytes = 0,
-                            SizeText = "0 B",
-                            ContentType = string.Empty,
-                            Response = null,
-                            Status = ChainStepStatus.Failed,
-                            ErrorMessage = errMsg,
-                            IsReturnStep = true,
-                            TimestampUtc = DateTimeOffset.UtcNow
-                        };
-
-                        Log.Warning(
-                            "Étape {StepNumber} ({StepName}) [RETURN] en échec : {Error}.",
-                            stepNumber, stepName, errMsg);
-                    }
-
-                    if (onResultAsync is not null)
-                    {
-                        await onResultAsync(returnStepResult, ct).ConfigureAwait(false);
-                    }
-
-                    allResults.Add(returnStepResult);
-
-                    progress.Report(new ChainProgressReport
-                    {
-                        StepIndex = stepNumber,
-                        TotalSteps = totalSteps,
-                        Iteration = 1,
-                        StepTotalIterations = 1,
-                        GlobalIndex = globalIndex,
-                        GlobalTotal = globalTotal,
-                        RetryCount = totalRetryCount,
-                        StepName = stepName,
-                        Item = returnStepResult,
-                        AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal),
-                        AccumulatedLists = CloneListsSnapshot(accumulatedLists)
-                    });
-
-                    if (returnStepResult.Status == ChainStepStatus.Failed && !step.ContinueOnError)
-                    {
-                        Log.Warning(
-                            "Chaîne interrompue à l'étape {StepNumber} ({StepName}) (ContinueOnError désactivé).",
-                            stepNumber, stepName);
-                        finalStatus = ChainRunStatus.Failed;
-                        stopChain = true;
-                        continue;
-                    }
-
-                    var returnDelayMs = Math.Max(0, step.DelayAfterMs);
-                    if (sIdx < totalSteps - 1 && returnDelayMs > 0)
-                    {
-                        await Task.Delay(returnDelayMs, ct).ConfigureAwait(false);
-                    }
-
                     continue;
                 }
 
@@ -893,26 +703,6 @@ public sealed class ChainRunner : IChainRunner
             AllLists = accumulatedLists,
             TotalDurationMs = stopwatch.ElapsedMilliseconds
         };
-    }
-
-    private bool TryGetReturnStepExpression(ChainStep step, out string expression)
-    {
-        if (step.StepKind == ChainStepKind.Return)
-        {
-            expression = !string.IsNullOrWhiteSpace(step.ReturnExpression)
-                ? step.ReturnExpression
-                : (_returnExpressionService.IsReturnStatement(step.CurlText) ? step.CurlText.Trim() : string.Empty);
-            return true;
-        }
-
-        if (!step.HasParsed && _returnExpressionService.IsReturnStatement(step.CurlText))
-        {
-            expression = step.CurlText.Trim();
-            return true;
-        }
-
-        expression = string.Empty;
-        return false;
     }
 
     private static List<BatchAxis> ResolveRuntimeAxes(

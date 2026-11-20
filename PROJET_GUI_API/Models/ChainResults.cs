@@ -51,9 +51,6 @@ public sealed class ChainStepResult
     public bool WasRateLimited { get; set; }
     public int RetryAttempts { get; set; }
     public long FinalWaitMs { get; set; }
-    public bool IsReturnStep { get; set; }
-    public string? ReturnPreviewText { get; set; }
-    public bool HasReturnPreview => !string.IsNullOrWhiteSpace(ReturnPreviewText);
 
     public string StepIterationLabel => TotalIterationsForStep > 1
         ? $"{StepIndex}. {StepName} ({Iteration}/{TotalIterationsForStep})"
@@ -66,10 +63,8 @@ public sealed class ChainStepResult
     public string StatusBadgeText => Status switch
     {
         ChainStepStatus.Skipped => "Ignorée",
-        ChainStepStatus.Failed when IsReturnStep => "RETURN (échec)",
         ChainStepStatus.Failed when StatusCode > 0 => $"{StatusCode} (échec)",
         ChainStepStatus.Failed => "Échec",
-        _ when IsReturnStep => "RETURN",
         _ when StatusCode > 0 => $"{StatusCode}",
         _ => "OK"
     };
