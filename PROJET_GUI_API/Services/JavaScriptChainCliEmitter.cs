@@ -307,7 +307,7 @@ function parseJsonPath(rawPath) {
       const close = part.indexOf("]", pos + 1);
       if (close < 0) throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
       const idxText = part.slice(pos + 1, close).trim();
-      if (idxText === "*" || idxText === "") {
+      if (idxText === "*" || idxText === "" || idxText === "++" || /^(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)$/.test(idxText)) {
         steps.push({ prop: first ? prop : null, arrIdx: null, isWildcard: true });
       } else {
         const idx = Number.parseInt(idxText, 10);

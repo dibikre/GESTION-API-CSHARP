@@ -344,7 +344,7 @@ public sealed class ResponseExtractor : IResponseExtractor
         {
             if (s.IsWildcard)
             {
-                return ExtractionOutcome.Failure("Le sélecteur [*] ou [] extrait plusieurs valeurs : coche « En liste [[...]] ».");
+                return ExtractionOutcome.Failure("Le sélecteur [*], [] ou [n++] extrait plusieurs valeurs : coche « En liste [[...]] ».");
             }
         }
 
@@ -658,7 +658,7 @@ public sealed class ResponseExtractor : IResponseExtractor
                 }
 
                 var indexText = rawPart[(pos + 1)..closeIdx].Trim();
-                if (indexText == "*" || indexText.Length == 0)
+                if (IsWildcardIndexToken(indexText))
                 {
                     steps.Add(new PathStep(isFirstIndex ? propName : null, null, IsWildcard: true));
                 }
@@ -678,6 +678,45 @@ public sealed class ResponseExtractor : IResponseExtractor
         }
 
         return steps.Count > 0;
+    }
+
+    private static bool IsWildcardIndexToken(string indexText)
+    {
+        if (indexText == "*" || indexText.Length == 0 || indexText == "++")
+        {
+            return true;
+        }
+
+        if (indexText.EndsWith("++", StringComparison.Ordinal) && indexText.Length > 2)
+        {
+            return IsSimpleIdentifier(indexText[..^2]);
+        }
+
+        if (indexText.StartsWith("++", StringComparison.Ordinal) && indexText.Length > 2)
+        {
+            return IsSimpleIdentifier(indexText[2..]);
+        }
+
+        return false;
+    }
+
+    private static bool IsSimpleIdentifier(string text)
+    {
+        if (text.Length == 0 || char.IsDigit(text[0]))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            var ch = text[i];
+            if (!char.IsLetterOrDigit(ch) && ch != '_')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     internal static string DescribeKind(JsonValueKind kind) => kind switch

@@ -477,6 +477,7 @@
                                                              AddCommand="{Binding #ChainRoot.ViewModel.AddExtractionCommand}"
                                                              RemoveCommand="{Binding #ChainRoot.ViewModel.RemoveExtractionCommand}"
                                                              TestCommand="{Binding #ChainRoot.ViewModel.TestExtractionCommand}"
+                                                             InspectListCommand="{Binding #ChainRoot.ViewModel.InspectExtractedListCommand}"
                                                              HasLastResponse="{Binding HasLastResponse}"
                                                              LastResponseSummary="{Binding LastResponseSummary}" />
                             </TabItem>
@@ -732,19 +733,33 @@
                             <ItemsControl ItemsSource="{Binding AccumulatedVariables}" Margin="0,4,0,2">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="models:ChainAccumulatedVariableItem">
-                                        <Grid ColumnDefinitions="180,*" ColumnSpacing="8" Margin="0,1">
+                                        <Grid ColumnDefinitions="180,*,Auto" ColumnSpacing="8" Margin="0,1">
                                             <TextBlock Grid.Column="0"
                                                        Text="{Binding Name}"
                                                        FontFamily="{DynamicResource MonoFontFamily}"
                                                        FontSize="{DynamicResource FontSizeCaption}"
                                                        FontWeight="SemiBold"
                                                        Foreground="{DynamicResource TextMutedBrush}"
-                                                       TextTrimming="CharacterEllipsis" />
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
                                             <SelectableTextBlock Grid.Column="1"
                                                                  Text="{Binding DisplayValue}"
                                                                  FontFamily="{DynamicResource MonoFontFamily}"
                                                                  FontSize="{DynamicResource FontSizeCaption}"
-                                                                 TextTrimming="CharacterEllipsis" />
+                                                                 TextTrimming="CharacterEllipsis"
+                                                                 VerticalAlignment="Center" />
+                                            <Button Grid.Column="2"
+                                                    Classes="ghost"
+                                                    IsVisible="{Binding HasInspectableText}"
+                                                    Content="Voir"
+                                                    Command="{Binding #ChainRoot.ViewModel.InspectAccumulatedVariableCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    FontSize="{DynamicResource FontSizeCaption}"
+                                                    Height="20"
+                                                    MinHeight="20"
+                                                    Padding="6,0"
+                                                    VerticalAlignment="Center"
+                                                    AutomationProperties.Name="Afficher tout le contenu de la liste" />
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>

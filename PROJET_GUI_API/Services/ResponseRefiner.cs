@@ -534,6 +534,7 @@ public sealed class ResponseRefiner : IResponseRefiner
                     }
                     break;
                 case '*':
+                case '+':
                     if (!inBracket)
                     {
                         return false;
@@ -542,7 +543,6 @@ public sealed class ResponseRefiner : IResponseRefiner
                 case '(':
                 case ')':
                 case '\\':
-                case '+':
                 case '?':
                 case '|':
                 case '{':

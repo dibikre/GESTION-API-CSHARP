@@ -16,7 +16,10 @@ public sealed class ChainAccumulatedVariableItem
 {
     public required string Name { get; init; }
     public required string RawValue { get; init; }
+    public string? FullText { get; init; }
     public string DisplayValue => BatchExecutionHelper.MaskIfSensitive(Name, RawValue);
+    public bool HasInspectableText =>
+        !string.IsNullOrEmpty(FullText) && !BatchExecutionHelper.IsSensitiveName(Name);
 }
 
 public sealed class ChainStepResult

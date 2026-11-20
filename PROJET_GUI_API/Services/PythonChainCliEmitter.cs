@@ -314,7 +314,7 @@ def parse_json_path(raw_path: str) -> list[tuple[str | None, int | None, bool]]:
             if close < 0:
                 raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
             idx_str = part[pos + 1:close].strip()
-            if idx_str in ("*", ""):
+            if idx_str in ("*", "", "++") or re.fullmatch(r"(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)", idx_str):
                 steps.append((prop if first else None, None, True))
             else:
                 idx = int(idx_str)

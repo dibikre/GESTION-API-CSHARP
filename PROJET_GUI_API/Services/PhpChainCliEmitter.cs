@@ -356,7 +356,7 @@ function parseJsonPath(string $rawPath): array {
                 throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
             }
             $idxStr = trim(substr($part, $pos + 1, $close - $pos - 1));
-            if ($idxStr === '*' || $idxStr === '') {
+            if ($idxStr === '*' || $idxStr === '' || $idxStr === '++' || preg_match('/^(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)$/', $idxStr)) {
                 $steps[] = [$first ? $prop : null, null, true];
             } elseif (preg_match('/^-?\d+$/', $idxStr)) {
                 $steps[] = [$first ? $prop : null, (int)$idxStr, false];

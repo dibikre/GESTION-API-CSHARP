@@ -597,6 +597,7 @@ public partial class ChainViewModel : ViewModelBase
             var listOutcome = _responseExtractor.ExtractList(response, extraction);
             if (listOutcome.IsSuccess)
             {
+                extraction.LastExtractedList = listOutcome.Values;
                 if (BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
                 {
                     extraction.LastExtractedValue = $"[{listOutcome.Values.Count} éléments] ***";
@@ -610,12 +611,14 @@ public partial class ChainViewModel : ViewModelBase
             }
             else
             {
+                extraction.LastExtractedList = null;
                 extraction.LastExtractedValue = null;
                 extraction.ErrorText = listOutcome.ErrorMessage;
             }
             return;
         }
 
+        extraction.LastExtractedList = null;
         var outcome = _responseExtractor.Extract(response, extraction);
         if (outcome.IsSuccess)
         {
@@ -627,6 +630,41 @@ public partial class ChainViewModel : ViewModelBase
             extraction.LastExtractedValue = null;
             extraction.ErrorText = outcome.ErrorMessage;
         }
+    }
+
+    [RelayCommand]
+    private void InspectExtractedList(ChainExtraction? extraction)
+    {
+        if (extraction?.LastExtractedList is null ||
+            extraction.LastExtractedList.Count == 0 ||
+            BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
+        {
+            return;
+        }
+
+        var varName = string.IsNullOrWhiteSpace(extraction.VariableName)
+            ? "liste"
+            : extraction.VariableName.Trim();
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            $"Liste [[{varName}]] — {extraction.LastExtractedList.Count} élément(s)",
+            string.Join(Environment.NewLine, extraction.LastExtractedList),
+            IsReadOnly: true,
+            OnSave: null));
+    }
+
+    [RelayCommand]
+    private void InspectAccumulatedVariable(ChainAccumulatedVariableItem? item)
+    {
+        if (item is null || !item.HasInspectableText || string.IsNullOrEmpty(item.FullText))
+        {
+            return;
+        }
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            $"Contenu de {item.Name}",
+            item.FullText,
+            IsReadOnly: true,
+            OnSave: null));
     }
 
     [RelayCommand]
@@ -901,7 +939,8 @@ public partial class ChainViewModel : ViewModelBase
                 AccumulatedVariables.Add(new ChainAccumulatedVariableItem
                 {
                     Name = $"[[{kvp.Key}]]",
-                    RawValue = preview
+                    RawValue = preview,
+                    FullText = kvp.Value.Count == 0 ? null : string.Join(Environment.NewLine, kvp.Value)
                 });
             }
         }
@@ -1077,9 +1116,27 @@ public partial class ChainViewModel : ViewModelBase
 
     private void OnNestedItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (!_isBulkUpdating)
+        if (_isBulkUpdating)
         {
-            RefreshAllStepsAndPlan();
+            return;
+        }
+
+        if (e.PropertyName is nameof(ChainExtraction.LastExtractedValue)
+            or nameof(ChainExtraction.LastExtractedList)
+            or nameof(ChainExtraction.ErrorText))
+        {
+            return;
+        }
+
+        RefreshAllStepsAndPlan();
+
+        if (sender is ChainExtraction extraction &&
+            e.PropertyName == nameof(ChainExtraction.IsList) &&
+            SelectedStep?.LastResponse is not null &&
+            !string.IsNullOrWhiteSpace(extraction.VariableName) &&
+            !string.IsNullOrWhiteSpace(extraction.Expression))
+        {
+            TestExtraction(extraction);
         }
     }
 

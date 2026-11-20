@@ -20,6 +20,9 @@ public partial class ChainExtractionEditor : UserControl
     public static readonly StyledProperty<ICommand?> TestCommandProperty =
         AvaloniaProperty.Register<ChainExtractionEditor, ICommand?>(nameof(TestCommand));
 
+    public static readonly StyledProperty<ICommand?> InspectListCommandProperty =
+        AvaloniaProperty.Register<ChainExtractionEditor, ICommand?>(nameof(InspectListCommand));
+
     public static readonly StyledProperty<bool> HasLastResponseProperty =
         AvaloniaProperty.Register<ChainExtractionEditor, bool>(nameof(HasLastResponse));
 
@@ -53,6 +56,12 @@ public partial class ChainExtractionEditor : UserControl
     {
         get => GetValue(TestCommandProperty);
         set => SetValue(TestCommandProperty, value);
+    }
+
+    public ICommand? InspectListCommand
+    {
+        get => GetValue(InspectListCommandProperty);
+        set => SetValue(InspectListCommandProperty, value);
     }
 
     public bool HasLastResponse

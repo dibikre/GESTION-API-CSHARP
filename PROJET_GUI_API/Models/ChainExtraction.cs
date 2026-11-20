@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -52,6 +53,10 @@ public partial class ChainExtraction : ObservableObject
     public partial string? LastExtractedValue { get; set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLastExtractedList))]
+    public partial IReadOnlyList<string>? LastExtractedList { get; set; }
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasError))]
     public partial string? ErrorText { get; set; }
 
@@ -69,6 +74,9 @@ public partial class ChainExtraction : ObservableObject
 
     public bool HasLastExtractedValue => LastExtractedValue is not null;
 
+    public bool HasLastExtractedList =>
+        LastExtractedList is { Count: > 0 } && !BatchExecutionHelper.IsSensitiveName(VariableName);
+
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorText);
 
     public string LastExtractedDisplay => LastExtractedValue is null
@@ -84,8 +92,28 @@ public partial class ChainExtraction : ObservableObject
     public string ExpressionPlaceholder => Source == ChainExtractionSource.Header
         ? "ex. Bearer (.+)"
         : Kind == ExtractionKind.JsonPath
-            ? (IsList ? "ex. items[*].id ou data.tags" : "ex. data.token ou items[0].id")
+            ? (IsList ? "ex. items[*].id, items[n++].id ou data.tags" : "ex. data.token ou items[0].id")
             : "ex. \"token\":\"([^\"]+)\"";
+
+    partial void OnKindChanged(ExtractionKind value)
+    {
+        ClearPreviewState();
+    }
+
+    partial void OnExpressionChanged(string value)
+    {
+        ClearPreviewState();
+    }
+
+    partial void OnHeaderNameChanged(string value)
+    {
+        ClearPreviewState();
+    }
+
+    partial void OnIsListChanged(bool value)
+    {
+        ClearPreviewState();
+    }
 
     partial void OnSourceChanged(ChainExtractionSource value)
     {
@@ -93,6 +121,8 @@ public partial class ChainExtraction : ObservableObject
         {
             Kind = ExtractionKind.Regex;
         }
+
+        ClearPreviewState();
     }
 
     partial void OnRegexGroupChanged(int value)
@@ -101,6 +131,15 @@ public partial class ChainExtraction : ObservableObject
         {
             RegexGroup = 0;
         }
+
+        ClearPreviewState();
+    }
+
+    private void ClearPreviewState()
+    {
+        LastExtractedValue = null;
+        LastExtractedList = null;
+        ErrorText = null;
     }
 
     public ChainExtraction Clone() => new()
