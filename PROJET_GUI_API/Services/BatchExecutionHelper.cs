@@ -17,6 +17,7 @@ internal sealed class ExecutionIterationStep
     public required List<KeyValueItem> VariableItems { get; init; }
     public required List<KeyValueItem> OrderedAxisItems { get; init; }
     public required Dictionary<string, string> VariableDictionary { get; init; }
+    public required Dictionary<string, string> ListDictionary { get; init; }
     public required string ParamsText { get; init; }
 }
 
@@ -177,6 +178,60 @@ internal static class BatchExecutionHelper
         return plan;
     }
 
+    public static bool TryComputeTotalIterations(
+        IReadOnlyList<BatchAxis> axes,
+        BatchMode mode,
+        int hardMaxRequests,
+        out int totalIterations,
+        out string? error)
+    {
+        error = null;
+        if (axes.Count == 0)
+        {
+            totalIterations = 1;
+            return true;
+        }
+
+        foreach (var axis in axes)
+        {
+            if (axis.ValueCount <= 0)
+            {
+                totalIterations = 0;
+                error = $"L'axe « {axis.DisplayName} » ne contient aucune valeur.";
+                return false;
+            }
+        }
+
+        if (mode == BatchMode.Parallel)
+        {
+            var minCount = axes.Min(a => a.ValueCount);
+            if (minCount > hardMaxRequests)
+            {
+                totalIterations = hardMaxRequests + 1;
+                error = $"Plafond maximal de {hardMaxRequests:N0} requêtes dépassé ({minCount:N0} demandées).";
+                return false;
+            }
+
+            totalIterations = (int)minCount;
+            return true;
+        }
+
+        long total = 1;
+        foreach (var axis in axes)
+        {
+            total = SaturatingMultiply(total, axis.ValueCount, hardMaxRequests + 1);
+            if (total > hardMaxRequests)
+            {
+                totalIterations = hardMaxRequests + 1;
+                error = $"Plafond maximal de {hardMaxRequests:N0} requêtes dépassé.";
+                return false;
+            }
+        }
+
+        totalIterations = (int)total;
+        return true;
+    }
+
     public static IReadOnlyList<string> GetCombination(IReadOnlyList<BatchAxis> axes, long n)
     {
         ArgumentNullException.ThrowIfNull(axes);
@@ -252,6 +307,7 @@ internal static class BatchExecutionHelper
                 VariableItems = [],
                 OrderedAxisItems = [],
                 VariableDictionary = new Dictionary<string, string>(fixedVariableValues, StringComparer.Ordinal),
+                ListDictionary = new Dictionary<string, string>(StringComparer.Ordinal),
                 ParamsText = FormatStaticParamsText(staticQuery)
             };
             yield break;
@@ -345,6 +401,7 @@ internal static class BatchExecutionHelper
                 VariableItems = [],
                 OrderedAxisItems = [],
                 VariableDictionary = new Dictionary<string, string>(fixedVariableValues, StringComparer.Ordinal),
+                ListDictionary = new Dictionary<string, string>(StringComparer.Ordinal),
                 ParamsText = FormatStaticParamsText(staticQuery)
             };
         }
@@ -546,12 +603,23 @@ internal static class BatchExecutionHelper
         RequestModel templateRequest,
         IReadOnlyList<KeyValueItem> substitutedQueryItems,
         IReadOnlyDictionary<string, string> variableValues,
-        int index)
+        int index,
+        IReadOnlyDictionary<string, string>? listValues = null)
     {
         var maskedVars = new Dictionary<string, string>(variableValues.Count, StringComparer.Ordinal);
         foreach (var kvp in variableValues)
         {
             maskedVars[kvp.Key] = IsSensitiveName(kvp.Key) ? "***" : kvp.Value;
+        }
+
+        Dictionary<string, string>? maskedListVars = null;
+        if (listValues is not null)
+        {
+            maskedListVars = new Dictionary<string, string>(listValues.Count, StringComparer.Ordinal);
+            foreach (var kvp in listValues)
+            {
+                maskedListVars[kvp.Key] = IsSensitiveName(kvp.Key) ? "***" : kvp.Value;
+            }
         }
 
         var urlOnlyRequest = new RequestModel
@@ -561,7 +629,7 @@ internal static class BatchExecutionHelper
             BodyType = BodyType.None
         };
 
-        var maskedBaseResult = templateEngine.ApplyDetailed(urlOnlyRequest, maskedVars, index);
+        var maskedBaseResult = templateEngine.ApplyDetailed(urlOnlyRequest, maskedVars, maskedListVars, index);
         var baseUrl = maskedBaseResult.IsSuccess && maskedBaseResult.Request is not null
             ? maskedBaseResult.Request.Url
             : templateRequest.Url;
@@ -776,6 +844,7 @@ internal static class BatchExecutionHelper
         var variableItems = new List<KeyValueItem>();
         var orderedAxisItems = new List<KeyValueItem>(axes.Count);
         var variableDictionary = new Dictionary<string, string>(fixedVariableValues, StringComparer.Ordinal);
+        var listDictionary = new Dictionary<string, string>(StringComparer.Ordinal);
         var displayLabels = new List<string>(axes.Count);
 
         for (var i = 0; i < axes.Count; i++)
@@ -790,6 +859,11 @@ internal static class BatchExecutionHelper
             {
                 variableDictionary[axis.Name] = value;
                 variableItems.Add(new KeyValueItem(axis.Name, value, true));
+            }
+            else if (axis.Kind == BatchAxisKind.ExtractedList)
+            {
+                listDictionary[axis.Name] = value;
+                variableItems.Add(new KeyValueItem($"[[{axis.Name}]]", value, true));
             }
             else
             {
@@ -823,6 +897,7 @@ internal static class BatchExecutionHelper
             VariableItems = variableItems,
             OrderedAxisItems = orderedAxisItems,
             VariableDictionary = variableDictionary,
+            ListDictionary = listDictionary,
             ParamsText = string.Join(", ", displayLabels)
         };
     }

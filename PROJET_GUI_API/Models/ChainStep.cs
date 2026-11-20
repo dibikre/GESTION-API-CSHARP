@@ -68,6 +68,15 @@ public partial class ChainStep : ObservableObject
     public partial int TotalIterations { get; set; } = 1;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IterationsBadgeText))]
+    [NotifyPropertyChangedFor(nameof(IsLooping))]
+    public partial bool HasDynamicIterations { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUsedExtractedLists))]
+    public partial string UsedExtractedListsText { get; set; } = string.Empty;
+
+    [ObservableProperty]
     public partial int UsedVariablesCount { get; set; }
 
     [ObservableProperty]
@@ -104,10 +113,13 @@ public partial class ChainStep : ObservableObject
     public bool IsOrderIgnored => Axes.Count >= 2 && SelectedMode == BatchMode.Parallel;
     public bool ShowOrderPanel => Axes.Count >= 2 && SelectedMode == BatchMode.Combinations;
     public bool HasVariablesError => !string.IsNullOrWhiteSpace(VariablesError);
+    public bool HasUsedExtractedLists => !string.IsNullOrWhiteSpace(UsedExtractedListsText);
     public bool HasPlanError => !string.IsNullOrWhiteSpace(PlanError);
     public bool HasLastResponse => LastResponse is not null;
-    public bool IsLooping => TotalIterations > 1;
-    public string IterationsBadgeText => TotalIterations <= 1 ? string.Empty : $"x{TotalIterations}";
+    public bool IsLooping => HasDynamicIterations || TotalIterations > 1;
+    public string IterationsBadgeText => HasDynamicIterations
+        ? (TotalIterations > 1 ? $"x({TotalIterations}×liste)" : "x(liste)")
+        : (TotalIterations <= 1 ? string.Empty : $"x{TotalIterations}");
     public string StepHeaderLabel => $"{Rank}. {(string.IsNullOrWhiteSpace(Name) ? "Sans nom" : Name.Trim())}";
     public string MoveUpAutomationName => $"Monter l'étape {Name}";
     public string MoveDownAutomationName => $"Descendre l'étape {Name}";

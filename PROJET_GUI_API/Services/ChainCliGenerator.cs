@@ -36,7 +36,8 @@ internal sealed record CliExtractionSpec(
     int RegexGroup,
     string HeaderName,
     bool IsRequired,
-    string DefaultValueIfMissing);
+    string DefaultValueIfMissing,
+    bool IsList);
 
 internal sealed record CliStepSpec(
     int Rank,
@@ -58,6 +59,8 @@ internal sealed record CliStepSpec(
 
 public sealed class ChainCliGenerator : IChainCliGenerator
 {
+    private static readonly TemplateEngine TemplateScanner = new();
+
     public string Generate(IReadOnlyList<ChainStep> steps, ChainCliLanguage language)
     {
         ArgumentNullException.ThrowIfNull(steps);
@@ -110,6 +113,17 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                 : BatchExecutionHelper.BuildDefaultStepAxes(step.VaryingParams, step.Variables);
 
             var axes = BuildAxes(rawAxes);
+            var existingListAxes = new HashSet<string>(
+                axes.Where(a => a.Kind == "list").Select(a => a.Name),
+                StringComparer.Ordinal);
+            foreach (var listVar in TemplateScanner.ExtractListVariables(step.BuildTemplateRequest()))
+            {
+                if (existingListAxes.Add(listVar.Name))
+                {
+                    axes.Add(new CliAxisSpec("list", listVar.Name, null, []));
+                }
+            }
+
             var queryParams = BuildQueryParams(step, rawAxes);
             var extractions = BuildExtractions(step.Extractions);
 
@@ -224,6 +238,12 @@ public sealed class ChainCliGenerator : IChainCliGenerator
 
         foreach (var axis in rawAxes)
         {
+            if (axis.Kind == BatchAxisKind.ExtractedList)
+            {
+                result.Add(new CliAxisSpec("list", axis.Name, null, []));
+                continue;
+            }
+
             var kind = axis.Kind == BatchAxisKind.Variable ? "var" : "param";
             if (axis.Kind == BatchAxisKind.UrlParam && axis.SourceParam is { } p)
             {
@@ -380,7 +400,8 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                 Math.Max(0, ext.RegexGroup),
                 ext.HeaderName?.Trim() ?? string.Empty,
                 ext.IsRequired,
-                ext.DefaultValueIfMissing ?? string.Empty));
+                ext.DefaultValueIfMissing ?? string.Empty,
+                ext.IsList));
         }
 
         return result;

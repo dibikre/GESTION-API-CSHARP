@@ -36,6 +36,7 @@ public sealed class ChainStepResult
     public string ContentType { get; set; } = string.Empty;
     public ResponseModel? Response { get; set; }
     public IReadOnlyDictionary<string, string> ExtractedValues { get; set; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> ExtractedLists { get; set; } = new Dictionary<string, IReadOnlyList<string>>();
     public IReadOnlyList<string> ExtractionErrors { get; set; } = [];
     public ChainStepStatus Status { get; set; } = ChainStepStatus.Success;
     public string? ErrorMessage { get; set; }
@@ -78,21 +79,38 @@ public sealed class ChainStepResult
     {
         get
         {
-            if (ExtractedValues.Count == 0)
+            if (ExtractedValues.Count == 0 && ExtractedLists.Count == 0)
             {
                 return string.Empty;
             }
 
-            return string.Join(", ", ExtractedValues.Select(kvp =>
+            var parts = new List<string>(ExtractedValues.Count + ExtractedLists.Count);
+            foreach (var kvp in ExtractedValues)
             {
                 var display = BatchExecutionHelper.TruncateForDisplay(
                     BatchExecutionHelper.MaskIfSensitive(kvp.Key, kvp.Value));
-                return $"{kvp.Key}={display}";
-            }));
+                parts.Add($"{kvp.Key}={display}");
+            }
+
+            foreach (var kvp in ExtractedLists)
+            {
+                var list = kvp.Value;
+                if (BatchExecutionHelper.IsSensitiveName(kvp.Key))
+                {
+                    parts.Add($"[[{kvp.Key}]]=[{list.Count}] ***");
+                }
+                else
+                {
+                    var preview = BatchExecutionHelper.TruncateForDisplay(string.Join(", ", list.Take(3)));
+                    parts.Add($"[[{kvp.Key}]]=[{list.Count}] {preview}");
+                }
+            }
+
+            return string.Join(", ", parts);
         }
     }
 
-    public bool HasExtractedSummary => ExtractedValues.Count > 0;
+    public bool HasExtractedSummary => ExtractedValues.Count > 0 || ExtractedLists.Count > 0;
     public bool HasErrorMessage => !string.IsNullOrWhiteSpace(ErrorMessage);
 
     public BatchResultItem ToBatchResultItem() => new()
@@ -130,5 +148,6 @@ public sealed class ChainRunResult
     public IReadOnlyList<ChainStepResult> StepResults { get; init; } = [];
     public ChainRunStatus FinalStatus { get; init; } = ChainRunStatus.Success;
     public IReadOnlyDictionary<string, string> AllVariables { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> AllLists { get; init; } = new Dictionary<string, IReadOnlyList<string>>();
     public long TotalDurationMs { get; init; }
 }

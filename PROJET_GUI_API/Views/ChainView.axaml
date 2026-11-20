@@ -304,7 +304,7 @@
                             <TextBox Grid.Column="1"
                                      Classes="mono"
                                      Text="{Binding Url}"
-                                     PlaceholderText="https://api.exemple.com/endpoint (accepte {{variables}})"
+                                     PlaceholderText="https://api.exemple.com/endpoint (accepte {{variables}} et [[listes]])"
                                      ToolTip.Tip="{Binding Url, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
                                      AutomationProperties.Name="URL de l'étape" />
                         </Grid>
@@ -391,7 +391,7 @@
                                              TextWrapping="NoWrap"
                                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                             PlaceholderText="Corps JSON ou texte (accepte {{variables}})..."
+                                             PlaceholderText="Corps JSON ou texte (accepte {{variables}} et [[listes]])..."
                                              AutomationProperties.Name="Corps de la requête de l'étape" />
 
                                     <views:KeyValueEditor Grid.Row="1"
@@ -404,7 +404,7 @@
                                                           ValuePlaceholder="Valeur" />
 
                                     <TextBlock Grid.Row="2"
-                                               Text="Utilise {{nom}} pour réutiliser une variable extraite d'une étape précédente ou définie localement."
+                                               Text="Utilise {{nom}} pour une variable simple ou [[nom]] pour itérer sur une liste extraite."
                                                FontSize="{DynamicResource FontSizeCaption}"
                                                Foreground="{DynamicResource TextFaintBrush}"
                                                TextWrapping="Wrap" />
@@ -427,7 +427,7 @@
                                         </Border>
                                     </StackPanel>
                                 </TabItem.Header>
-                                <Grid RowDefinitions="Auto,*,Auto" RowSpacing="6" Margin="0,6,0,0">
+                                <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="6" Margin="0,6,0,0">
                                     <TextBlock Grid.Row="0"
                                                IsVisible="{Binding #ChainRoot.ViewModel.HasAvailableExtractedVariables}"
                                                Text="{Binding #ChainRoot.ViewModel.AvailableExtractedVariablesText}"
@@ -435,11 +435,19 @@
                                                Foreground="{DynamicResource AccentBrush}"
                                                TextWrapping="Wrap" />
 
-                                    <views:BatchVariableEditor Grid.Row="1"
+                                    <TextBlock Grid.Row="1"
+                                               IsVisible="{Binding HasUsedExtractedLists}"
+                                               Text="{Binding UsedExtractedListsText}"
+                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource TextMutedBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <views:BatchVariableEditor Grid.Row="2"
                                                                Items="{Binding Variables}"
                                                                EnlargeListCommand="{Binding #ChainRoot.ViewModel.EnlargeVariableListCommand}" />
 
-                                    <TextBlock Grid.Row="2"
+                                    <TextBlock Grid.Row="3"
                                                IsVisible="{Binding HasVariablesError}"
                                                Text="{Binding VariablesError}"
                                                FontSize="{DynamicResource FontSizeCaption}"

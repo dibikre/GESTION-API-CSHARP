@@ -18,7 +18,7 @@ internal static class JavaScriptChainCliEmitter
         sb.AppendLine("\"use strict\";");
         sb.AppendLine();
         sb.AppendLine("const { randomUUID } = require(\"node:crypto\");");
-        sb.AppendLine("const MARKER_RE = /\\{\\{\\s*(\\$?(?!\\d)[\\p{L}\\p{N}_]+)\\s*\\}\\}/gu;");
+        sb.AppendLine("const MARKER_RE = /(?:\\{\\{\\s*(\\$?(?!\\d)[\\p{L}\\p{N}_]+)\\s*\\}\\}|\\[\\[\\s*((?!\\d)[\\p{L}\\p{N}_]+)\\s*\\]\\])/gu;");
         sb.AppendLine();
 
         AppendStepsData(sb, steps);
@@ -114,6 +114,7 @@ internal static class JavaScriptChainCliEmitter
                 sb.AppendLine($"        headerName: {EscapeString(ext.HeaderName)},");
                 sb.AppendLine($"        required: {FormatBool(ext.IsRequired)},");
                 sb.AppendLine($"        defaultValue: {EscapeString(ext.DefaultValueIfMissing)},");
+                sb.AppendLine($"        isList: {FormatBool(ext.IsList)},");
                 sb.AppendLine("      },");
             }
             sb.AppendLine("    ],");
@@ -165,10 +166,23 @@ function makeRange(spec) {
   return values;
 }
 
-function buildIterations(axes, mode) {
-  if (!axes.length) return [[]];
-  const lists = axes.map((a) => (a.range ? makeRange(a.range) : [...a.values]));
-  if (lists.some((l) => l.length === 0)) return [];
+function buildIterations(axes, mode, accumulatedLists) {
+  if (!axes.length) return { iterations: [[]], emptyListName: null };
+  const lists = [];
+  for (const a of axes) {
+    let lst;
+    if (a.kind === "list") {
+      lst = Array.isArray(accumulatedLists[a.name]) ? [...accumulatedLists[a.name]] : [];
+      if (lst.length === 0) return { iterations: [], emptyListName: a.name };
+    } else if (a.range) {
+      lst = makeRange(a.range);
+      if (lst.length === 0) return { iterations: [], emptyListName: null };
+    } else {
+      lst = [...a.values];
+      if (lst.length === 0) return { iterations: [], emptyListName: null };
+    }
+    lists.push(lst);
+  }
 
   if (mode === "parallel") {
     const minLen = Math.min(...lists.map((l) => l.length));
@@ -176,7 +190,7 @@ function buildIterations(axes, mode) {
     for (let i = 0; i < minLen; i++) {
       rows.push(lists.map((l) => l[i]));
     }
-    return rows;
+    return { iterations: rows, emptyListName: null };
   }
 
   let acc = [[]];
@@ -189,28 +203,34 @@ function buildIterations(axes, mode) {
     }
     acc = next;
   }
-  return acc;
+  return { iterations: acc, emptyListName: null };
 }
 
-function resolveMarker(name, variables, globalIndex, reqGuid, reqTs) {
-  if (Object.prototype.hasOwnProperty.call(variables, name)) {
-    return variables[name];
+function resolveMarker(scalarName, listName, variables, listVars, globalIndex, reqGuid, reqTs) {
+  if (listName !== undefined && listName !== null) {
+    if (Object.prototype.hasOwnProperty.call(listVars, listName)) {
+      return listVars[listName];
+    }
+    throw new Error(`Liste inconnue ou non définie : [[${listName}]]`);
   }
-  if (name === "$index") return String(globalIndex);
-  if (name === "$guid") return reqGuid;
-  if (name === "$timestamp") return reqTs;
-  throw new Error(`Variable inconnue ou non définie : {{${name}}}`);
+  if (Object.prototype.hasOwnProperty.call(variables, scalarName)) {
+    return variables[scalarName];
+  }
+  if (scalarName === "$index") return String(globalIndex);
+  if (scalarName === "$guid") return reqGuid;
+  if (scalarName === "$timestamp") return reqTs;
+  throw new Error(`Variable inconnue ou non définie : {{${scalarName}}}`);
 }
 
-function substituteSimple(text, variables, globalIndex, reqGuid, reqTs, urlEncode = false) {
+function substituteSimple(text, variables, listVars, globalIndex, reqGuid, reqTs, urlEncode = false) {
   if (!text) return "";
-  return text.replace(MARKER_RE, (_, name) => {
-    const val = resolveMarker(name, variables, globalIndex, reqGuid, reqTs);
+  return text.replace(MARKER_RE, (_, scalarName, listName) => {
+    const val = resolveMarker(scalarName, listName, variables, listVars, globalIndex, reqGuid, reqTs);
     return urlEncode ? encodeURIComponent(val) : val;
   });
 }
 
-function substituteJsonBody(text, variables, globalIndex, reqGuid, reqTs) {
+function substituteJsonBody(text, variables, listVars, globalIndex, reqGuid, reqTs) {
   if (!text) return "";
   const matches = Array.from(text.matchAll(MARKER_RE));
   if (matches.length === 0) return text;
@@ -239,7 +259,7 @@ function substituteJsonBody(text, variables, globalIndex, reqGuid, reqTs) {
     }
 
     out += text.slice(lastScanned, matchStart);
-    const val = resolveMarker(match[1], variables, globalIndex, reqGuid, reqTs);
+    const val = resolveMarker(match[1], match[2], variables, listVars, globalIndex, reqGuid, reqTs);
     out += inString ? JSON.stringify(val).slice(1, -1) : val;
     lastScanned = matchStart + match[0].length;
   }
@@ -276,7 +296,7 @@ function parseJsonPath(rawPath) {
     if (!part) throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
     const bracket = part.indexOf("[");
     if (bracket < 0) {
-      steps.push({ prop: part, arrIdx: null });
+      steps.push({ prop: part, arrIdx: null, isWildcard: false });
       continue;
     }
     const prop = bracket > 0 ? part.slice(0, bracket) : null;
@@ -286,9 +306,14 @@ function parseJsonPath(rawPath) {
       if (part[pos] !== "[") throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
       const close = part.indexOf("]", pos + 1);
       if (close < 0) throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
-      const idx = Number.parseInt(part.slice(pos + 1, close).trim(), 10);
-      if (Number.isNaN(idx)) throw new Error(`Index invalide dans ${rawPath}`);
-      steps.push({ prop: first ? prop : null, arrIdx: idx });
+      const idxText = part.slice(pos + 1, close).trim();
+      if (idxText === "*" || idxText === "") {
+        steps.push({ prop: first ? prop : null, arrIdx: null, isWildcard: true });
+      } else {
+        const idx = Number.parseInt(idxText, 10);
+        if (Number.isNaN(idx)) throw new Error(`Index invalide dans ${rawPath}`);
+        steps.push({ prop: first ? prop : null, arrIdx: idx, isWildcard: false });
+      }
       first = false;
       pos = close + 1;
     }
@@ -296,10 +321,18 @@ function parseJsonPath(rawPath) {
   return steps;
 }
 
+function formatJsonValue(current) {
+  return typeof current === "string" ? current : JSON.stringify(current);
+}
+
 function extractJsonPath(body, rawPath) {
   try {
+    const steps = parseJsonPath(rawPath);
+    if (steps.some((s) => s.isWildcard)) {
+      return { ok: false, value: "Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]]." };
+    }
     let current = JSON.parse(body.replace(/^\uFEFF/, ""));
-    for (const step of parseJsonPath(rawPath)) {
+    for (const step of steps) {
       if (step.prop !== null) {
         if (current === null || typeof current !== "object" || Array.isArray(current) || !(step.prop in current)) {
           return { ok: false, value: `Propriété JSON introuvable : ${step.prop}` };
@@ -317,12 +350,91 @@ function extractJsonPath(body, rawPath) {
         current = current[resolved];
       }
     }
-    return {
-      ok: true,
-      value: typeof current === "string" ? current : JSON.stringify(current)
-    };
+    return { ok: true, value: formatJsonValue(current) };
   } catch (err) {
     return { ok: false, value: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function extractJsonPathList(body, rawPath) {
+  try {
+    const steps = parseJsonPath(rawPath);
+    let currentElements = [JSON.parse(body.replace(/^\uFEFF/, ""))];
+    let hasWildcard = false;
+
+    for (const step of steps) {
+      if (step.prop !== null) {
+        const nextElements = [];
+        for (const el of currentElements) {
+          if (el === null || typeof el !== "object" || Array.isArray(el) || !(step.prop in el)) {
+            if (!hasWildcard) {
+              return { ok: false, error: `Propriété JSON introuvable : ${step.prop}` };
+            }
+            continue;
+          }
+          nextElements.push(el[step.prop]);
+        }
+        if (nextElements.length === 0) {
+          return { ok: false, error: `Propriété JSON introuvable : ${step.prop}` };
+        }
+        currentElements = nextElements;
+      }
+
+      if (step.isWildcard) {
+        const wasWildcard = hasWildcard;
+        hasWildcard = true;
+        const nextElements = [];
+        for (const el of currentElements) {
+          if (!Array.isArray(el)) {
+            if (!wasWildcard) {
+              return { ok: false, error: "Le sélecteur [*] est inapplicable sur cet élément" };
+            }
+            continue;
+          }
+          nextElements.push(...el);
+        }
+        if (nextElements.length === 0) {
+          return { ok: false, error: "Le tableau JSON ciblé est vide." };
+        }
+        currentElements = nextElements;
+      } else if (step.arrIdx !== null) {
+        const nextElements = [];
+        for (const el of currentElements) {
+          if (!Array.isArray(el)) {
+            if (!hasWildcard) {
+              return { ok: false, error: `Index [${step.arrIdx}] inapplicable` };
+            }
+            continue;
+          }
+          const resolved = step.arrIdx < 0 ? el.length + step.arrIdx : step.arrIdx;
+          if (resolved < 0 || resolved >= el.length) {
+            if (!hasWildcard) {
+              return { ok: false, error: `Index [${step.arrIdx}] hors limites` };
+            }
+            continue;
+          }
+          nextElements.push(el[resolved]);
+        }
+        if (nextElements.length === 0) {
+          return { ok: false, error: `Aucune valeur trouvée pour l'index [${step.arrIdx}]` };
+        }
+        currentElements = nextElements;
+      }
+    }
+
+    if (!hasWildcard && currentElements.length === 1 && Array.isArray(currentElements[0])) {
+      if (currentElements[0].length === 0) {
+        return { ok: false, error: "Le tableau JSON ciblé est vide." };
+      }
+      return { ok: true, values: currentElements[0].map(formatJsonValue) };
+    }
+
+    if (currentElements.length === 0) {
+      return { ok: false, error: "Aucune valeur extraite pour l'expression JSONPath." };
+    }
+    return { ok: true, values: currentElements.map(formatJsonValue) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -342,6 +454,32 @@ function extractRegex(text, pattern, groupIdx) {
   if (groupIdx >= match.length) return { ok: false, value: `Groupe regex #${groupIdx} inexistant` };
   if (match[groupIdx] === undefined) return { ok: false, value: `Le groupe regex #${groupIdx} n'a rien capturé` };
   return { ok: true, value: match[groupIdx] };
+}
+
+function extractRegexList(text, pattern, groupIdx) {
+  let regex;
+  try {
+    regex = new RegExp(pattern, "gu");
+  } catch {
+    try {
+      regex = new RegExp(pattern, "g");
+    } catch (err) {
+      return { ok: false, error: `Regex invalide : ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+  const values = [];
+  for (const match of text.matchAll(regex)) {
+    if (groupIdx >= match.length) {
+      return { ok: false, error: `Groupe regex #${groupIdx} inexistant` };
+    }
+    if (match[groupIdx] !== undefined) {
+      values.push(match[groupIdx]);
+    }
+  }
+  if (values.length === 0) {
+    return { ok: false, error: "Aucune correspondance regex" };
+  }
+  return { ok: true, values };
 }
 
 function runExtraction(ext, respBody, respHeaders) {
@@ -365,11 +503,34 @@ function runExtraction(ext, respBody, respHeaders) {
   return extractRegex(respBody, ext.expression, ext.regexGroup);
 }
 
+function runListExtraction(ext, respBody, respHeaders) {
+  if (ext.source === "header") {
+    const targetName = ext.headerName.toLowerCase();
+    const matching = respHeaders.filter(([k]) => k.toLowerCase() === targetName).map(([, v]) => v);
+    if (!matching.length) {
+      return { ok: false, error: `En-tête « ${ext.headerName} » absent` };
+    }
+    const collected = [];
+    let lastErr = "Aucune correspondance";
+    for (const val of matching) {
+      const res = extractRegexList(val, ext.expression, ext.regexGroup);
+      if (res.ok) collected.push(...res.values);
+      else lastErr = res.error;
+    }
+    return collected.length > 0 ? { ok: true, values: collected } : { ok: false, error: lastErr };
+  }
+  if (ext.kind === "jsonpath") {
+    return extractJsonPathList(respBody, ext.expression);
+  }
+  return extractRegexList(respBody, ext.expression, ext.regexGroup);
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main() {
   const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
   const accumulatedVars = {};
+  const accumulatedLists = {};
   let globalIndex = 0;
   let hasAnyFailure = false;
 
@@ -380,7 +541,12 @@ async function main() {
       process.exit(1);
     }
 
-    const iterations = buildIterations(step.axes, step.mode);
+    const { iterations, emptyListName } = buildIterations(step.axes, step.mode, accumulatedLists);
+    if (emptyListName !== null) {
+      console.log(`[IGNORÉE] Étape ${step.rank} (${step.name}) : liste [[${emptyListName}]] vide.`);
+      continue;
+    }
+
     for (let iterIdx = 0; iterIdx < iterations.length; iterIdx++) {
       const axisValues = iterations[iterIdx];
       globalIndex++;
@@ -388,9 +554,12 @@ async function main() {
       const reqTs = String(Math.floor(Date.now() / 1000));
 
       const mergedVars = { ...accumulatedVars, ...step.fixedVariables };
+      const listVars = {};
       for (let aIdx = 0; aIdx < step.axes.length; aIdx++) {
         if (step.axes[aIdx].kind === "var") {
           mergedVars[step.axes[aIdx].name] = axisValues[aIdx];
+        } else if (step.axes[aIdx].kind === "list") {
+          listVars[step.axes[aIdx].name] = axisValues[aIdx];
         }
       }
 
@@ -398,28 +567,28 @@ async function main() {
       let finalHeaders;
       let bodyToSend;
       try {
-        const finalBaseUrl = substituteSimple(step.url, mergedVars, globalIndex, reqGuid, reqTs, true);
+        const finalBaseUrl = substituteSimple(step.url, mergedVars, listVars, globalIndex, reqGuid, reqTs, true);
         const queryItems = step.queryParams.map((qp) =>
           qp.axisIndex !== null
             ? [qp.key, axisValues[qp.axisIndex]]
-            : [qp.key, substituteSimple(qp.value, mergedVars, globalIndex, reqGuid, reqTs)]
+            : [qp.key, substituteSimple(qp.value, mergedVars, listVars, globalIndex, reqGuid, reqTs)]
         );
         finalUrl = buildFinalUrl(finalBaseUrl, queryItems);
 
         finalHeaders = new Headers();
         for (const [k, v] of step.headers) {
-          finalHeaders.append(k, substituteSimple(v, mergedVars, globalIndex, reqGuid, reqTs));
+          finalHeaders.append(k, substituteSimple(v, mergedVars, listVars, globalIndex, reqGuid, reqTs));
         }
 
         if (step.method !== "GET" && step.method !== "HEAD") {
           if (step.bodyType === "json") {
-            bodyToSend = substituteJsonBody(step.body, mergedVars, globalIndex, reqGuid, reqTs);
+            bodyToSend = substituteJsonBody(step.body, mergedVars, listVars, globalIndex, reqGuid, reqTs);
           } else if (step.bodyType === "text") {
-            bodyToSend = substituteSimple(step.body, mergedVars, globalIndex, reqGuid, reqTs);
+            bodyToSend = substituteSimple(step.body, mergedVars, listVars, globalIndex, reqGuid, reqTs);
           } else if (step.bodyType === "form") {
             const params = new URLSearchParams();
             for (const [fk, fv] of step.formFields) {
-              params.append(fk, substituteSimple(fv, mergedVars, globalIndex, reqGuid, reqTs));
+              params.append(fk, substituteSimple(fv, mergedVars, listVars, globalIndex, reqGuid, reqTs));
             }
             bodyToSend = params.toString();
           }
@@ -456,6 +625,21 @@ async function main() {
       let extractionFailed = false;
 
       for (const ext of step.extractions) {
+        if (ext.isList) {
+          const listRes = runListExtraction(ext, respBody, respHeaders);
+          if (listRes.ok) {
+            accumulatedLists[ext.variable] = listRes.values;
+            if (verbose) console.log(`  -> [[${ext.variable}]] = ${listRes.values.length} élément(s)`);
+          } else {
+            accumulatedLists[ext.variable] = ext.defaultValue ? [ext.defaultValue] : [];
+            if (ext.required) {
+              extractionFailed = true;
+              console.error(`  [EXTRACTION] [[${ext.variable}]] : ${listRes.error}`);
+            }
+          }
+          continue;
+        }
+
         const res = runExtraction(ext, respBody, respHeaders);
         if (res.ok) {
           accumulatedVars[ext.variable] = res.value;

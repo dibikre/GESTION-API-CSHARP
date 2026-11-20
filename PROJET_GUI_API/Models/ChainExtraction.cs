@@ -38,6 +38,12 @@ public partial class ChainExtraction : ObservableObject
     public partial bool IsRequired { get; set; } = true;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VariablePlaceholderHint))]
+    [NotifyPropertyChangedFor(nameof(ExpressionPlaceholder))]
+    [NotifyPropertyChangedFor(nameof(LastExtractedDisplay))]
+    public partial bool IsList { get; set; }
+
+    [ObservableProperty]
     public partial string DefaultValueIfMissing { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -72,13 +78,13 @@ public partial class ChainExtraction : ObservableObject
             : LastExtractedValue;
 
     public string VariablePlaceholderHint => string.IsNullOrWhiteSpace(VariableName)
-        ? "nom_variable"
-        : $"{{{{{VariableName.Trim()}}}}}";
+        ? (IsList ? "nom_liste" : "nom_variable")
+        : (IsList ? $"[[{VariableName.Trim()}]]" : $"{{{{{VariableName.Trim()}}}}}");
 
     public string ExpressionPlaceholder => Source == ChainExtractionSource.Header
         ? "ex. Bearer (.+)"
         : Kind == ExtractionKind.JsonPath
-            ? "ex. data.token ou items[0].id"
+            ? (IsList ? "ex. items[*].id ou data.tags" : "ex. data.token ou items[0].id")
             : "ex. \"token\":\"([^\"]+)\"";
 
     partial void OnSourceChanged(ChainExtractionSource value)
@@ -106,6 +112,7 @@ public partial class ChainExtraction : ObservableObject
         Source = Source,
         HeaderName = HeaderName,
         IsRequired = IsRequired,
+        IsList = IsList,
         DefaultValueIfMissing = DefaultValueIfMissing
     };
 }

@@ -9,7 +9,8 @@ namespace ApiTester.Models;
 public enum BatchAxisKind
 {
     UrlParam,
-    Variable
+    Variable,
+    ExtractedList
 }
 
 public partial class BatchAxis : ObservableObject
@@ -42,6 +43,10 @@ public partial class BatchAxis : ObservableObject
     public partial long ValueCount { get; private set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ValueCountText))]
+    public partial bool IsDynamic { get; private set; }
+
+    [ObservableProperty]
     public partial string ValuesPreview { get; private set; } = string.Empty;
 
     [ObservableProperty]
@@ -69,9 +74,11 @@ public partial class BatchAxis : ObservableObject
 
     public bool HasRoleText => !string.IsNullOrWhiteSpace(RoleText);
 
-    public string ValueCountText => ValueCount <= 1
-        ? $"{ValueCount} valeur"
-        : $"{ValueCount} valeurs";
+    public string ValueCountText => IsDynamic
+        ? "liste dynamique"
+        : ValueCount <= 1
+            ? $"{ValueCount} valeur"
+            : $"{ValueCount} valeurs";
 
     public string MoveUpAutomationName => $"Monter l'axe {DisplayName}";
 
@@ -113,6 +120,19 @@ public partial class BatchAxis : ObservableObject
         };
         axis.ConfigureList(values);
         return axis;
+    }
+
+    public static BatchAxis CreateDynamicList(string name)
+    {
+        return new BatchAxis
+        {
+            Kind = BatchAxisKind.ExtractedList,
+            Name = name,
+            DisplayName = $"[[{name}]]",
+            IsDynamic = true,
+            ValueCount = 0,
+            ValuesPreview = "(extraite à l'exécution)"
+        };
     }
 
     public void ConfigureRange(
@@ -174,6 +194,25 @@ public partial class BatchAxis : ObservableObject
 
     public BatchAxis CloneWithSources(VaryingParam? sourceParam, BatchVariable? sourceVariable)
     {
+        if (IsDynamic)
+        {
+            return new BatchAxis
+            {
+                Kind = Kind,
+                Name = Name,
+                DisplayName = DisplayName,
+                IsDynamic = true,
+                ValueCount = ValueCount,
+                ValuesPreview = ValuesPreview,
+                Rank = Rank,
+                RoleText = RoleText,
+                IsOuterRole = IsOuterRole,
+                IsInnerRole = IsInnerRole,
+                CanMoveUp = CanMoveUp,
+                CanMoveDown = CanMoveDown
+            };
+        }
+
         var clone = new BatchAxis
         {
             Kind = Kind,

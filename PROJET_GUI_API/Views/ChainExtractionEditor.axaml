@@ -75,7 +75,7 @@
                                                  Classes="mono"
                                                  Text="{Binding VariableName}"
                                                  PlaceholderText="nom_variable"
-                                                 ToolTip.Tip="Nom de la variable réutilisable avec {{nom}}"
+                                                 ToolTip.Tip="Nom de la variable réutilisable avec {{nom}} (ou [[nom]] si en liste)"
                                                  AutomationProperties.Name="Nom de la variable extraite" />
 
                                         <ComboBox Grid.Column="1"
@@ -162,6 +162,13 @@
                                                            Width="56"
                                                            AutomationProperties.Name="Index du groupe Regex" />
                                         </StackPanel>
+
+                                        <CheckBox IsChecked="{Binding IsList}"
+                                                  Content="En liste [[...]]"
+                                                  Margin="0,0,12,0"
+                                                  VerticalAlignment="Center"
+                                                  ToolTip.Tip="Extrait toutes les valeurs correspondantes dans une liste utilisable avec [[nom]]"
+                                                  AutomationProperties.Name="Extraire en liste" />
 
                                         <CheckBox IsChecked="{Binding IsRequired}"
                                                   Content="Obligatoire"

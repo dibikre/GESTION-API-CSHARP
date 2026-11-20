@@ -80,6 +80,39 @@ public sealed class ResponseExtractor : IResponseExtractor
             : ExtractRegex(response.Body ?? string.Empty, expression, extraction.RegexGroup);
     }
 
+    public ListExtractionOutcome ExtractList(ResponseModel response, ChainExtraction extraction)
+    {
+        if (response is null)
+        {
+            return ListExtractionOutcome.Failure("Aucune réponse disponible pour l'extraction.");
+        }
+
+        if (extraction is null)
+        {
+            return ListExtractionOutcome.Failure("Règle d'extraction absente.");
+        }
+
+        if (!TryValidateVariableName(extraction.VariableName, out var nameError))
+        {
+            return ListExtractionOutcome.Failure(nameError!);
+        }
+
+        var expression = extraction.Expression?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(expression))
+        {
+            return ListExtractionOutcome.Failure($"Expression vide pour la liste « {extraction.VariableName} ».");
+        }
+
+        if (extraction.Source == ChainExtractionSource.Header)
+        {
+            return ExtractListFromHeader(response, extraction, expression);
+        }
+
+        return extraction.Kind == ExtractionKind.JsonPath
+            ? ExtractListJsonPathFromBody(response.Body ?? string.Empty, expression)
+            : ExtractRegexList(response.Body ?? string.Empty, expression, extraction.RegexGroup);
+    }
+
     private static ExtractionOutcome ExtractFromHeader(
         ResponseModel response,
         ChainExtraction extraction,
@@ -133,6 +166,67 @@ public sealed class ResponseExtractor : IResponseExtractor
         return lastFailure ?? ExtractionOutcome.Failure($"Aucune correspondance dans l'en-tête « {headerName} ».");
     }
 
+    private static ListExtractionOutcome ExtractListFromHeader(
+        ResponseModel response,
+        ChainExtraction extraction,
+        string expression)
+    {
+        if (extraction.Kind == ExtractionKind.JsonPath)
+        {
+            return ListExtractionOutcome.Failure(
+                "Le mode JSONPath ne s'applique pas aux en-têtes ; utilise Regex.");
+        }
+
+        var headerName = extraction.HeaderName?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(headerName))
+        {
+            return ListExtractionOutcome.Failure("Nom d'en-tête vide.");
+        }
+
+        if (response.Headers is null || response.Headers.Count == 0)
+        {
+            return ListExtractionOutcome.Failure($"En-tête « {headerName} » absent de la réponse.");
+        }
+
+        var matchingValues = new List<string>();
+        foreach (var header in response.Headers)
+        {
+            if (header.IsEnabled &&
+                !string.IsNullOrWhiteSpace(header.Key) &&
+                header.Key.Trim().Equals(headerName, StringComparison.OrdinalIgnoreCase))
+            {
+                matchingValues.Add(header.Value ?? string.Empty);
+            }
+        }
+
+        if (matchingValues.Count == 0)
+        {
+            return ListExtractionOutcome.Failure($"En-tête « {headerName} » absent de la réponse.");
+        }
+
+        var collected = new List<string>();
+        string? lastError = null;
+        foreach (var headerValue in matchingValues)
+        {
+            var outcome = ExtractRegexList(headerValue, expression, extraction.RegexGroup);
+            if (outcome.IsSuccess)
+            {
+                collected.AddRange(outcome.Values);
+            }
+            else
+            {
+                lastError = outcome.ErrorMessage;
+            }
+        }
+
+        if (collected.Count > 0)
+        {
+            return ListExtractionOutcome.Success(collected);
+        }
+
+        return ListExtractionOutcome.Failure(lastError ?? $"Aucune correspondance dans l'en-tête « {headerName} ».");
+    }
+
     private static ExtractionOutcome ExtractRegex(string input, string pattern, int groupIndex)
     {
         if (groupIndex < 0)
@@ -180,6 +274,60 @@ public sealed class ResponseExtractor : IResponseExtractor
         return ExtractionOutcome.Success(group.Value);
     }
 
+    private static ListExtractionOutcome ExtractRegexList(string input, string pattern, int groupIndex)
+    {
+        if (groupIndex < 0)
+        {
+            return ListExtractionOutcome.Failure("L'index du groupe Regex doit être positif ou nul.");
+        }
+
+        Regex regex;
+        try
+        {
+            regex = new Regex(pattern, RegexOptions.CultureInvariant, RegexTimeout);
+        }
+        catch (ArgumentException ex)
+        {
+            return ListExtractionOutcome.Failure($"Expression régulière invalide : {ex.Message}");
+        }
+
+        var values = new List<string>();
+        try
+        {
+            var matches = regex.Matches(input ?? string.Empty);
+            foreach (Match match in matches)
+            {
+                if (!match.Success)
+                {
+                    continue;
+                }
+
+                if (groupIndex >= match.Groups.Count)
+                {
+                    return ListExtractionOutcome.Failure(
+                        $"Groupe Regex #{groupIndex} inexistant (groupes disponibles : 0 à {match.Groups.Count - 1}).");
+                }
+
+                var group = match.Groups[groupIndex];
+                if (group.Success)
+                {
+                    values.Add(group.Value);
+                }
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return ListExtractionOutcome.Failure("L'évaluation de l'expression régulière a expiré (> 2 s).");
+        }
+
+        if (values.Count == 0)
+        {
+            return ListExtractionOutcome.Failure("Aucune correspondance trouvée pour l'expression régulière.");
+        }
+
+        return ListExtractionOutcome.Success(values);
+    }
+
     private static ExtractionOutcome ExtractJsonPathFromBody(string body, string rawPath)
     {
         if (string.IsNullOrWhiteSpace(body))
@@ -190,6 +338,14 @@ public sealed class ResponseExtractor : IResponseExtractor
         if (!TryParseJsonPath(rawPath, out var segments, out var pathError))
         {
             return ExtractionOutcome.Failure(pathError!);
+        }
+
+        foreach (var s in segments)
+        {
+            if (s.IsWildcard)
+            {
+                return ExtractionOutcome.Failure("Le sélecteur [*] ou [] extrait plusieurs valeurs : coche « En liste [[...]] ».");
+            }
         }
 
         JsonDocument document;
@@ -245,18 +401,194 @@ public sealed class ResponseExtractor : IResponseExtractor
                 }
             }
 
-            var value = current.ValueKind switch
-            {
-                JsonValueKind.String => current.GetString() ?? string.Empty,
-                JsonValueKind.Object or JsonValueKind.Array => JsonSerializer.Serialize(current, JsonSerializeOptions),
-                _ => current.GetRawText()
-            };
-
-            return ExtractionOutcome.Success(value);
+            return ExtractionOutcome.Success(FormatJsonElement(current));
         }
     }
 
-    private readonly record struct PathStep(string? PropertyName, int? ArrayIndex);
+    private static ListExtractionOutcome ExtractListJsonPathFromBody(string body, string rawPath)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return ListExtractionOutcome.Failure("Le corps de la réponse est vide (JSON attendu).");
+        }
+
+        if (!TryParseJsonPath(rawPath, out var segments, out var pathError))
+        {
+            return ListExtractionOutcome.Failure(pathError!);
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(body.TrimStart('\uFEFF'), JsonParseOptions);
+        }
+        catch (JsonException)
+        {
+            return ListExtractionOutcome.Failure("Le corps de la réponse n'est pas un JSON valide.");
+        }
+
+        using (document)
+        {
+            var currentElements = new List<JsonElement> { document.RootElement };
+            var hasWildcard = false;
+
+            foreach (var segment in segments)
+            {
+                if (segment.PropertyName is not null)
+                {
+                    var nextElements = new List<JsonElement>(currentElements.Count);
+                    foreach (var el in currentElements)
+                    {
+                        if (el.ValueKind != JsonValueKind.Object)
+                        {
+                            if (!hasWildcard)
+                            {
+                                return ListExtractionOutcome.Failure(
+                                    $"Impossible d'accéder à la propriété « {segment.PropertyName} » sur un élément de type {DescribeKind(el.ValueKind)}.");
+                            }
+
+                            continue;
+                        }
+
+                        if (!el.TryGetProperty(segment.PropertyName, out var propVal))
+                        {
+                            if (!hasWildcard)
+                            {
+                                return ListExtractionOutcome.Failure(
+                                    $"Propriété JSON introuvable : « {segment.PropertyName} ».");
+                            }
+
+                            continue;
+                        }
+
+                        nextElements.Add(propVal);
+                    }
+
+                    if (nextElements.Count == 0)
+                    {
+                        return ListExtractionOutcome.Failure(
+                            currentElements.Count == 0
+                                ? "Aucune valeur extraite pour l'expression JSONPath."
+                                : $"Propriété JSON introuvable : « {segment.PropertyName} ».");
+                    }
+
+                    currentElements = nextElements;
+                }
+
+                if (segment.IsWildcard)
+                {
+                    var wasWildcard = hasWildcard;
+                    hasWildcard = true;
+                    var nextElements = new List<JsonElement>();
+
+                    foreach (var el in currentElements)
+                    {
+                        if (el.ValueKind != JsonValueKind.Array)
+                        {
+                            if (!wasWildcard)
+                            {
+                                return ListExtractionOutcome.Failure(
+                                    $"Le sélecteur [*] est inapplicable sur un élément de type {DescribeKind(el.ValueKind)}.");
+                            }
+
+                            continue;
+                        }
+
+                        foreach (var item in el.EnumerateArray())
+                        {
+                            nextElements.Add(item);
+                        }
+                    }
+
+                    if (nextElements.Count == 0)
+                    {
+                        return ListExtractionOutcome.Failure("Le tableau JSON ciblé est vide.");
+                    }
+
+                    currentElements = nextElements;
+                }
+                else if (segment.ArrayIndex.HasValue)
+                {
+                    var rawIndex = segment.ArrayIndex.Value;
+                    var nextElements = new List<JsonElement>(currentElements.Count);
+
+                    foreach (var el in currentElements)
+                    {
+                        if (el.ValueKind != JsonValueKind.Array)
+                        {
+                            if (!hasWildcard)
+                            {
+                                return ListExtractionOutcome.Failure(
+                                    $"Index [{rawIndex}] inapplicable sur un élément de type {DescribeKind(el.ValueKind)}.");
+                            }
+
+                            continue;
+                        }
+
+                        var length = el.GetArrayLength();
+                        var resolvedIndex = rawIndex < 0 ? length + rawIndex : rawIndex;
+                        if (resolvedIndex < 0 || resolvedIndex >= length)
+                        {
+                            if (!hasWildcard)
+                            {
+                                return ListExtractionOutcome.Failure(
+                                    $"Index [{rawIndex}] hors limites (taille du tableau : {length}).");
+                            }
+
+                            continue;
+                        }
+
+                        nextElements.Add(el[resolvedIndex]);
+                    }
+
+                    if (nextElements.Count == 0)
+                    {
+                        return ListExtractionOutcome.Failure($"Aucune valeur trouvée pour l'index [{rawIndex}].");
+                    }
+
+                    currentElements = nextElements;
+                }
+            }
+
+            if (currentElements.Count == 0)
+            {
+                return ListExtractionOutcome.Failure("Aucune valeur extraite pour l'expression JSONPath.");
+            }
+
+            if (!hasWildcard && currentElements.Count == 1 && currentElements[0].ValueKind == JsonValueKind.Array)
+            {
+                var arrayItems = new List<string>();
+                foreach (var item in currentElements[0].EnumerateArray())
+                {
+                    arrayItems.Add(FormatJsonElement(item));
+                }
+
+                if (arrayItems.Count == 0)
+                {
+                    return ListExtractionOutcome.Failure("Le tableau JSON ciblé est vide.");
+                }
+
+                return ListExtractionOutcome.Success(arrayItems);
+            }
+
+            var results = new List<string>(currentElements.Count);
+            foreach (var el in currentElements)
+            {
+                results.Add(FormatJsonElement(el));
+            }
+
+            return ListExtractionOutcome.Success(results);
+        }
+    }
+
+    private static string FormatJsonElement(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString() ?? string.Empty,
+        JsonValueKind.Object or JsonValueKind.Array => JsonSerializer.Serialize(element, JsonSerializeOptions),
+        _ => element.GetRawText()
+    };
+
+    private readonly record struct PathStep(string? PropertyName, int? ArrayIndex, bool IsWildcard = false);
 
     private static bool TryParseJsonPath(string rawPath, out List<PathStep> steps, out string? error)
     {
@@ -326,13 +658,20 @@ public sealed class ResponseExtractor : IResponseExtractor
                 }
 
                 var indexText = rawPart[(pos + 1)..closeIdx].Trim();
-                if (!int.TryParse(indexText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedIndex))
+                if (indexText == "*" || indexText.Length == 0)
+                {
+                    steps.Add(new PathStep(isFirstIndex ? propName : null, null, IsWildcard: true));
+                }
+                else if (int.TryParse(indexText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedIndex))
+                {
+                    steps.Add(new PathStep(isFirstIndex ? propName : null, parsedIndex));
+                }
+                else
                 {
                     error = $"Index de tableau invalide « [{indexText}] » dans « {rawPath} ».";
                     return false;
                 }
 
-                steps.Add(new PathStep(isFirstIndex ? propName : null, parsedIndex));
                 isFirstIndex = false;
                 pos = closeIdx + 1;
             }

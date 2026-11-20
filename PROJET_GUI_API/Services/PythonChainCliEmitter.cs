@@ -28,7 +28,7 @@ internal static class PythonChainCliEmitter
         sb.AppendLine("import uuid");
         sb.AppendLine("import zlib");
         sb.AppendLine();
-        sb.AppendLine(@"MARKER_RE = re.compile(r""\{\{\s*(\$?(?!\d)\w+)\s*\}\}"")");
+        sb.AppendLine(@"MARKER_RE = re.compile(r""(?:\{\{\s*(\$?(?!\d)\w+)\s*\}\}|\[\[\s*((?!\d)(?!\$)\w+)\s*\]\])"")");
         sb.AppendLine();
 
         AppendStepsData(sb, steps);
@@ -124,6 +124,7 @@ internal static class PythonChainCliEmitter
                 sb.AppendLine($"                \"header_name\": {EscapeString(ext.HeaderName)},");
                 sb.AppendLine($"                \"required\": {FormatBool(ext.IsRequired)},");
                 sb.AppendLine($"                \"default\": {EscapeString(ext.DefaultValueIfMissing)},");
+                sb.AppendLine($"                \"is_list\": {FormatBool(ext.IsList)},");
                 sb.AppendLine("            },");
             }
             sb.AppendLine("        ],");
@@ -171,18 +172,38 @@ def make_range(spec: dict) -> list[str]:
     return values
 
 
-def build_iterations(axes: list[dict], mode: str) -> list[tuple[str, ...]]:
+def build_iterations(axes: list[dict], mode: str, accumulated_lists: dict[str, list[str]]) -> tuple[list[tuple[str, ...]], str | None]:
     if not axes:
-        return [()]
-    axis_lists = [make_range(a["range"]) if "range" in a else list(a["values"]) for a in axes]
-    if any(len(lst) == 0 for lst in axis_lists):
-        return []
+        return [()], None
+    axis_lists: list[list[str]] = []
+    for a in axes:
+        if a["kind"] == "list":
+            lst = list(accumulated_lists.get(a["name"], []))
+            if not lst:
+                return [], a["name"]
+            axis_lists.append(lst)
+        elif "range" in a:
+            lst = make_range(a["range"])
+            if not lst:
+                return [], None
+            axis_lists.append(lst)
+        else:
+            lst = list(a["values"])
+            if not lst:
+                return [], None
+            axis_lists.append(lst)
     if mode == "parallel":
-        return list(zip(*axis_lists))
-    return list(itertools.product(*axis_lists))
+        return list(zip(*axis_lists)), None
+    return list(itertools.product(*axis_lists)), None
 
 
-def resolve_marker(name: str, variables: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
+def resolve_marker(match: re.Match[str], variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
+    list_name = match.group(2)
+    if list_name is not None:
+        if list_name in list_vars:
+            return list_vars[list_name]
+        raise KeyError(f"Liste inconnue ou non définie : [[{list_name}]]")
+    name = match.group(1)
     if name in variables:
         return variables[name]
     if name == "$index":
@@ -194,18 +215,18 @@ def resolve_marker(name: str, variables: dict[str, str], global_index: int, req_
     raise KeyError(f"Variable inconnue ou non définie : {{{{{name}}}}}")
 
 
-def substitute_simple(text: str, variables: dict[str, str], global_index: int, req_guid: str, req_ts: str, url_encode: bool = False) -> str:
+def substitute_simple(text: str, variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str, url_encode: bool = False) -> str:
     if not text:
         return ""
 
     def repl(match: re.Match[str]) -> str:
-        val = resolve_marker(match.group(1), variables, global_index, req_guid, req_ts)
+        val = resolve_marker(match, variables, list_vars, global_index, req_guid, req_ts)
         return urllib.parse.quote(val, safe="") if url_encode else val
 
     return MARKER_RE.sub(repl, text)
 
 
-def substitute_json_body(text: str, variables: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
+def substitute_json_body(text: str, variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
     if not text:
         return ""
     out: list[str] = []
@@ -228,7 +249,7 @@ def substitute_json_body(text: str, variables: dict[str, str], global_index: int
                 escaped = False
 
         out.append(text[last_scanned:match.start()])
-        val = resolve_marker(match.group(1), variables, global_index, req_guid, req_ts)
+        val = resolve_marker(match, variables, list_vars, global_index, req_guid, req_ts)
         out.append(json.dumps(val, ensure_ascii=False)[1:-1] if in_string else val)
         last_scanned = match.end()
 
@@ -267,7 +288,7 @@ def decode_response_bytes(raw_bytes: bytes, headers: list[tuple[str, str]]) -> s
     return raw_bytes.decode("utf-8", errors="replace")
 
 
-def parse_json_path(raw_path: str) -> list[tuple[str | None, int | None]]:
+def parse_json_path(raw_path: str) -> list[tuple[str | None, int | None, bool]]:
     path = raw_path.strip()
     if path.startswith("$."):
         path = path[2:]
@@ -275,13 +296,13 @@ def parse_json_path(raw_path: str) -> list[tuple[str | None, int | None]]:
         path = path[1:]
     if not path.strip():
         raise ValueError("Chemin JSONPath vide.")
-    steps: list[tuple[str | None, int | None]] = []
+    steps: list[tuple[str | None, int | None, bool]] = []
     for part in path.split("."):
         if not part:
             raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
         bracket = part.find("[")
         if bracket < 0:
-            steps.append((part, None))
+            steps.append((part, None, False))
             continue
         prop = part[:bracket] if bracket > 0 else None
         pos = bracket
@@ -292,17 +313,36 @@ def parse_json_path(raw_path: str) -> list[tuple[str | None, int | None]]:
             close = part.find("]", pos + 1)
             if close < 0:
                 raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
-            idx = int(part[pos + 1:close].strip())
-            steps.append((prop if first else None, idx))
+            idx_str = part[pos + 1:close].strip()
+            if idx_str in ("*", ""):
+                steps.append((prop if first else None, None, True))
+            else:
+                idx = int(idx_str)
+                steps.append((prop if first else None, idx, False))
             first = False
             pos = close + 1
     return steps
 
 
+def format_json_value(current) -> str:
+    if isinstance(current, str):
+        return current
+    if isinstance(current, bool):
+        return "true" if current else "false"
+    if current is None:
+        return "null"
+    if isinstance(current, (dict, list)):
+        return json.dumps(current, ensure_ascii=False)
+    return str(current)
+
+
 def extract_json_path(body: str, raw_path: str) -> tuple[bool, str]:
     try:
+        steps = parse_json_path(raw_path)
+        if any(is_wild for _, _, is_wild in steps):
+            return False, "Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]]."
         current = json.loads(body.lstrip("\ufeff"))
-        for prop, arr_idx in parse_json_path(raw_path):
+        for prop, arr_idx, _ in steps:
             if prop is not None:
                 if not isinstance(current, dict) or prop not in current:
                     return False, f"Propriété JSON introuvable : {prop}"
@@ -314,15 +354,66 @@ def extract_json_path(body: str, raw_path: str) -> tuple[bool, str]:
                 if resolved < 0 or resolved >= len(current):
                     return False, f"Index [{arr_idx}] hors limites"
                 current = current[resolved]
-        if isinstance(current, str):
-            return True, current
-        if isinstance(current, bool):
-            return True, "true" if current else "false"
-        if current is None:
-            return True, "null"
-        if isinstance(current, (dict, list)):
-            return True, json.dumps(current, ensure_ascii=False)
-        return True, str(current)
+        return True, format_json_value(current)
+    except Exception as exc:
+        return False, str(exc)
+
+
+def extract_json_path_list(body: str, raw_path: str) -> tuple[bool, list[str] | str]:
+    try:
+        steps = parse_json_path(raw_path)
+        current_elements = [json.loads(body.lstrip("\ufeff"))]
+        has_wildcard = False
+        for prop, arr_idx, is_wildcard in steps:
+            if prop is not None:
+                next_elements = []
+                for el in current_elements:
+                    if not isinstance(el, dict) or prop not in el:
+                        if not has_wildcard:
+                            return False, f"Propriété JSON introuvable : {prop}"
+                        continue
+                    next_elements.append(el[prop])
+                if not next_elements:
+                    return False, f"Propriété JSON introuvable : {prop}"
+                current_elements = next_elements
+            if is_wildcard:
+                was_wildcard = has_wildcard
+                has_wildcard = True
+                next_elements = []
+                for el in current_elements:
+                    if not isinstance(el, list):
+                        if not was_wildcard:
+                            return False, "Le sélecteur [*] est inapplicable sur cet élément"
+                        continue
+                    next_elements.extend(el)
+                if not next_elements:
+                    return False, "Le tableau JSON ciblé est vide."
+                current_elements = next_elements
+            elif arr_idx is not None:
+                next_elements = []
+                for el in current_elements:
+                    if not isinstance(el, list):
+                        if not has_wildcard:
+                            return False, f"Index [{arr_idx}] inapplicable"
+                        continue
+                    resolved = len(el) + arr_idx if arr_idx < 0 else arr_idx
+                    if resolved < 0 or resolved >= len(el):
+                        if not has_wildcard:
+                            return False, f"Index [{arr_idx}] hors limites"
+                        continue
+                    next_elements.append(el[resolved])
+                if not next_elements:
+                    return False, f"Aucune valeur trouvée pour l'index [{arr_idx}]"
+                current_elements = next_elements
+
+        if not has_wildcard and len(current_elements) == 1 and isinstance(current_elements[0], list):
+            if not current_elements[0]:
+                return False, "Le tableau JSON ciblé est vide."
+            return True, [format_json_value(item) for item in current_elements[0]]
+
+        if not current_elements:
+            return False, "Aucune valeur extraite pour l'expression JSONPath."
+        return True, [format_json_value(el) for el in current_elements]
     except Exception as exc:
         return False, str(exc)
 
@@ -343,6 +434,24 @@ def extract_regex(text: str, pattern: str, group_idx: int) -> tuple[bool, str]:
     return True, val
 
 
+def extract_regex_list(text: str, pattern: str, group_idx: int) -> tuple[bool, list[str] | str]:
+    try:
+        compiled = re.compile(pattern)
+    except re.error as exc:
+        return False, f"Regex invalide : {exc}"
+    values: list[str] = []
+    for match in compiled.finditer(text):
+        try:
+            val = match.group(group_idx)
+        except IndexError:
+            return False, f"Groupe regex #{group_idx} inexistant"
+        if val is not None:
+            values.append(val)
+    if not values:
+        return False, "Aucune correspondance regex"
+    return True, values
+
+
 def run_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]]) -> tuple[bool, str]:
     if ext["source"] == "header":
         target_name = ext["header_name"].lower()
@@ -359,6 +468,26 @@ def run_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]
     if ext["kind"] == "jsonpath":
         return extract_json_path(resp_body, ext["expression"])
     return extract_regex(resp_body, ext["expression"], ext["regex_group"])
+
+
+def run_list_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]]) -> tuple[bool, list[str] | str]:
+    if ext["source"] == "header":
+        target_name = ext["header_name"].lower()
+        matching = [v for k, v in resp_headers if k.lower() == target_name]
+        if not matching:
+            return False, f"En-tête « {ext['header_name']} » absent"
+        collected: list[str] = []
+        last_err = "Aucune correspondance"
+        for header_val in matching:
+            ok, res = extract_regex_list(header_val, ext["expression"], ext["regex_group"])
+            if ok and isinstance(res, list):
+                collected.extend(res)
+            elif isinstance(res, str):
+                last_err = res
+        return (True, collected) if collected else (False, last_err)
+    if ext["kind"] == "jsonpath":
+        return extract_json_path_list(resp_body, ext["expression"])
+    return extract_regex_list(resp_body, ext["expression"], ext["regex_group"])
 
 
 def send_http(method: str, url: str, headers: list[tuple[str, str]], body_bytes: bytes | None, timeout_s: int) -> tuple[int, list[tuple[str, str]], str, str | None]:
@@ -385,6 +514,7 @@ def main() -> int:
     args = parser.parse_args()
 
     accumulated_vars: dict[str, str] = {}
+    accumulated_lists: dict[str, list[str]] = {}
     global_index = 0
     has_any_failure = False
 
@@ -393,7 +523,11 @@ def main() -> int:
             print(f"[ERREUR] Étape {step['rank']} ({step['name']}) : URL vide.", file=sys.stderr)
             return 1
 
-        iterations = build_iterations(step["axes"], step["mode"])
+        iterations, empty_list_name = build_iterations(step["axes"], step["mode"], accumulated_lists)
+        if empty_list_name is not None:
+            print(f"[IGNORÉE] Étape {step['rank']} ({step['name']}) : liste [[{empty_list_name}]] vide.")
+            continue
+
         for iter_idx, axis_values in enumerate(iterations, start=1):
             global_index += 1
             req_guid = str(uuid.uuid4())
@@ -401,32 +535,35 @@ def main() -> int:
 
             merged_vars = dict(accumulated_vars)
             merged_vars.update(step["fixed_variables"])
+            list_vars: dict[str, str] = {}
             for a_idx, axis in enumerate(step["axes"]):
                 if axis["kind"] == "var":
                     merged_vars[axis["name"]] = axis_values[a_idx]
+                elif axis["kind"] == "list":
+                    list_vars[axis["name"]] = axis_values[a_idx]
 
             try:
-                final_base_url = substitute_simple(step["url"], merged_vars, global_index, req_guid, req_ts, url_encode=True)
+                final_base_url = substitute_simple(step["url"], merged_vars, list_vars, global_index, req_guid, req_ts, url_encode=True)
                 query_items = []
                 for qp in step["query_params"]:
                     if qp["axis_index"] is not None:
                         query_items.append((qp["key"], axis_values[qp["axis_index"]]))
                     else:
-                        query_items.append((qp["key"], substitute_simple(qp["value"], merged_vars, global_index, req_guid, req_ts)))
+                        query_items.append((qp["key"], substitute_simple(qp["value"], merged_vars, list_vars, global_index, req_guid, req_ts)))
                 final_url = build_final_url(final_base_url, query_items)
                 final_headers = [
-                    (k, substitute_simple(v, merged_vars, global_index, req_guid, req_ts))
+                    (k, substitute_simple(v, merged_vars, list_vars, global_index, req_guid, req_ts))
                     for k, v in step["headers"]
                 ]
 
                 body_bytes: bytes | None = None
                 if step["body_type"] == "json":
-                    body_bytes = substitute_json_body(step["body"], merged_vars, global_index, req_guid, req_ts).encode("utf-8")
+                    body_bytes = substitute_json_body(step["body"], merged_vars, list_vars, global_index, req_guid, req_ts).encode("utf-8")
                 elif step["body_type"] == "text":
-                    body_bytes = substitute_simple(step["body"], merged_vars, global_index, req_guid, req_ts).encode("utf-8")
+                    body_bytes = substitute_simple(step["body"], merged_vars, list_vars, global_index, req_guid, req_ts).encode("utf-8")
                 elif step["body_type"] == "form":
                     pairs = [
-                        (k, substitute_simple(v, merged_vars, global_index, req_guid, req_ts))
+                        (k, substitute_simple(v, merged_vars, list_vars, global_index, req_guid, req_ts))
                         for k, v in step["form_fields"]
                     ]
                     body_bytes = urllib.parse.urlencode(pairs).encode("utf-8")
@@ -447,6 +584,19 @@ def main() -> int:
             extraction_failed = False
 
             for ext in step["extractions"]:
+                if ext.get("is_list"):
+                    ok, values_or_err = run_list_extraction(ext, resp_body, resp_headers)
+                    if ok and isinstance(values_or_err, list):
+                        accumulated_lists[ext["variable"]] = values_or_err
+                        if args.verbose:
+                            print(f"  -> [[{ext['variable']}]] = {len(values_or_err)} élément(s)")
+                    else:
+                        accumulated_lists[ext["variable"]] = [ext["default"]] if ext["default"] else []
+                        if ext["required"]:
+                            extraction_failed = True
+                            print(f"  [EXTRACTION] [[{ext['variable']}]] : {values_or_err}", file=sys.stderr)
+                    continue
+
                 ok, value_or_err = run_extraction(ext, resp_body, resp_headers)
                 if ok:
                     accumulated_vars[ext["variable"]] = value_or_err

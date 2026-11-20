@@ -10,9 +10,11 @@ public sealed class ChainPlanResult
 {
     public int TotalRequests { get; set; }
     public bool ExceedsHardLimit { get; set; }
+    public bool HasDynamicCounts { get; set; }
     public List<string> Warnings { get; set; } = [];
     public string? ValidationError { get; set; }
     public IReadOnlyList<int> StepIterationCounts { get; set; } = [];
+    public IReadOnlyList<bool> StepHasDynamicCounts { get; set; } = [];
 }
 
 public sealed class ChainRunOptions
@@ -34,6 +36,7 @@ public sealed class ChainProgressReport
     public string StepName { get; set; } = string.Empty;
     public ChainStepResult? Item { get; set; }
     public IReadOnlyDictionary<string, string>? AccumulatedVariables { get; set; }
+    public IReadOnlyDictionary<string, IReadOnlyList<string>>? AccumulatedLists { get; set; }
 }
 
 public interface IChainRunner

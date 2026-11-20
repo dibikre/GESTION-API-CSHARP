@@ -41,7 +41,9 @@ public sealed class ChainRunner : IChainRunner
         }
 
         var counts = new List<int>(steps.Count);
+        var dynamicFlags = new List<bool>(steps.Count);
         var availableFromPreviousSteps = new HashSet<string>(StringComparer.Ordinal);
+        var availableListsFromPreviousSteps = new HashSet<string>(StringComparer.Ordinal);
         long totalRequests = 0;
 
         for (var i = 0; i < steps.Count; i++)
@@ -96,6 +98,35 @@ public sealed class ChainRunner : IChainRunner
                 return result;
             }
 
+            var usedLists = _templateEngine.ExtractListVariables(template);
+            foreach (var listVar in usedLists)
+            {
+                if (!availableListsFromPreviousSteps.Contains(listVar.Name))
+                {
+                    result.ValidationError = availableFromPreviousSteps.Contains(listVar.Name)
+                        ? $"Étape {stepNumber} ({stepLabel}) : [[{listVar.Name}]] correspond à une variable simple ; coche « En liste [[...]] » sur son extraction ou utilise {{{{{listVar.Name}}}}}."
+                        : $"Étape {stepNumber} ({stepLabel}) : la liste [[{listVar.Name}]] n'est extraite par aucune étape précédente.";
+                    return result;
+                }
+            }
+
+            var configuredVarNames = step.Variables
+                .Where(v => v.IsUsed && v.IsConfigured && !v.HasError && !string.IsNullOrWhiteSpace(v.Name))
+                .Select(v => v.Name)
+                .ToHashSet(StringComparer.Ordinal);
+
+            foreach (var scalarVar in _templateEngine.ExtractVariables(template))
+            {
+                if (!configuredVarNames.Contains(scalarVar.Name) &&
+                    !availableFromPreviousSteps.Contains(scalarVar.Name) &&
+                    availableListsFromPreviousSteps.Contains(scalarVar.Name))
+                {
+                    result.ValidationError =
+                        $"Étape {stepNumber} ({stepLabel}) : « {scalarVar.Name} » est extraite en liste ; utilise [[{scalarVar.Name}]] pour itérer sur ses valeurs.";
+                    return result;
+                }
+            }
+
             var stepPlan = BatchExecutionHelper.BuildPlan(
                 step.VaryingParams,
                 step.Variables,
@@ -125,6 +156,13 @@ public sealed class ChainRunner : IChainRunner
                 }
             }
 
+            var stepIsDynamic = usedLists.Count > 0;
+            if (stepIsDynamic)
+            {
+                result.HasDynamicCounts = true;
+            }
+
+            dynamicFlags.Add(stepIsDynamic);
             counts.Add(stepPlan.TotalRequests);
             totalRequests += stepPlan.TotalRequests;
 
@@ -138,15 +176,26 @@ public sealed class ChainRunner : IChainRunner
 
             foreach (var ext in step.Extractions)
             {
-                if (!string.IsNullOrWhiteSpace(ext.VariableName))
+                if (string.IsNullOrWhiteSpace(ext.VariableName))
                 {
-                    availableFromPreviousSteps.Add(ext.VariableName.Trim());
+                    continue;
+                }
+
+                var name = ext.VariableName.Trim();
+                if (ext.IsList)
+                {
+                    availableListsFromPreviousSteps.Add(name);
+                }
+                else
+                {
+                    availableFromPreviousSteps.Add(name);
                 }
             }
         }
 
         result.TotalRequests = (int)totalRequests;
         result.StepIterationCounts = counts;
+        result.StepHasDynamicCounts = dynamicFlags;
         return result;
     }
 
@@ -178,11 +227,12 @@ public sealed class ChainRunner : IChainRunner
         var disabledPolicy = new RateLimitPolicy { IsEnabled = false };
 
         var accumulatedVariables = new Dictionary<string, string>(StringComparer.Ordinal);
+        var accumulatedLists = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
         var allResults = new List<ChainStepResult>(globalTotal);
         var finalStatus = ChainRunStatus.Success;
         var stopChain = false;
 
-        Log.Information("Démarrage de la chaîne : {TotalSteps} étapes, {GlobalTotal} requêtes prévues.",
+        Log.Information("Démarrage de la chaîne : {TotalSteps} étapes, {GlobalTotal} requêtes prévues (base).",
             totalSteps, globalTotal);
 
         try
@@ -210,17 +260,101 @@ public sealed class ChainRunner : IChainRunner
                         RetryCount = totalRetryCount,
                         StepName = stepName,
                         Item = skippedResult,
-                        AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal)
+                        AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal),
+                        AccumulatedLists = CloneListsSnapshot(accumulatedLists)
                     });
                     continue;
                 }
 
-                var stepIterationsCount = plan.StepIterationCounts[sIdx];
                 var templateRequest = step.BuildTemplateRequest();
                 var fixedStepVars = BatchExecutionHelper.BuildFixedVariableDictionary(step.Variables);
-                var axes = step.Axes.Count > 0
+                var rawAxes = step.Axes.Count > 0
                     ? (IReadOnlyList<BatchAxis>)step.Axes
                     : BatchExecutionHelper.BuildDefaultStepAxes(step.VaryingParams, step.Variables);
+
+                var usedListNames = _templateEngine.ExtractListVariables(templateRequest)
+                    .Select(v => v.Name)
+                    .ToHashSet(StringComparer.Ordinal);
+
+                var runtimeAxes = ResolveRuntimeAxes(rawAxes, usedListNames, accumulatedLists, out var emptyListName);
+                if (emptyListName is not null)
+                {
+                    var emptyResult = CreateEmptyListSkippedResult(globalIndex, stepNumber, stepName, emptyListName);
+                    allResults.Add(emptyResult);
+                    if (onResultAsync is not null)
+                    {
+                        await onResultAsync(emptyResult, ct).ConfigureAwait(false);
+                    }
+                    progress.Report(new ChainProgressReport
+                    {
+                        StepIndex = stepNumber,
+                        TotalSteps = totalSteps,
+                        Iteration = 1,
+                        StepTotalIterations = 1,
+                        GlobalIndex = globalIndex,
+                        GlobalTotal = globalTotal,
+                        RetryCount = totalRetryCount,
+                        StepName = stepName,
+                        Item = emptyResult,
+                        AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal),
+                        AccumulatedLists = CloneListsSnapshot(accumulatedLists)
+                    });
+                    continue;
+                }
+
+                if (!BatchExecutionHelper.TryComputeTotalIterations(
+                    runtimeAxes,
+                    step.SelectedMode,
+                    BatchRunner.HardMaxRequests - globalIndex,
+                    out var stepIterationsCount,
+                    out var runtimePlanError))
+                {
+                    var limitResult = new ChainStepResult
+                    {
+                        Index = globalIndex + 1,
+                        StepIndex = stepNumber,
+                        StepName = stepName,
+                        Iteration = 1,
+                        TotalIterationsForStep = 1,
+                        RequestSummary = "(plafond de requêtes dépassé)",
+                        Status = ChainStepStatus.Failed,
+                        StatusCategory = StatusCategory.NetworkError,
+                        ErrorMessage = runtimePlanError ?? $"Plafond maximal de {BatchRunner.HardMaxRequests:N0} requêtes dépassé.",
+                        TimestampUtc = DateTimeOffset.UtcNow
+                    };
+                    allResults.Add(limitResult);
+                    if (onResultAsync is not null)
+                    {
+                        await onResultAsync(limitResult, ct).ConfigureAwait(false);
+                    }
+                    progress.Report(new ChainProgressReport
+                    {
+                        StepIndex = stepNumber,
+                        TotalSteps = totalSteps,
+                        Iteration = 1,
+                        StepTotalIterations = 1,
+                        GlobalIndex = globalIndex,
+                        GlobalTotal = globalTotal,
+                        RetryCount = totalRetryCount,
+                        StepName = stepName,
+                        Item = limitResult,
+                        AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal),
+                        AccumulatedLists = CloneListsSnapshot(accumulatedLists)
+                    });
+                    finalStatus = ChainRunStatus.Failed;
+                    if (!step.ContinueOnError)
+                    {
+                        stopChain = true;
+                    }
+                    continue;
+                }
+
+                var remainingStaticCount = 0;
+                for (var k = sIdx + 1; k < totalSteps; k++)
+                {
+                    remainingStaticCount += k < plan.StepIterationCounts.Count ? plan.StepIterationCounts[k] : 1;
+                }
+                globalTotal = globalIndex + stepIterationsCount + remainingStaticCount;
 
                 var stepDelayMs = Math.Max(0, step.DelayAfterMs);
                 var activePolicy = step.StepRateLimitUsesGlobalPolicy ? globalPolicy : disabledPolicy;
@@ -233,7 +367,7 @@ public sealed class ChainRunner : IChainRunner
                 var iterIndex = 0;
                 foreach (var iterStep in BatchExecutionHelper.EnumerateExecutionSteps(
                     step.VaryingParams,
-                    axes,
+                    runtimeAxes,
                     fixedStepVars,
                     step.SelectedMode,
                     stepIterationsCount))
@@ -257,7 +391,11 @@ public sealed class ChainRunner : IChainRunner
                     }
 
                     var requestWithQuery = BatchExecutionHelper.CloneRequestWithQuery(templateRequest, iterStep.QueryItems);
-                    var applyResult = _templateEngine.ApplyDetailed(requestWithQuery, mergedVars, globalIndex);
+                    var applyResult = _templateEngine.ApplyDetailed(
+                        requestWithQuery,
+                        mergedVars,
+                        iterStep.ListDictionary,
+                        globalIndex);
 
                     ChainStepResult stepResult;
                     var preemptiveWait = TimeSpan.Zero;
@@ -267,11 +405,22 @@ public sealed class ChainRunner : IChainRunner
                     if (!applyResult.IsSuccess || applyResult.Request is null)
                     {
                         var maskedUrl = BatchExecutionHelper.BuildMaskedUrlWithTemplate(
-                            _templateEngine, templateRequest, iterStep.QueryItems, mergedVars, globalIndex);
+                            _templateEngine,
+                            templateRequest,
+                            iterStep.QueryItems,
+                            mergedVars,
+                            globalIndex,
+                            iterStep.ListDictionary);
 
                         var applyError = applyResult.ErrorMessage ?? "Erreur de substitution des variables.";
                         var extractedOnFail = new Dictionary<string, string>(StringComparer.Ordinal);
-                        ApplyDefaultsOnMissingExtractions(step.Extractions, extractedOnFail, accumulatedVariables);
+                        var extractedListsOnFail = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+                        ApplyDefaultsOnMissingExtractions(
+                            step.Extractions,
+                            extractedOnFail,
+                            extractedListsOnFail,
+                            accumulatedVariables,
+                            accumulatedLists);
 
                         stepResult = new ChainStepResult
                         {
@@ -290,6 +439,7 @@ public sealed class ChainRunner : IChainRunner
                             ContentType = string.Empty,
                             Response = null,
                             ExtractedValues = extractedOnFail,
+                            ExtractedLists = extractedListsOnFail,
                             ExtractionErrors = [applyError],
                             Status = ChainStepStatus.Failed,
                             ErrorMessage = applyError,
@@ -304,7 +454,12 @@ public sealed class ChainRunner : IChainRunner
                     {
                         var finalRequest = applyResult.Request;
                         var maskedUrl = BatchExecutionHelper.BuildMaskedUrlWithTemplate(
-                            _templateEngine, templateRequest, finalRequest.QueryParams, mergedVars, globalIndex);
+                            _templateEngine,
+                            templateRequest,
+                            finalRequest.QueryParams,
+                            mergedVars,
+                            globalIndex,
+                            iterStep.ListDictionary);
 
                         var execResult = await BatchExecutionHelper.SendWithRateLimitAsync(
                             _httpService,
@@ -348,12 +503,47 @@ public sealed class ChainRunner : IChainRunner
                         var httpFailed = !string.IsNullOrEmpty(execResult.ItemErrorMessage) || response.StatusCode >= 400;
 
                         var extractedThisIteration = new Dictionary<string, string>(StringComparer.Ordinal);
+                        var extractedListsThisIteration = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
                         var extractionErrors = new List<string>();
                         var requiredExtractionFailed = false;
 
                         foreach (var ext in step.Extractions)
                         {
                             var varName = ext.VariableName.Trim();
+                            if (ext.IsList)
+                            {
+                                var listOutcome = _responseExtractor.ExtractList(response, ext);
+                                if (listOutcome.IsSuccess)
+                                {
+                                    extractedListsThisIteration[varName] = listOutcome.Values;
+                                    accumulatedLists[varName] = listOutcome.Values;
+                                    Log.Information(
+                                        "Étape {StepNumber} ({StepName}) : liste « {VariableName} » extraite ({Count} éléments).",
+                                        stepNumber, stepName, varName, listOutcome.Values.Count);
+                                }
+                                else
+                                {
+                                    var detail = $"Extraction [[{varName}]] : {listOutcome.ErrorMessage}";
+                                    Log.Warning(
+                                        "Étape {StepNumber} ({StepName}) : échec d'extraction en liste pour « {VariableName} » ({Reason}).",
+                                        stepNumber, stepName, varName, listOutcome.ErrorMessage);
+
+                                    if (ext.IsRequired)
+                                    {
+                                        requiredExtractionFailed = true;
+                                        extractionErrors.Add(detail);
+                                    }
+
+                                    IReadOnlyList<string> fallbackList = string.IsNullOrEmpty(ext.DefaultValueIfMissing)
+                                        ? []
+                                        : [ext.DefaultValueIfMissing];
+                                    extractedListsThisIteration[varName] = fallbackList;
+                                    accumulatedLists[varName] = fallbackList;
+                                }
+
+                                continue;
+                            }
+
                             var outcome = _responseExtractor.Extract(response, ext);
 
                             if (outcome.IsSuccess)
@@ -403,6 +593,7 @@ public sealed class ChainRunner : IChainRunner
                             ContentType = response.ContentType,
                             Response = response,
                             ExtractedValues = extractedThisIteration,
+                            ExtractedLists = extractedListsThisIteration,
                             ExtractionErrors = extractionErrors,
                             Status = iterationFailed ? ChainStepStatus.Failed : ChainStepStatus.Success,
                             ErrorMessage = combinedError,
@@ -444,7 +635,8 @@ public sealed class ChainRunner : IChainRunner
                         RetryCount = totalRetryCount,
                         StepName = stepName,
                         Item = stepResult,
-                        AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal)
+                        AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal),
+                        AccumulatedLists = CloneListsSnapshot(accumulatedLists)
                     });
 
                     if (stepResult.Status == ChainStepStatus.Failed && !step.ContinueOnError)
@@ -508,14 +700,78 @@ public sealed class ChainRunner : IChainRunner
             StepResults = allResults,
             FinalStatus = finalStatus,
             AllVariables = accumulatedVariables,
+            AllLists = accumulatedLists,
             TotalDurationMs = stopwatch.ElapsedMilliseconds
         };
+    }
+
+    private static List<BatchAxis> ResolveRuntimeAxes(
+        IReadOnlyList<BatchAxis> rawAxes,
+        HashSet<string> usedListNames,
+        Dictionary<string, IReadOnlyList<string>> accumulatedLists,
+        out string? emptyListName)
+    {
+        emptyListName = null;
+        var resolved = new List<BatchAxis>(rawAxes.Count + usedListNames.Count);
+        var includedLists = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var axis in rawAxes)
+        {
+            if (axis.Kind == BatchAxisKind.ExtractedList)
+            {
+                includedLists.Add(axis.Name);
+                if (!accumulatedLists.TryGetValue(axis.Name, out var listValues) || listValues.Count == 0)
+                {
+                    emptyListName ??= axis.Name;
+                }
+                else
+                {
+                    resolved.Add(BatchAxis.CreateList(BatchAxisKind.ExtractedList, axis.Name, listValues));
+                }
+            }
+            else
+            {
+                resolved.Add(axis);
+            }
+        }
+
+        foreach (var listName in usedListNames)
+        {
+            if (includedLists.Contains(listName))
+            {
+                continue;
+            }
+
+            if (!accumulatedLists.TryGetValue(listName, out var listValues) || listValues.Count == 0)
+            {
+                emptyListName ??= listName;
+            }
+            else
+            {
+                resolved.Add(BatchAxis.CreateList(BatchAxisKind.ExtractedList, listName, listValues));
+            }
+        }
+
+        return resolved;
+    }
+
+    private static Dictionary<string, IReadOnlyList<string>> CloneListsSnapshot(
+        Dictionary<string, IReadOnlyList<string>> source)
+    {
+        var copy = new Dictionary<string, IReadOnlyList<string>>(source.Count, StringComparer.Ordinal);
+        foreach (var kvp in source)
+        {
+            copy[kvp.Key] = [.. kvp.Value];
+        }
+        return copy;
     }
 
     private static void ApplyDefaultsOnMissingExtractions(
         IReadOnlyList<ChainExtraction> extractions,
         Dictionary<string, string> extractedThisIteration,
-        Dictionary<string, string> accumulatedVariables)
+        Dictionary<string, IReadOnlyList<string>> extractedListsThisIteration,
+        Dictionary<string, string> accumulatedVariables,
+        Dictionary<string, IReadOnlyList<string>> accumulatedLists)
     {
         foreach (var ext in extractions)
         {
@@ -525,9 +781,20 @@ public sealed class ChainRunner : IChainRunner
             }
 
             var name = ext.VariableName.Trim();
-            var fallback = ext.DefaultValueIfMissing ?? string.Empty;
-            extractedThisIteration[name] = fallback;
-            accumulatedVariables[name] = fallback;
+            if (ext.IsList)
+            {
+                IReadOnlyList<string> fallbackList = string.IsNullOrEmpty(ext.DefaultValueIfMissing)
+                    ? []
+                    : [ext.DefaultValueIfMissing];
+                extractedListsThisIteration[name] = fallbackList;
+                accumulatedLists[name] = fallbackList;
+            }
+            else
+            {
+                var fallback = ext.DefaultValueIfMissing ?? string.Empty;
+                extractedThisIteration[name] = fallback;
+                accumulatedVariables[name] = fallback;
+            }
         }
     }
 
@@ -542,6 +809,20 @@ public sealed class ChainRunner : IChainRunner
         Status = ChainStepStatus.Skipped,
         StatusCategory = StatusCategory.None,
         ErrorMessage = "Étape ignorée suite à l'échec d'une étape précédente.",
+        TimestampUtc = DateTimeOffset.UtcNow
+    };
+
+    private static ChainStepResult CreateEmptyListSkippedResult(int globalIndex, int stepNumber, string stepName, string listName) => new()
+    {
+        Index = globalIndex,
+        StepIndex = stepNumber,
+        StepName = stepName,
+        Iteration = 1,
+        TotalIterationsForStep = 1,
+        RequestSummary = $"(ignorée : liste [[{listName}]] vide)",
+        Status = ChainStepStatus.Skipped,
+        StatusCategory = StatusCategory.None,
+        ErrorMessage = $"La liste extraite [[{listName}]] est vide : aucune requête envoyée pour cette étape.",
         TimestampUtc = DateTimeOffset.UtcNow
     };
 

@@ -15,6 +15,14 @@ public sealed class TemplateEngine : ITemplateEngine
         @"\{\{\s*(\$?[\p{L}_][\p{L}\p{N}_]*)\s*\}\}",
         RegexOptions.Compiled);
 
+    private static readonly Regex ListMarkerRegex = new(
+        @"\[\[\s*([\p{L}_][\p{L}\p{N}_]*)\s*\]\]",
+        RegexOptions.Compiled);
+
+    private static readonly Regex AnyMarkerRegex = new(
+        @"(?:\{\{\s*(\$?[\p{L}_][\p{L}\p{N}_]*)\s*\}\}|\[\[\s*([\p{L}_][\p{L}\p{N}_]*)\s*\]\])",
+        RegexOptions.Compiled);
+
     public bool IsPredefinedVariable(string name) =>
         name is "$index" or "$guid" or "$timestamp";
 
@@ -111,7 +119,16 @@ public sealed class TemplateEngine : ITemplateEngine
         return unknown;
     }
 
-    public IReadOnlyList<ExtractedVariable> ExtractVariables(RequestModel template)
+    public IReadOnlyList<ExtractedVariable> ExtractVariables(RequestModel template) =>
+        ExtractMarkers(template, MarkerRegex, isList: false);
+
+    public IReadOnlyList<ExtractedVariable> ExtractListVariables(RequestModel template) =>
+        ExtractMarkers(template, ListMarkerRegex, isList: true);
+
+    private static IReadOnlyList<ExtractedVariable> ExtractMarkers(
+        RequestModel template,
+        Regex regex,
+        bool isList)
     {
         ArgumentNullException.ThrowIfNull(template);
 
@@ -125,7 +142,7 @@ public sealed class TemplateEngine : ITemplateEngine
                 return;
             }
 
-            foreach (Match match in MarkerRegex.Matches(text))
+            foreach (Match match in regex.Matches(text))
             {
                 var name = match.Groups[1].Value;
                 if (name.StartsWith('$'))
@@ -185,7 +202,7 @@ public sealed class TemplateEngine : ITemplateEngine
         {
             var locs = locationsByName[name];
             var display = string.Join(", ", locs.Select(FormatLocationLabel));
-            result.Add(new ExtractedVariable(name, locs, display));
+            result.Add(new ExtractedVariable(name, locs, display, isList));
         }
 
         return result;
@@ -202,7 +219,14 @@ public sealed class TemplateEngine : ITemplateEngine
         return result.Request;
     }
 
-    public TemplateApplyResult ApplyDetailed(RequestModel template, IReadOnlyDictionary<string, string> values, int index)
+    public TemplateApplyResult ApplyDetailed(RequestModel template, IReadOnlyDictionary<string, string> values, int index) =>
+        ApplyDetailed(template, values, listValues: null, index);
+
+    public TemplateApplyResult ApplyDetailed(
+        RequestModel template,
+        IReadOnlyDictionary<string, string> values,
+        IReadOnlyDictionary<string, string>? listValues,
+        int index)
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(values);
@@ -215,8 +239,23 @@ public sealed class TemplateEngine : ITemplateEngine
         var guidText = Guid.NewGuid().ToString("D");
         var timestampText = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
 
-        bool TryResolve(string name, out string resolvedValue, out string? error)
+        bool TryResolve(bool isList, string name, out string resolvedValue, out string? error)
         {
+            if (isList)
+            {
+                var source = listValues ?? values;
+                if (source.TryGetValue(name, out var listItemVal))
+                {
+                    resolvedValue = listItemVal ?? string.Empty;
+                    error = null;
+                    return true;
+                }
+
+                resolvedValue = string.Empty;
+                error = $"Liste inconnue ou non définie : [[{name}]].";
+                return false;
+            }
+
             if (values.TryGetValue(name, out var userVal))
             {
                 resolvedValue = userVal ?? string.Empty;
@@ -372,7 +411,7 @@ public sealed class TemplateEngine : ITemplateEngine
         }
     }
 
-    private delegate bool ResolveDelegate(string name, out string value, out string? error);
+    private delegate bool ResolveDelegate(bool isList, string name, out string value, out string? error);
 
     private static bool TrySubstituteSimple(
         string? input,
@@ -388,7 +427,7 @@ public sealed class TemplateEngine : ITemplateEngine
             return true;
         }
 
-        var matches = MarkerRegex.Matches(input);
+        var matches = AnyMarkerRegex.Matches(input);
         if (matches.Count == 0)
         {
             output = input;
@@ -403,8 +442,9 @@ public sealed class TemplateEngine : ITemplateEngine
         {
             sb.Append(input, lastIndex, match.Index - lastIndex);
 
-            var name = match.Groups[1].Value;
-            if (!resolve(name, out var rawValue, out error))
+            var isList = match.Groups[2].Success;
+            var name = isList ? match.Groups[2].Value : match.Groups[1].Value;
+            if (!resolve(isList, name, out var rawValue, out error))
             {
                 output = string.Empty;
                 return false;
@@ -433,7 +473,7 @@ public sealed class TemplateEngine : ITemplateEngine
             return true;
         }
 
-        var matches = MarkerRegex.Matches(input);
+        var matches = AnyMarkerRegex.Matches(input);
         if (matches.Count == 0)
         {
             output = input;
@@ -478,8 +518,9 @@ public sealed class TemplateEngine : ITemplateEngine
 
             sb.Append(input, lastScannedIndex, match.Index - lastScannedIndex);
 
-            var name = match.Groups[1].Value;
-            if (!resolve(name, out var rawValue, out error))
+            var isList = match.Groups[2].Success;
+            var name = isList ? match.Groups[2].Value : match.Groups[1].Value;
+            if (!resolve(isList, name, out var rawValue, out error))
             {
                 output = string.Empty;
                 return false;
@@ -546,7 +587,7 @@ public sealed class TemplateEngine : ITemplateEngine
     }
 
     private static bool HasMarker(string? text) =>
-        !string.IsNullOrEmpty(text) && MarkerRegex.IsMatch(text);
+        !string.IsNullOrEmpty(text) && AnyMarkerRegex.IsMatch(text);
 
     private static string FormatLocationLabel(VariableLocation location) => location switch
     {

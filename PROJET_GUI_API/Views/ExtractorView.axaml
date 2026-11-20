@@ -514,27 +514,39 @@
                     </Grid>
 
                     <StackPanel Grid.Column="1"
-                                IsVisible="{Binding IsChainAvailable}"
                                 Orientation="Horizontal"
                                 Spacing="6"
                                 VerticalAlignment="Center">
-                        <ComboBox ItemsSource="{Binding ChainSteps}"
-                                  SelectedItem="{Binding SelectedTargetStep}"
-                                  MinWidth="140"
-                                  MaxWidth="220"
-                                  AutomationProperties.Name="Étape cible de la chaîne">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate x:DataType="models:ChainStep">
-                                    <TextBlock Text="{Binding StepHeaderLabel}"
-                                               TextTrimming="CharacterEllipsis" />
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
+                        <CheckBox IsVisible="{Binding HasAnySuggestion}"
+                                  IsChecked="{Binding ExtractAsList}"
+                                  Content="En liste [[...]]"
+                                  Margin="0,0,6,0"
+                                  VerticalAlignment="Center"
+                                  ToolTip.Tip="Convertit les index en [*] et extrait toutes les valeurs dans une liste utilisable avec [[nom]]"
+                                  AutomationProperties.Name="Extraire en liste" />
 
-                        <Button Classes="secondary"
-                                Content="Envoyer vers une extraction de chaîne"
-                                Command="{Binding SendToChainCommand}"
-                                AutomationProperties.Name="Envoyer vers une extraction de chaîne" />
+                        <StackPanel IsVisible="{Binding IsChainAvailable}"
+                                    Orientation="Horizontal"
+                                    Spacing="6"
+                                    VerticalAlignment="Center">
+                            <ComboBox ItemsSource="{Binding ChainSteps}"
+                                      SelectedItem="{Binding SelectedTargetStep}"
+                                      MinWidth="140"
+                                      MaxWidth="220"
+                                      AutomationProperties.Name="Étape cible de la chaîne">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:ChainStep">
+                                        <TextBlock Text="{Binding StepHeaderLabel}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <Button Classes="secondary"
+                                    Content="Envoyer vers une extraction de chaîne"
+                                    Command="{Binding SendToChainCommand}"
+                                    AutomationProperties.Name="Envoyer vers une extraction de chaîne" />
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
             </StackPanel>

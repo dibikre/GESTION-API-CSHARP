@@ -15,7 +15,8 @@ public enum VariableLocation
 public sealed record ExtractedVariable(
     string Name,
     IReadOnlyList<VariableLocation> Locations,
-    string LocationsDisplay);
+    string LocationsDisplay,
+    bool IsList = false);
 
 public sealed class TemplateApplyResult
 {
@@ -35,9 +36,17 @@ public interface ITemplateEngine
 
     IReadOnlyList<ExtractedVariable> ExtractVariables(RequestModel template);
 
+    IReadOnlyList<ExtractedVariable> ExtractListVariables(RequestModel template);
+
     RequestModel Apply(RequestModel template, IReadOnlyDictionary<string, string> values, int index);
 
     TemplateApplyResult ApplyDetailed(RequestModel template, IReadOnlyDictionary<string, string> values, int index);
+
+    TemplateApplyResult ApplyDetailed(
+        RequestModel template,
+        IReadOnlyDictionary<string, string> values,
+        IReadOnlyDictionary<string, string>? listValues,
+        int index);
 
     bool IsValidJson(string? json);
 }

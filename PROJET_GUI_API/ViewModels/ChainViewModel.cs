@@ -99,10 +99,10 @@ public partial class ChainViewModel : ViewModelBase
                 return string.Empty;
             }
 
-            var names = GetAvailableExtractedVariableNamesBefore(SelectedStep);
-            return names.Count == 0
+            var tokens = GetAvailableExtractedTokensBefore(SelectedStep);
+            return tokens.Count == 0
                 ? string.Empty
-                : $"Variables extraites des étapes précédentes : {string.Join(", ", names.Select(n => $"{{{{{n}}}}}"))}";
+                : $"Variables extraites des étapes précédentes : {string.Join(", ", tokens)}";
         }
     }
 
@@ -112,6 +112,10 @@ public partial class ChainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(TotalRequestsText))]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
     public partial int TotalRequests { get; private set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TotalRequestsText))]
+    public partial bool HasDynamicRequestsCount { get; private set; }
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
@@ -136,9 +140,9 @@ public partial class ChainViewModel : ViewModelBase
 
     public bool HasChainWarnings => ChainWarnings.Count > 0;
 
-    public string TotalRequestsText => TotalRequests <= 1
-        ? $"{TotalRequests} requête prévue"
-        : $"{TotalRequests} requêtes prévues";
+    public string TotalRequestsText => HasDynamicRequestsCount
+        ? (TotalRequests <= 1 ? "≥ 1 requête (listes dynamiques)" : $"≥ {TotalRequests} requêtes (listes dynamiques)")
+        : (TotalRequests <= 1 ? $"{TotalRequests} requête prévue" : $"{TotalRequests} requêtes prévues");
 
     [ObservableProperty]
     public partial bool KeepBodies { get; set; } = true;
@@ -588,6 +592,30 @@ public partial class ChainViewModel : ViewModelBase
             return;
         }
 
+        if (extraction.IsList)
+        {
+            var listOutcome = _responseExtractor.ExtractList(response, extraction);
+            if (listOutcome.IsSuccess)
+            {
+                if (BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
+                {
+                    extraction.LastExtractedValue = $"[{listOutcome.Values.Count} éléments] ***";
+                }
+                else
+                {
+                    var preview = BatchExecutionHelper.TruncateForDisplay(string.Join(", ", listOutcome.Values.Take(5)));
+                    extraction.LastExtractedValue = $"[{listOutcome.Values.Count} éléments] {preview}";
+                }
+                extraction.ErrorText = null;
+            }
+            else
+            {
+                extraction.LastExtractedValue = null;
+                extraction.ErrorText = listOutcome.ErrorMessage;
+            }
+            return;
+        }
+
         var outcome = _responseExtractor.Extract(response, extraction);
         if (outcome.IsSuccess)
         {
@@ -805,9 +833,11 @@ public partial class ChainViewModel : ViewModelBase
                 }
             }
 
-            if (report.AccumulatedVariables is not null)
+            if (report.AccumulatedVariables is not null || report.AccumulatedLists is not null)
             {
-                UpdateAccumulatedVariablesDisplay(report.AccumulatedVariables);
+                UpdateAccumulatedVariablesDisplay(
+                    report.AccumulatedVariables ?? new Dictionary<string, string>(),
+                    report.AccumulatedLists);
             }
 
             OnPropertyChanged(nameof(ChainStatsSummaryText));
@@ -820,7 +850,7 @@ public partial class ChainViewModel : ViewModelBase
         try
         {
             var runResult = await _chainRunner.RunAsync(snapshots, runOptions, progress, onResultAsync, ct);
-            UpdateAccumulatedVariablesDisplay(runResult.AllVariables);
+            UpdateAccumulatedVariablesDisplay(runResult.AllVariables, runResult.AllLists);
             FinalStatusText = runResult.FinalStatus switch
             {
                 ChainRunStatus.Success => $"Chaîne réussie ({runResult.TotalDurationMs} ms)",
@@ -847,7 +877,9 @@ public partial class ChainViewModel : ViewModelBase
         }
     }
 
-    private void UpdateAccumulatedVariablesDisplay(IReadOnlyDictionary<string, string> variables)
+    private void UpdateAccumulatedVariablesDisplay(
+        IReadOnlyDictionary<string, string> variables,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? lists = null)
     {
         AccumulatedVariables.Clear();
         foreach (var kvp in variables.OrderBy(k => k.Key, StringComparer.Ordinal))
@@ -858,6 +890,21 @@ public partial class ChainViewModel : ViewModelBase
                 RawValue = kvp.Value
             });
         }
+
+        if (lists is not null)
+        {
+            foreach (var kvp in lists.OrderBy(k => k.Key, StringComparer.Ordinal))
+            {
+                var preview = kvp.Value.Count == 0
+                    ? "(vide)"
+                    : $"[{kvp.Value.Count}] {string.Join(", ", kvp.Value.Take(5))}{(kvp.Value.Count > 5 ? " …" : string.Empty)}";
+                AccumulatedVariables.Add(new ChainAccumulatedVariableItem
+                {
+                    Name = $"[[{kvp.Key}]]",
+                    RawValue = preview
+                });
+            }
+        }
     }
 
     private void AttachStepHandlers(ChainStep step)
@@ -867,6 +914,10 @@ public partial class ChainViewModel : ViewModelBase
         step.FormFields.CollectionChanged += OnStepKeyValueCollectionChanged;
         step.VaryingParams.CollectionChanged += OnStepVaryingParamsChanged;
         step.Extractions.CollectionChanged += OnStepExtractionsChanged;
+        foreach (var ext in step.Extractions)
+        {
+            ext.PropertyChanged += OnNestedItemPropertyChanged;
+        }
     }
 
     private void DetachStepHandlers(ChainStep step)
@@ -876,6 +927,11 @@ public partial class ChainViewModel : ViewModelBase
         step.FormFields.CollectionChanged -= OnStepKeyValueCollectionChanged;
         step.VaryingParams.CollectionChanged -= OnStepVaryingParamsChanged;
         step.Extractions.CollectionChanged -= OnStepExtractionsChanged;
+
+        foreach (var ext in step.Extractions)
+        {
+            ext.PropertyChanged -= OnNestedItemPropertyChanged;
+        }
 
         foreach (var variable in step.Variables)
         {
@@ -1029,7 +1085,8 @@ public partial class ChainViewModel : ViewModelBase
 
     private void RefreshAllStepsAndPlan()
     {
-        var extractedSoFar = new HashSet<string>(StringComparer.Ordinal);
+        var extractedScalarsSoFar = new HashSet<string>(StringComparer.Ordinal);
+        var extractedListsSoFar = new HashSet<string>(StringComparer.Ordinal);
         var count = Steps.Count;
 
         for (var i = 0; i < count; i++)
@@ -1039,19 +1096,30 @@ public partial class ChainViewModel : ViewModelBase
             step.CanMoveUp = i > 0;
             step.CanMoveDown = i < count - 1;
 
-            SyncStepVariablesAndAxes(step, extractedSoFar);
+            SyncStepVariablesAndAxes(step, extractedScalarsSoFar, extractedListsSoFar);
 
             foreach (var ext in step.Extractions)
             {
-                if (!string.IsNullOrWhiteSpace(ext.VariableName))
+                if (string.IsNullOrWhiteSpace(ext.VariableName))
                 {
-                    extractedSoFar.Add(ext.VariableName.Trim());
+                    continue;
+                }
+
+                var name = ext.VariableName.Trim();
+                if (ext.IsList)
+                {
+                    extractedListsSoFar.Add(name);
+                }
+                else
+                {
+                    extractedScalarsSoFar.Add(name);
                 }
             }
         }
 
         var plan = _chainRunner.BuildPlan(Steps);
         TotalRequests = plan.TotalRequests;
+        HasDynamicRequestsCount = plan.HasDynamicCounts;
         ExceedsHardLimit = plan.ExceedsHardLimit;
         PlanError = plan.ValidationError;
         NeedsConfirmation = !plan.ExceedsHardLimit && plan.TotalRequests > BatchRunner.ConfirmationThreshold;
@@ -1061,6 +1129,7 @@ public partial class ChainViewModel : ViewModelBase
             Steps[i].TotalIterations = i < plan.StepIterationCounts.Count
                 ? plan.StepIterationCounts[i]
                 : 1;
+            Steps[i].HasDynamicIterations = i < plan.StepHasDynamicCounts.Count && plan.StepHasDynamicCounts[i];
         }
 
         ChainWarnings.Clear();
@@ -1079,10 +1148,14 @@ public partial class ChainViewModel : ViewModelBase
         RunCommand.NotifyCanExecuteChanged();
     }
 
-    private void SyncStepVariablesAndAxes(ChainStep step, HashSet<string> availableFromPrevious)
+    private void SyncStepVariablesAndAxes(
+        ChainStep step,
+        HashSet<string> availableScalars,
+        HashSet<string> availableLists)
     {
         var template = step.BuildTemplateRequest();
         var extracted = _templateEngine.ExtractVariables(template);
+        var extractedLists = _templateEngine.ExtractListVariables(template);
         var extractedByName = extracted.ToDictionary(v => v.Name, StringComparer.Ordinal);
 
         var existingByName = new Dictionary<string, BatchVariable>(StringComparer.Ordinal);
@@ -1091,7 +1164,7 @@ public partial class ChainViewModel : ViewModelBase
             var existing = step.Variables[i];
             if (extractedByName.TryGetValue(existing.Name, out var info))
             {
-                existing.UsedIn = availableFromPrevious.Contains(existing.Name) && !existing.IsConfigured
+                existing.UsedIn = availableScalars.Contains(existing.Name) && !existing.IsConfigured
                     ? $"{info.LocationsDisplay} · extraite"
                     : info.LocationsDisplay;
                 existing.IsUsed = true;
@@ -1120,7 +1193,7 @@ public partial class ChainViewModel : ViewModelBase
             var created = new BatchVariable
             {
                 Name = item.Name,
-                UsedIn = availableFromPrevious.Contains(item.Name)
+                UsedIn = availableScalars.Contains(item.Name)
                     ? $"{item.LocationsDisplay} · extraite"
                     : item.LocationsDisplay,
                 IsUsed = true
@@ -1129,12 +1202,26 @@ public partial class ChainViewModel : ViewModelBase
             step.Variables.Add(created);
         }
 
-        step.UsedVariablesCount = step.Variables.Count(v => v.IsUsed);
+        step.UsedExtractedListsText = extractedLists.Count == 0
+            ? string.Empty
+            : $"Listes utilisées : {string.Join(", ", extractedLists.Select(l => $"[[{l.Name}]] ({l.LocationsDisplay})"))}";
+
+        step.UsedVariablesCount = step.Variables.Count(v => v.IsUsed) + extractedLists.Count;
 
         var errors = new List<string>();
         foreach (var unknownDollar in _templateEngine.GetUnknownPredefinedMarkers(template))
         {
             errors.Add($"{{{{{unknownDollar}}}}} : variable prédéfinie inconnue ($index, $guid, $timestamp).");
+        }
+
+        foreach (var listExt in extractedLists)
+        {
+            if (!availableLists.Contains(listExt.Name))
+            {
+                errors.Add(availableScalars.Contains(listExt.Name)
+                    ? $"[[{listExt.Name}]] : correspond à une variable simple ; coche « En liste [[...]] » ou utilise {{{{{listExt.Name}}}}}."
+                    : $"[[{listExt.Name}]] : aucune étape précédente n'extrait cette liste.");
+            }
         }
 
         foreach (var ext in extracted)
@@ -1146,9 +1233,11 @@ public partial class ChainViewModel : ViewModelBase
 
             if (!variable.IsConfigured)
             {
-                if (!availableFromPrevious.Contains(ext.Name))
+                if (!availableScalars.Contains(ext.Name))
                 {
-                    errors.Add($"{{{{{ext.Name}}}}} : saisis une valeur ou coche « Faire varier ».");
+                    errors.Add(availableLists.Contains(ext.Name)
+                        ? $"{{{{{ext.Name}}}}} : extraite en liste ; utilise [[{ext.Name}]] pour itérer sur ses valeurs."
+                        : $"{{{{{ext.Name}}}}} : saisis une valeur ou coche « Faire varier ».");
                 }
             }
             else if (variable.HasError)
@@ -1160,6 +1249,11 @@ public partial class ChainViewModel : ViewModelBase
         step.VariablesError = errors.Count == 0 ? null : string.Join(Environment.NewLine, errors);
 
         var newAxes = BatchExecutionHelper.BuildDefaultStepAxes(step.VaryingParams, step.Variables);
+        foreach (var listExt in extractedLists)
+        {
+            newAxes.Add(BatchAxis.CreateDynamicList(listExt.Name));
+        }
+
         // Conserver l'ordre existant lorsque les axes correspondent encore
         var ordered = new List<BatchAxis>(newAxes.Count);
         foreach (var oldAxis in step.Axes)
@@ -1208,7 +1302,7 @@ public partial class ChainViewModel : ViewModelBase
         }
     }
 
-    private List<string> GetAvailableExtractedVariableNamesBefore(ChainStep targetStep)
+    private List<string> GetAvailableExtractedTokensBefore(ChainStep targetStep)
     {
         var list = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1225,9 +1319,10 @@ public partial class ChainViewModel : ViewModelBase
                 if (!string.IsNullOrWhiteSpace(ext.VariableName))
                 {
                     var name = ext.VariableName.Trim();
-                    if (seen.Add(name))
+                    var token = ext.IsList ? $"[[{name}]]" : $"{{{{{name}}}}}";
+                    if (seen.Add(token))
                     {
-                        list.Add(name);
+                        list.Add(token);
                     }
                 }
             }

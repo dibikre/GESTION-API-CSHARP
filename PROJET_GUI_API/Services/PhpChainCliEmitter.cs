@@ -23,7 +23,7 @@ internal static class PhpChainCliEmitter
         sb.AppendLine("    exit(1);");
         sb.AppendLine("}");
         sb.AppendLine();
-        sb.AppendLine("const MARKER_RE = '/\\{\\{\\s*(\\$?(?![0-9])[\\p{L}\\p{N}_]+)\\s*\\}\\}/u';");
+        sb.AppendLine("const MARKER_RE = '/(?:\\{\\{\\s*(\\$?(?![0-9])[\\p{L}\\p{N}_]+)\\s*\\}\\}|\\[\\[\\s*((?![0-9])[\\p{L}\\p{N}_]+)\\s*\\]\\])/u';");
         sb.AppendLine();
 
         AppendStepsData(sb, steps);
@@ -119,6 +119,7 @@ internal static class PhpChainCliEmitter
                 sb.AppendLine($"                'headerName' => {EscapeString(ext.HeaderName)},");
                 sb.AppendLine($"                'required' => {FormatBool(ext.IsRequired)},");
                 sb.AppendLine($"                'defaultValue' => {EscapeString(ext.DefaultValueIfMissing)},");
+                sb.AppendLine($"                'isList' => {FormatBool(ext.IsList)},");
                 sb.AppendLine("            ],");
             }
             sb.AppendLine("        ],");
@@ -176,17 +177,25 @@ function makeRange(array $spec): array {
     return $values;
 }
 
-function buildIterations(array $axes, string $mode): array {
+function buildIterations(array $axes, string $mode, array $accumulatedLists): array {
     if (count($axes) === 0) {
-        return [[]];
+        return [[[]], null];
     }
     $lists = [];
     foreach ($axes as $axis) {
-        $list = isset($axis['range']) ? makeRange($axis['range']) : $axis['values'];
-        if (count($list) === 0) {
-            return [];
+        if ($axis['kind'] === 'list') {
+            $list = $accumulatedLists[$axis['name']] ?? [];
+            if (count($list) === 0) {
+                return [[], $axis['name']];
+            }
+            $lists[] = $list;
+        } else {
+            $list = isset($axis['range']) ? makeRange($axis['range']) : $axis['values'];
+            if (count($list) === 0) {
+                return [[], null];
+            }
+            $lists[] = $list;
         }
-        $lists[] = $list;
     }
     if ($mode === 'parallel') {
         $minLen = min(array_map('count', $lists));
@@ -198,7 +207,7 @@ function buildIterations(array $axes, string $mode): array {
             }
             $rows[] = $row;
         }
-        return $rows;
+        return [$rows, null];
     }
     $acc = [[]];
     foreach ($lists as $list) {
@@ -212,10 +221,17 @@ function buildIterations(array $axes, string $mode): array {
         }
         $acc = $next;
     }
-    return $acc;
+    return [$acc, null];
 }
 
-function resolveMarker(string $name, array $variables, int $globalIndex, string $reqGuid, string $reqTs): string {
+function resolveMarker(?string $scalarName, ?string $listName, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs): string {
+    if ($listName !== null && $listName !== '') {
+        if (array_key_exists($listName, $listVars)) {
+            return (string)$listVars[$listName];
+        }
+        throw new RuntimeException("Liste inconnue ou non définie : [[" . $listName . "]]");
+    }
+    $name = (string)$scalarName;
     if (array_key_exists($name, $variables)) {
         return (string)$variables[$name];
     }
@@ -225,21 +241,21 @@ function resolveMarker(string $name, array $variables, int $globalIndex, string 
     throw new RuntimeException("Variable inconnue ou non définie : {{" . $name . "}}");
 }
 
-function substituteSimple(string $text, array $variables, int $globalIndex, string $reqGuid, string $reqTs, bool $urlEncode = false): string {
+function substituteSimple(string $text, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs, bool $urlEncode = false): string {
     if ($text === '') {
         return '';
     }
     return (string)preg_replace_callback(
         MARKER_RE,
-        static function (array $match) use ($variables, $globalIndex, $reqGuid, $reqTs, $urlEncode): string {
-            $val = resolveMarker($match[1], $variables, $globalIndex, $reqGuid, $reqTs);
+        static function (array $match) use ($variables, $listVars, $globalIndex, $reqGuid, $reqTs, $urlEncode): string {
+            $val = resolveMarker($match[1] ?? null, $match[2] ?? null, $variables, $listVars, $globalIndex, $reqGuid, $reqTs);
             return $urlEncode ? rawurlencode($val) : $val;
         },
         $text
     );
 }
 
-function substituteJsonBody(string $text, array $variables, int $globalIndex, string $reqGuid, string $reqTs): string {
+function substituteJsonBody(string $text, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs): string {
     if ($text === '') {
         return '';
     }
@@ -255,7 +271,8 @@ function substituteJsonBody(string $text, array $variables, int $globalIndex, st
     foreach ($matches[0] as $idx => $fullMatch) {
         $matchStr = $fullMatch[0];
         $matchOffset = $fullMatch[1];
-        $varName = $matches[1][$idx][0];
+        $scalarName = $matches[1][$idx][0] ?? '';
+        $listName = (isset($matches[2][$idx]) && $matches[2][$idx][1] >= 0) ? $matches[2][$idx][0] : '';
 
         for ($i = $lastScanned; $i < $matchOffset; $i++) {
             $ch = $text[$i];
@@ -274,7 +291,7 @@ function substituteJsonBody(string $text, array $variables, int $globalIndex, st
         }
 
         $out .= substr($text, $lastScanned, $matchOffset - $lastScanned);
-        $val = resolveMarker($varName, $variables, $globalIndex, $reqGuid, $reqTs);
+        $val = resolveMarker($scalarName, $listName, $variables, $listVars, $globalIndex, $reqGuid, $reqTs);
         if ($inString) {
             $encoded = json_encode($val, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
             $out .= ($encoded !== false && strlen($encoded) >= 2) ? substr($encoded, 1, -1) : '';
@@ -323,7 +340,7 @@ function parseJsonPath(string $rawPath): array {
         }
         $bracket = strpos($part, '[');
         if ($bracket === false) {
-            $steps[] = [$part, null];
+            $steps[] = [$part, null, false];
             continue;
         }
         $prop = $bracket > 0 ? substr($part, 0, $bracket) : null;
@@ -339,10 +356,13 @@ function parseJsonPath(string $rawPath): array {
                 throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
             }
             $idxStr = trim(substr($part, $pos + 1, $close - $pos - 1));
-            if (!preg_match('/^-?\d+$/', $idxStr)) {
+            if ($idxStr === '*' || $idxStr === '') {
+                $steps[] = [$first ? $prop : null, null, true];
+            } elseif (preg_match('/^-?\d+$/', $idxStr)) {
+                $steps[] = [$first ? $prop : null, (int)$idxStr, false];
+            } else {
                 throw new RuntimeException("Index invalide dans {$rawPath}");
             }
-            $steps[] = [$first ? $prop : null, (int)$idxStr];
             $first = false;
             $pos = $close + 1;
         }
@@ -350,11 +370,25 @@ function parseJsonPath(string $rawPath): array {
     return $steps;
 }
 
+function formatJsonValue(mixed $current): string {
+    if (is_string($current)) return $current;
+    if (is_bool($current)) return $current ? 'true' : 'false';
+    if ($current === null) return 'null';
+    if (is_int($current) || is_float($current)) return (string)$current;
+    return (string)json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 function extractJsonPath(string $body, string $rawPath): array {
     try {
+        $steps = parseJsonPath($rawPath);
+        foreach ($steps as [, , $isWildcard]) {
+            if ($isWildcard) {
+                return [false, 'Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]].'];
+            }
+        }
         $clean = ltrim($body, "\xEF\xBB\xBF");
         $current = json_decode($clean, false, 512, JSON_THROW_ON_ERROR);
-        foreach (parseJsonPath($rawPath) as [$prop, $arrIdx]) {
+        foreach ($steps as [$prop, $arrIdx]) {
             if ($prop !== null) {
                 if (!is_object($current) || !property_exists($current, $prop)) {
                     return [false, "Propriété JSON introuvable : {$prop}"];
@@ -373,11 +407,93 @@ function extractJsonPath(string $body, string $rawPath): array {
                 $current = $current[$resolved];
             }
         }
-        if (is_string($current)) return [true, $current];
-        if (is_bool($current)) return [true, $current ? 'true' : 'false'];
-        if ($current === null) return [true, 'null'];
-        if (is_int($current) || is_float($current)) return [true, (string)$current];
-        return [true, (string)json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
+        return [true, formatJsonValue($current)];
+    } catch (Throwable $e) {
+        return [false, $e->getMessage()];
+    }
+}
+
+function extractJsonPathList(string $body, string $rawPath): array {
+    try {
+        $steps = parseJsonPath($rawPath);
+        $clean = ltrim($body, "\xEF\xBB\xBF");
+        $currentElements = [json_decode($clean, false, 512, JSON_THROW_ON_ERROR)];
+        $hasWildcard = false;
+
+        foreach ($steps as [$prop, $arrIdx, $isWildcard]) {
+            if ($prop !== null) {
+                $nextElements = [];
+                foreach ($currentElements as $el) {
+                    if (!is_object($el) || !property_exists($el, $prop)) {
+                        if (!$hasWildcard) {
+                            return [false, "Propriété JSON introuvable : {$prop}"];
+                        }
+                        continue;
+                    }
+                    $nextElements[] = $el->{$prop};
+                }
+                if (count($nextElements) === 0) {
+                    return [false, "Propriété JSON introuvable : {$prop}"];
+                }
+                $currentElements = $nextElements;
+            }
+
+            if ($isWildcard) {
+                $wasWildcard = $hasWildcard;
+                $hasWildcard = true;
+                $nextElements = [];
+                foreach ($currentElements as $el) {
+                    if (!is_array($el)) {
+                        if (!$wasWildcard) {
+                            return [false, 'Le sélecteur [*] est inapplicable sur cet élément'];
+                        }
+                        continue;
+                    }
+                    foreach ($el as $item) {
+                        $nextElements[] = $item;
+                    }
+                }
+                if (count($nextElements) === 0) {
+                    return [false, 'Le tableau JSON ciblé est vide.'];
+                }
+                $currentElements = $nextElements;
+            } elseif ($arrIdx !== null) {
+                $nextElements = [];
+                foreach ($currentElements as $el) {
+                    if (!is_array($el)) {
+                        if (!$hasWildcard) {
+                            return [false, "Index [{$arrIdx}] inapplicable"];
+                        }
+                        continue;
+                    }
+                    $len = count($el);
+                    $resolved = $arrIdx < 0 ? $len + $arrIdx : $arrIdx;
+                    if ($resolved < 0 || $resolved >= $len) {
+                        if (!$hasWildcard) {
+                            return [false, "Index [{$arrIdx}] hors limites"];
+                        }
+                        continue;
+                    }
+                    $nextElements[] = $el[$resolved];
+                }
+                if (count($nextElements) === 0) {
+                    return [false, "Aucune valeur trouvée pour l'index [{$arrIdx}]"];
+                }
+                $currentElements = $nextElements;
+            }
+        }
+
+        if (!$hasWildcard && count($currentElements) === 1 && is_array($currentElements[0])) {
+            if (count($currentElements[0]) === 0) {
+                return [false, 'Le tableau JSON ciblé est vide.'];
+            }
+            return [true, array_map('formatJsonValue', $currentElements[0])];
+        }
+
+        if (count($currentElements) === 0) {
+            return [false, "Aucune valeur extraite pour l'expression JSONPath."];
+        }
+        return [true, array_map('formatJsonValue', $currentElements)];
     } catch (Throwable $e) {
         return [false, $e->getMessage()];
     }
@@ -404,6 +520,36 @@ function extractRegex(string $text, string $pattern, int $groupIdx): array {
     return [true, (string)$matches[$groupIdx]];
 }
 
+function extractRegexList(string $text, string $pattern, int $groupIdx): array {
+    $delim = "\x01";
+    $escaped = str_replace($delim, '\\' . $delim, $pattern);
+    $regexU = $delim . $escaped . $delim . 'u';
+    $matched = @preg_match_all($regexU, $text, $allMatches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+    if ($matched === false) {
+        $regexPlain = $delim . $escaped . $delim;
+        $matched = @preg_match_all($regexPlain, $text, $allMatches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+    }
+    if ($matched === false) {
+        return [false, 'Expression régulière invalide'];
+    }
+    if ($matched === 0) {
+        return [false, 'Aucune correspondance regex'];
+    }
+    $values = [];
+    foreach ($allMatches as $m) {
+        if (!array_key_exists($groupIdx, $m)) {
+            return [false, "Groupe regex #{$groupIdx} inexistant"];
+        }
+        if ($m[$groupIdx][1] >= 0) {
+            $values[] = (string)$m[$groupIdx][0];
+        }
+    }
+    if (count($values) === 0) {
+        return [false, 'Aucune correspondance regex'];
+    }
+    return [true, $values];
+}
+
 function runExtraction(array $ext, string $respBody, array $respHeaders): array {
     if ($ext['source'] === 'header') {
         $target = strtolower($ext['headerName']);
@@ -428,6 +574,38 @@ function runExtraction(array $ext, string $respBody, array $respHeaders): array 
         return extractJsonPath($respBody, $ext['expression']);
     }
     return extractRegex($respBody, $ext['expression'], $ext['regexGroup']);
+}
+
+function runListExtraction(array $ext, string $respBody, array $respHeaders): array {
+    if ($ext['source'] === 'header') {
+        $target = strtolower($ext['headerName']);
+        $matching = [];
+        foreach ($respHeaders as [$k, $v]) {
+            if (strtolower($k) === $target) {
+                $matching[] = $v;
+            }
+        }
+        if (count($matching) === 0) {
+            return [false, "En-tête « {$ext['headerName']} » absent"];
+        }
+        $collected = [];
+        $lastErr = 'Aucune correspondance';
+        foreach ($matching as $val) {
+            [$ok, $res] = extractRegexList($val, $ext['expression'], $ext['regexGroup']);
+            if ($ok) {
+                foreach ($res as $item) {
+                    $collected[] = $item;
+                }
+            } else {
+                $lastErr = $res;
+            }
+        }
+        return count($collected) > 0 ? [true, $collected] : [false, $lastErr];
+    }
+    if ($ext['kind'] === 'jsonpath') {
+        return extractJsonPathList($respBody, $ext['expression']);
+    }
+    return extractRegexList($respBody, $ext['expression'], $ext['regexGroup']);
 }
 
 function sendHttp(string $method, string $url, array $headers, ?string $body, int $timeoutSeconds): array {
@@ -478,6 +656,7 @@ function sendHttp(string $method, string $url, array $headers, ?string $body, in
 
 $verbose = in_array('--verbose', $argv, true) || in_array('-v', $argv, true);
 $accumulatedVars = [];
+$accumulatedLists = [];
 $globalIndex = 0;
 $hasAnyFailure = false;
 $stepCount = count($steps);
@@ -488,7 +667,12 @@ foreach ($steps as $stepIdx => $step) {
         exit(1);
     }
 
-    $iterations = buildIterations($step['axes'], $step['mode']);
+    [$iterations, $emptyListName] = buildIterations($step['axes'], $step['mode'], $accumulatedLists);
+    if ($emptyListName !== null) {
+        echo "[IGNORÉE] Étape {$step['rank']} ({$step['name']}) : liste [[{$emptyListName}]] vide.\n";
+        continue;
+    }
+
     $iterCount = count($iterations);
 
     foreach ($iterations as $iterOffset => $axisValues) {
@@ -498,38 +682,41 @@ foreach ($steps as $stepIdx => $step) {
         $reqTs = (string)time();
 
         $mergedVars = array_merge($accumulatedVars, $step['fixedVariables']);
+        $listVars = [];
         foreach ($step['axes'] as $aIdx => $axis) {
             if ($axis['kind'] === 'var') {
                 $mergedVars[$axis['name']] = $axisValues[$aIdx];
+            } elseif ($axis['kind'] === 'list') {
+                $listVars[$axis['name']] = $axisValues[$aIdx];
             }
         }
 
         try {
-            $finalBaseUrl = substituteSimple($step['url'], $mergedVars, $globalIndex, $reqGuid, $reqTs, true);
+            $finalBaseUrl = substituteSimple($step['url'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs, true);
             $queryItems = [];
             foreach ($step['queryParams'] as $qp) {
                 if ($qp['axisIndex'] !== null) {
                     $queryItems[] = [$qp['key'], $axisValues[$qp['axisIndex']]];
                 } else {
-                    $queryItems[] = [$qp['key'], substituteSimple($qp['value'], $mergedVars, $globalIndex, $reqGuid, $reqTs)];
+                    $queryItems[] = [$qp['key'], substituteSimple($qp['value'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs)];
                 }
             }
             $finalUrl = buildFinalUrl($finalBaseUrl, $queryItems);
 
             $finalHeaders = [];
             foreach ($step['headers'] as [$hk, $hv]) {
-                $finalHeaders[] = [$hk, substituteSimple($hv, $mergedVars, $globalIndex, $reqGuid, $reqTs)];
+                $finalHeaders[] = [$hk, substituteSimple($hv, $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs)];
             }
 
             $bodyToSend = null;
             if ($step['bodyType'] === 'json') {
-                $bodyToSend = substituteJsonBody($step['body'], $mergedVars, $globalIndex, $reqGuid, $reqTs);
+                $bodyToSend = substituteJsonBody($step['body'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs);
             } elseif ($step['bodyType'] === 'text') {
-                $bodyToSend = substituteSimple($step['body'], $mergedVars, $globalIndex, $reqGuid, $reqTs);
+                $bodyToSend = substituteSimple($step['body'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs);
             } elseif ($step['bodyType'] === 'form') {
                 $formPairs = [];
                 foreach ($step['formFields'] as [$fk, $fv]) {
-                    $formPairs[] = rawurlencode((string)$fk) . '=' . rawurlencode(substituteSimple($fv, $mergedVars, $globalIndex, $reqGuid, $reqTs));
+                    $formPairs[] = rawurlencode((string)$fk) . '=' . rawurlencode(substituteSimple($fv, $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs));
                 }
                 $bodyToSend = implode('&', $formPairs);
             }
@@ -550,6 +737,24 @@ foreach ($steps as $stepIdx => $step) {
         $extractionFailed = false;
 
         foreach ($step['extractions'] as $ext) {
+            if (!empty($ext['isList'])) {
+                [$ok, $valuesOrErr] = runListExtraction($ext, $respBody, $respHeaders);
+                if ($ok) {
+                    $accumulatedLists[$ext['variable']] = $valuesOrErr;
+                    if ($verbose) {
+                        $cnt = count($valuesOrErr);
+                        echo "  -> [[{$ext['variable']}]] = {$cnt} élément(s)\n";
+                    }
+                } else {
+                    $accumulatedLists[$ext['variable']] = $ext['defaultValue'] !== '' ? [$ext['defaultValue']] : [];
+                    if ($ext['required']) {
+                        $extractionFailed = true;
+                        fwrite(STDERR, "  [EXTRACTION] [[{$ext['variable']}]] : {$valuesOrErr}\n");
+                    }
+                }
+                continue;
+            }
+
             [$ok, $valueOrErr] = runExtraction($ext, $respBody, $respHeaders);
             if ($ok) {
                 $accumulatedVars[$ext['variable']] = $valueOrErr;

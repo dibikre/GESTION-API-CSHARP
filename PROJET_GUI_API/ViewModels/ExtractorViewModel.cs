@@ -18,6 +18,7 @@ public partial class ExtractorViewModel : ViewModelBase
 {
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
     private static readonly CultureInfo FrenchCulture = CultureInfo.GetCultureInfo("fr-FR");
+    private static readonly Regex ArrayIndexRegex = new(@"\[\s*-?\d+\s*\]", RegexOptions.Compiled);
     private readonly IExtractionSuggester _suggester;
     private readonly IResponseExtractor _responseExtractor;
     private readonly IClipboardService? _clipboardService;
@@ -147,6 +148,9 @@ public partial class ExtractorViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial bool UseTrailingAnchor { get; set; }
+
+    [ObservableProperty]
+    public partial bool ExtractAsList { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSuggestedJsonPath))]
@@ -282,6 +286,19 @@ public partial class ExtractorViewModel : ViewModelBase
     partial void OnUseTrailingAnchorChanged(bool value)
     {
         RefreshManualSelectionIfActive();
+    }
+
+    partial void OnExtractAsListChanged(bool value)
+    {
+        if (IsTreeMode && SelectedNode is not null)
+        {
+            var suggestion = _suggester.SuggestForNode(InputText ?? string.Empty, SelectedNode);
+            ApplySuggestionAndTest(suggestion);
+        }
+        else if (IsManualMode && _hasCapturedSelection)
+        {
+            RefreshManualSelectionIfActive();
+        }
     }
 
     [RelayCommand]
@@ -481,7 +498,8 @@ public partial class ExtractorViewModel : ViewModelBase
             Expression = useJsonPath ? SuggestedJsonPath! : SuggestedRegex!,
             RegexGroup = 1,
             VariableName = string.Empty,
-            IsRequired = true
+            IsRequired = true,
+            IsList = ExtractAsList
         };
 
         targetStep.Extractions.Add(extraction);
@@ -510,10 +528,16 @@ public partial class ExtractorViewModel : ViewModelBase
 
     private void ApplySuggestionAndTest(ExtractionSuggestion suggestion)
     {
-        SuggestedJsonPath = suggestion.JsonPath;
+        var jsonPath = suggestion.JsonPath;
+        if (ExtractAsList && !string.IsNullOrWhiteSpace(jsonPath))
+        {
+            jsonPath = ArrayIndexRegex.Replace(jsonPath, "[*]");
+        }
+
+        SuggestedJsonPath = jsonPath;
         SuggestedRegex = suggestion.Regex;
         OccurrenceCount = suggestion.OccurrenceCount;
-        OccurrenceWarningText = suggestion.OccurrenceWarning;
+        OccurrenceWarningText = ExtractAsList ? null : suggestion.OccurrenceWarning;
         InfoMessage = suggestion.InfoMessage;
 
         if (!HasSuggestedJsonPath && !HasSuggestedRegex)
@@ -530,8 +554,62 @@ public partial class ExtractorViewModel : ViewModelBase
 
         if (HasSuggestedJsonPath)
         {
+            if (ExtractAsList)
+            {
+                var listOutcome = _responseExtractor.ExtractList(tempResponse, new ChainExtraction
+                {
+                    VariableName = "preview",
+                    Source = ChainExtractionSource.Body,
+                    Kind = ExtractionKind.JsonPath,
+                    Expression = SuggestedJsonPath!,
+                    IsList = true
+                });
+
+                if (listOutcome.IsSuccess)
+                {
+                    TestStatus = LiveTestStatus.Success;
+                    TestStatusBadgeText = listOutcome.Values.Count <= 1
+                        ? $"{listOutcome.Values.Count} élément"
+                        : $"{listOutcome.Values.Count} éléments";
+                    var preview = string.Join(" | ", listOutcome.Values.Take(8));
+                    TestResultText = listOutcome.Values.Count > 8
+                        ? $"{preview} … (+{listOutcome.Values.Count - 8})"
+                        : preview;
+                }
+                else
+                {
+                    TestStatus = LiveTestStatus.Error;
+                    TestStatusBadgeText = "Aucune correspondance";
+                    TestResultText = listOutcome.ErrorMessage ?? "Échec d'extraction en liste JSONPath.";
+                }
+
+                if (HasSuggestedRegex)
+                {
+                    var regexListOutcome = _responseExtractor.ExtractList(tempResponse, new ChainExtraction
+                    {
+                        VariableName = "preview",
+                        Source = ChainExtractionSource.Body,
+                        Kind = ExtractionKind.Regex,
+                        Expression = SuggestedRegex!,
+                        RegexGroup = 1,
+                        IsList = true
+                    });
+
+                    RegexTestResultText = regexListOutcome.IsSuccess
+                        ? $"Test regex en liste : {regexListOutcome.Values.Count} élément(s) capturé(s)"
+                        : $"Test regex : {regexListOutcome.ErrorMessage}";
+                }
+                else
+                {
+                    RegexTestResultText = null;
+                }
+
+                return;
+            }
+
             var jsonOutcome = _responseExtractor.Extract(tempResponse, new ChainExtraction
             {
+                VariableName = "preview",
                 Source = ChainExtractionSource.Body,
                 Kind = ExtractionKind.JsonPath,
                 Expression = SuggestedJsonPath!
@@ -554,6 +632,7 @@ public partial class ExtractorViewModel : ViewModelBase
             {
                 var regexOutcome = _responseExtractor.Extract(tempResponse, new ChainExtraction
                 {
+                    VariableName = "preview",
                     Source = ChainExtractionSource.Body,
                     Kind = ExtractionKind.Regex,
                     Expression = SuggestedRegex!,
@@ -582,8 +661,42 @@ public partial class ExtractorViewModel : ViewModelBase
 
         // Mode Regex principal (XML / HTML / Texte)
         RegexTestResultText = null;
+        if (ExtractAsList)
+        {
+            var regexListOutcome = _responseExtractor.ExtractList(tempResponse, new ChainExtraction
+            {
+                VariableName = "preview",
+                Source = ChainExtractionSource.Body,
+                Kind = ExtractionKind.Regex,
+                Expression = SuggestedRegex!,
+                RegexGroup = 1,
+                IsList = true
+            });
+
+            if (regexListOutcome.IsSuccess)
+            {
+                TestStatus = LiveTestStatus.Success;
+                TestStatusBadgeText = regexListOutcome.Values.Count <= 1
+                    ? $"{regexListOutcome.Values.Count} élément"
+                    : $"{regexListOutcome.Values.Count} éléments";
+                var preview = string.Join(" | ", regexListOutcome.Values.Take(8));
+                TestResultText = regexListOutcome.Values.Count > 8
+                    ? $"{preview} … (+{regexListOutcome.Values.Count - 8})"
+                    : preview;
+            }
+            else
+            {
+                TestStatus = LiveTestStatus.Error;
+                TestStatusBadgeText = "Aucune correspondance";
+                TestResultText = regexListOutcome.ErrorMessage ?? "Aucune correspondance trouvée.";
+            }
+
+            return;
+        }
+
         var outcome = _responseExtractor.Extract(tempResponse, new ChainExtraction
         {
+            VariableName = "preview",
             Source = ChainExtractionSource.Body,
             Kind = ExtractionKind.Regex,
             Expression = SuggestedRegex!,
