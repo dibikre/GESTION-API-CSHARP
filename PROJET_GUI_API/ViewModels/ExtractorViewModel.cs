@@ -113,6 +113,21 @@ public partial class ExtractorViewModel : ViewModelBase
     public partial ExtractorNode? SelectedNode { get; set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ToggleExpandAllLabel))]
+    [NotifyPropertyChangedFor(nameof(ToggleExpandAllTooltip))]
+    public partial bool HasAnyExpandedNode { get; set; }
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleExpandAllCommand))]
+    public partial bool HasExpandableNodes { get; set; }
+
+    public string ToggleExpandAllLabel => HasAnyExpandedNode ? "Tout replier" : "Tout déplier";
+
+    public string ToggleExpandAllTooltip => HasAnyExpandedNode
+        ? "Replier tous les nœuds de l'arbre"
+        : "Déplier tous les nœuds de l'arbre";
+
+    [ObservableProperty]
     public partial int SelectionStart { get; set; }
 
     [ObservableProperty]
@@ -305,6 +320,7 @@ public partial class ExtractorViewModel : ViewModelBase
         {
             IsTreeMode = false;
             IsManualMode = true;
+            UpdateTreeExpandState();
             return;
         }
 
@@ -315,6 +331,21 @@ public partial class ExtractorViewModel : ViewModelBase
 
         IsTreeMode = true;
         IsManualMode = false;
+        UpdateTreeExpandState();
+    }
+
+    [RelayCommand(CanExecute = nameof(HasExpandableNodes))]
+    private void ToggleExpandAll()
+    {
+        if (TreeNodes.Count == 0)
+        {
+            UpdateTreeExpandState();
+            return;
+        }
+
+        var expandAll = !HasAnyExpandedNode;
+        SetSubtreeExpanded(TreeNodes, expandAll);
+        UpdateTreeExpandState();
     }
 
     [RelayCommand]
@@ -326,6 +357,7 @@ public partial class ExtractorViewModel : ViewModelBase
         }
 
         node.IsExpanded = !node.IsExpanded;
+        UpdateTreeExpandState();
     }
 
     [RelayCommand]
@@ -341,6 +373,7 @@ public partial class ExtractorViewModel : ViewModelBase
             if (node.HasChildren)
             {
                 node.IsExpanded = !node.IsExpanded;
+                UpdateTreeExpandState();
             }
             return;
         }
@@ -621,6 +654,55 @@ public partial class ExtractorViewModel : ViewModelBase
         if (SelectedTargetStep is null || !_chainViewModel.Steps.Contains(SelectedTargetStep))
         {
             SelectedTargetStep = _chainViewModel.SelectedStep ?? _chainViewModel.Steps[0];
+        }
+    }
+
+    private void UpdateTreeExpandState()
+    {
+        var hasExpandable = false;
+        var hasVisibleExpanded = false;
+
+        foreach (var node in TreeNodes)
+        {
+            if (node.HasChildren)
+            {
+                hasExpandable = true;
+                if (node.IsExpanded)
+                {
+                    hasVisibleExpanded = true;
+                    break;
+                }
+            }
+        }
+
+        HasExpandableNodes = hasExpandable;
+        HasAnyExpandedNode = hasVisibleExpanded;
+    }
+
+    private static void SetSubtreeExpanded(IEnumerable<ExtractorNode> roots, bool isExpanded)
+    {
+        var stack = new Stack<ExtractorNode>();
+        foreach (var root in roots)
+        {
+            stack.Push(root);
+        }
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            if (!current.HasChildren)
+            {
+                continue;
+            }
+
+            current.IsExpanded = isExpanded;
+            foreach (var child in current.Children)
+            {
+                if (child.HasChildren)
+                {
+                    stack.Push(child);
+                }
+            }
         }
     }
 

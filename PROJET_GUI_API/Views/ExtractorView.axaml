@@ -223,10 +223,37 @@
                 <Grid IsVisible="{Binding IsTreeMode}"
                       RowDefinitions="Auto,*"
                       RowSpacing="6">
-                    <TextBlock Grid.Row="0"
-                               Text="Clique sur un élément ci-dessous pour générer son extracteur :"
-                               FontSize="{DynamicResource FontSizeSmall}"
-                               Foreground="{DynamicResource TextMutedBrush}" />
+                    <Grid Grid.Row="0"
+                          ColumnDefinitions="Auto,*"
+                          ColumnSpacing="10">
+                        <Button Grid.Column="0"
+                                Classes="secondary"
+                                Command="{Binding ToggleExpandAllCommand}"
+                                ToolTip.Tip="{Binding ToggleExpandAllTooltip}"
+                                AutomationProperties.Name="{Binding ToggleExpandAllLabel}"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <Panel VerticalAlignment="Center">
+                                    <Path Classes="iconStroke"
+                                          IsVisible="{Binding HasAnyExpandedNode}"
+                                          Data="{StaticResource IconChevronDown}" />
+                                    <Path Classes="iconStroke"
+                                          IsVisible="{Binding !HasAnyExpandedNode}"
+                                          Data="{StaticResource IconChevronRight}" />
+                                </Panel>
+                                <TextBlock Text="{Binding ToggleExpandAllLabel}"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <TextBlock Grid.Column="1"
+                                   Text="Clique sur un élément ci-dessous pour générer son extracteur :"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </Grid>
 
                     <Border Grid.Row="1"
                             Background="{DynamicResource SurfaceAltBrush}"
