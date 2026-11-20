@@ -212,12 +212,106 @@
 
                     <Panel IsVisible="{Binding HasSelectedStep}">
                         <Panel DataContext="{Binding SelectedStep}">
-                            <Grid x:DataType="models:ChainStep"
+                            <Panel x:DataType="models:ChainStep">
+                            <!-- État initial : grand champ curl occupant toute la zone + 2 boutons -->
+                            <Grid IsVisible="{Binding !HasParsed}"
+                                  RowDefinitions="Auto,Auto,*,Auto"
+                                  RowSpacing="8">
+                                <Grid Grid.Row="0" ColumnDefinitions="200,*" ColumnSpacing="10">
+                                    <TextBox Grid.Column="0"
+                                             Text="{Binding Name}"
+                                             PlaceholderText="Nom de l'étape"
+                                             AutomationProperties.Name="Nom de l'étape" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="Colle une commande curl ci-dessous, puis analyse-la ou bascule en mode manuel."
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               Foreground="{DynamicResource TextMutedBrush}"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+
+                                <Border Grid.Row="1"
+                                        IsVisible="{Binding HasWarnings}"
+                                        Background="{DynamicResource WarningSoftBrush}"
+                                        BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="{DynamicResource ControlCornerRadius}">
+                                    <Expander Classes="warningExpander" IsExpanded="False">
+                                        <Expander.Header>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Path Classes="iconStroke"
+                                                      Data="{StaticResource IconWarning}"
+                                                      Stroke="{DynamicResource WarningBrush}" />
+                                                <TextBlock Text="{Binding WarningsSummaryText}"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           FontWeight="Medium"
+                                                           Foreground="{DynamicResource WarningBrush}" />
+                                            </StackPanel>
+                                        </Expander.Header>
+                                        <ScrollViewer MaxHeight="200"
+                                                      AllowAutoHide="False"
+                                                      VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollBarVisibility="Disabled">
+                                            <ItemsControl ItemsSource="{Binding Warnings}" Margin="26,0,12,6">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="x:String">
+                                                        <TextBlock Text="{Binding}"
+                                                                   Foreground="{DynamicResource WarningBrush}"
+                                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                                   TextWrapping="Wrap" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </Expander>
+                                </Border>
+
+                                <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                    <TextBox Grid.Column="0"
+                                             Classes="mono"
+                                             Text="{Binding CurlText}"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             VerticalAlignment="Stretch"
+                                             HorizontalAlignment="Stretch"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             PlaceholderText="Colle ici une commande curl pour cette étape..."
+                                             AutomationProperties.Name="Commande curl de l'étape" />
+
+                                    <Button Grid.Column="1"
+                                            Classes="icon"
+                                            VerticalAlignment="Top"
+                                            Command="{Binding #ChainRoot.ViewModel.EnlargeStepCurlCommand}"
+                                            ToolTip.Tip="Agrandir"
+                                            AutomationProperties.Name="Agrandir la commande curl de l'étape">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                                    </Button>
+                                </Grid>
+
+                                <StackPanel Grid.Row="3"
+                                            Orientation="Horizontal"
+                                            HorizontalAlignment="Left"
+                                            Spacing="8">
+                                    <Button Classes="primary"
+                                            Content="Analyser"
+                                            Command="{Binding #ChainRoot.ViewModel.ParseStepCurlCommand}"
+                                            AutomationProperties.Name="Analyser la commande curl de l'étape" />
+
+                                    <Button Classes="secondary"
+                                            Content="Basculer en manuel"
+                                            Command="{Binding #ChainRoot.ViewModel.InitManualStepCommand}"
+                                            ToolTip.Tip="Configurer cette étape manuellement sans commande curl"
+                                            AutomationProperties.Name="Configurer l'étape manuellement" />
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- État configuré (après analyse curl ou bascule manuelle) -->
+                            <Grid IsVisible="{Binding HasParsed}"
                                   RowDefinitions="Auto,Auto,Auto,*"
                                   RowSpacing="6">
 
-                        <!-- Nom + import curl -->
-                        <Grid Grid.Row="0" ColumnDefinitions="200,*,Auto,Auto,Auto" ColumnSpacing="8">
+                        <!-- Nom + import curl compact -->
+                        <Grid Grid.Row="0" ColumnDefinitions="200,*,Auto,Auto" ColumnSpacing="8">
                             <TextBox Grid.Column="0"
                                      Text="{Binding Name}"
                                      PlaceholderText="Nom de l'étape"
@@ -247,14 +341,6 @@
                                     Content="Analyser"
                                     Command="{Binding #ChainRoot.ViewModel.ParseStepCurlCommand}"
                                     AutomationProperties.Name="Analyser la commande curl de l'étape" />
-
-                            <Button Grid.Column="4"
-                                    Classes="ghost"
-                                    Content="Manuel"
-                                    IsVisible="{Binding !HasParsed}"
-                                    Command="{Binding #ChainRoot.ViewModel.InitManualStepCommand}"
-                                    ToolTip.Tip="Configurer cette étape manuellement sans curl"
-                                    AutomationProperties.Name="Configurer l'étape manuellement" />
                         </Grid>
 
                         <!-- Avertissements parse curl -->
@@ -584,6 +670,7 @@
                             </TabItem>
                         </TabControl>
                             </Grid>
+                            </Panel>
                         </Panel>
                     </Panel>
                 </Panel>
