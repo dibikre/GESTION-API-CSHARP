@@ -23,6 +23,7 @@ public partial class ChainViewModel : ViewModelBase
     private readonly IFolderPickerService _folderPickerService;
     private readonly IBatchResultWriter _batchResultWriter;
     private readonly IOverlayEditorService? _overlayEditor;
+    private readonly IChainCliGenerator _chainCliGenerator;
     private readonly RateLimitPolicy _sharedRateLimitPolicy;
     private bool _isBulkUpdating;
 
@@ -34,7 +35,8 @@ public partial class ChainViewModel : ViewModelBase
         IFolderPickerService folderPickerService,
         IBatchResultWriter batchResultWriter,
         BatchViewModel? batchViewModel = null,
-        IOverlayEditorService? overlayEditor = null)
+        IOverlayEditorService? overlayEditor = null,
+        IChainCliGenerator? chainCliGenerator = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
@@ -43,6 +45,7 @@ public partial class ChainViewModel : ViewModelBase
         _folderPickerService = folderPickerService ?? throw new ArgumentNullException(nameof(folderPickerService));
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
         _overlayEditor = overlayEditor;
+        _chainCliGenerator = chainCliGenerator ?? new ChainCliGenerator();
         _sharedRateLimitPolicy = batchViewModel?.RateLimitPolicy ?? new RateLimitPolicy();
         SelectedResponse = new ResponseViewModel(overlayEditor);
 
@@ -52,7 +55,11 @@ public partial class ChainViewModel : ViewModelBase
             OnPropertyChanged(nameof(HasChainStats));
         };
         AccumulatedVariables.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasAccumulatedVariables));
-        Steps.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasSteps));
+        Steps.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasSteps));
+            GenerateCliCommand.NotifyCanExecuteChanged();
+        };
         SelectedResponse.ExtractRequested += (_, args) => ExtractToLabCallback?.Invoke(args.Body, args.ContentType);
 
         AddStep();
@@ -65,6 +72,7 @@ public partial class ChainViewModel : ViewModelBase
     public static IReadOnlyList<ChainExtractionSource> ExtractionSources { get; } = Enum.GetValues<ChainExtractionSource>();
     public static IReadOnlyList<SaveMode> SaveModes { get; } = BatchViewModel.SaveModes;
     public static IReadOnlyList<GroupedFormat> GroupedFormats { get; } = BatchViewModel.GroupedFormats;
+    public static IReadOnlyList<ChainCliLanguage> CliLanguages { get; } = Enum.GetValues<ChainCliLanguage>();
 
     public ChainDefinition Definition { get; } = new();
 
@@ -134,6 +142,9 @@ public partial class ChainViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial bool KeepBodies { get; set; } = true;
+
+    [ObservableProperty]
+    public partial ChainCliLanguage SelectedCliLanguage { get; set; } = ChainCliLanguage.Python;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasChainStats))]
@@ -651,6 +662,32 @@ public partial class ChainViewModel : ViewModelBase
         {
             await _folderPickerService.OpenFolderAsync(LastOutputPath);
         }
+    }
+
+    private bool CanGenerateCli() => Steps.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanGenerateCli))]
+    private void GenerateCli()
+    {
+        if (Steps.Count == 0)
+        {
+            return;
+        }
+
+        var script = _chainCliGenerator.Generate(Steps, SelectedCliLanguage);
+        var languageLabel = SelectedCliLanguage switch
+        {
+            ChainCliLanguage.Python => "Python",
+            ChainCliLanguage.JavaScript => "JavaScript",
+            ChainCliLanguage.Php => "PHP",
+            _ => SelectedCliLanguage.ToString()
+        };
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            $"Script CLI {languageLabel} — Chaîne ({Steps.Count} {(Steps.Count <= 1 ? "étape" : "étapes")})",
+            script,
+            IsReadOnly: true,
+            OnSave: null));
     }
 
     private bool CanRun() =>

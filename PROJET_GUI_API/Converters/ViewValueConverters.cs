@@ -413,3 +413,15 @@ public static class LiveTestStatusConverters
         new FuncValueConverter<LiveTestStatus, bool>(status => status == LiveTestStatus.Error);
 }
 
+public static class ChainCliLanguageConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ChainCliLanguage, string>(lang => lang switch
+        {
+            ChainCliLanguage.Python => "Python",
+            ChainCliLanguage.JavaScript => "JavaScript",
+            ChainCliLanguage.Php => "PHP",
+            _ => lang.ToString()
+        });
+}
+

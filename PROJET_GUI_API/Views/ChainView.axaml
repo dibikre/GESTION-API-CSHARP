@@ -617,6 +617,27 @@
                         </WrapPanel>
 
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <ComboBox ItemsSource="{x:Static vm:ChainViewModel.CliLanguages}"
+                                      SelectedItem="{Binding SelectedCliLanguage}"
+                                      MinWidth="112"
+                                      AutomationProperties.Name="Langage du script CLI à générer">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:ChainCliLanguage">
+                                        <TextBlock Text="{Binding Converter={x:Static conv:ChainCliLanguageConverters.ToLabel}}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <Button Classes="secondary"
+                                    Command="{Binding GenerateCliCommand}"
+                                    ToolTip.Tip="Générer un script CLI exécutable pour cette chaîne"
+                                    AutomationProperties.Name="Générer le script CLI de la chaîne">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Path Classes="iconStroke" Data="{StaticResource IconCode}" />
+                                    <TextBlock Text="Générer CLI" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
                             <TextBlock Text="{Binding TotalRequestsText}"
                                        FontSize="{DynamicResource FontSizeSmall}"
                                        Foreground="{DynamicResource TextMutedBrush}"

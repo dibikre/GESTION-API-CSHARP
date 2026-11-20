@@ -67,6 +67,7 @@ public partial class App : Application
         services.AddSingleton<IOverlayEditorService, OverlayEditorService>();
         services.AddSingleton<IBatchRunner, BatchRunner>();
         services.AddSingleton<IChainRunner, ChainRunner>();
+        services.AddSingleton<IChainCliGenerator, ChainCliGenerator>();
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
         services.AddSingleton<IBatchResultWriter, BatchResultWriter>();
         services.AddSingleton<SingleRequestViewModel>();

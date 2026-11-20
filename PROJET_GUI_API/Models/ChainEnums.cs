@@ -25,3 +25,10 @@ public enum ChainRunStatus
     Failed,
     Cancelled
 }
+
+public enum ChainCliLanguage
+{
+    Python,
+    JavaScript,
+    Php
+}
