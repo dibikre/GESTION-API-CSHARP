@@ -59,9 +59,6 @@
         <Style Selector="Button.icon TextBlock.orderArrow">
             <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
         </Style>
-        <Style Selector="Button.icon:pointerover TextBlock.orderArrow">
-            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
-        </Style>
     </UserControl.Styles>
 
     <Border Background="{DynamicResource SurfaceBrush}"
