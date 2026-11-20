@@ -588,9 +588,9 @@ public sealed class ResponseExtractor : IResponseExtractor
         _ => element.GetRawText()
     };
 
-    private readonly record struct PathStep(string? PropertyName, int? ArrayIndex, bool IsWildcard = false);
+    internal readonly record struct PathStep(string? PropertyName, int? ArrayIndex, bool IsWildcard = false);
 
-    private static bool TryParseJsonPath(string rawPath, out List<PathStep> steps, out string? error)
+    internal static bool TryParseJsonPath(string rawPath, out List<PathStep> steps, out string? error)
     {
         steps = [];
         error = null;
@@ -680,7 +680,7 @@ public sealed class ResponseExtractor : IResponseExtractor
         return steps.Count > 0;
     }
 
-    private static string DescribeKind(JsonValueKind kind) => kind switch
+    internal static string DescribeKind(JsonValueKind kind) => kind switch
     {
         JsonValueKind.Object => "objet",
         JsonValueKind.Array => "tableau",

@@ -62,6 +62,7 @@ public partial class App : Application
         services.AddSingleton<ITemplateEngine, TemplateEngine>();
         services.AddSingleton<IRateLimitDetector, RateLimitDetector>();
         services.AddSingleton<IResponseExtractor, ResponseExtractor>();
+        services.AddSingleton<IResponseRefiner, ResponseRefiner>();
         services.AddSingleton<IExtractionSuggester, ExtractionSuggester>();
         services.AddSingleton<IClipboardService, ClipboardService>();
         services.AddSingleton<IOverlayEditorService, OverlayEditorService>();

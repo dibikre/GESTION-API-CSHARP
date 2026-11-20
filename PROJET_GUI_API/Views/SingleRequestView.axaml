@@ -25,12 +25,12 @@
         <!-- Barre d'envoi unifiée + progression fine -->
         <StackPanel Grid.Row="0" Spacing="4">
             <Border Classes="sendBar" Padding="2">
-                <Grid ColumnDefinitions="Auto,1,*,Auto">
+                <Grid ColumnDefinitions="Auto,1,2*,1,Auto,*,Auto,Auto">
                     <ComboBox Grid.Column="0"
                               Classes="borderless"
                               ItemsSource="{x:Static vm:RequestViewModel.Methods}"
                               SelectedItem="{Binding Request.Method}"
-                              MinWidth="96"
+                              MinWidth="92"
                               AutomationProperties.Name="Méthode HTTP">
                         <ComboBox.ItemTemplate>
                             <DataTemplate x:DataType="models:HttpMethodType">
@@ -52,6 +52,7 @@
                     <TextBox Grid.Column="2"
                              Classes="borderless mono"
                              Text="{Binding Request.Url}"
+                             MinWidth="180"
                              PlaceholderText="https://api.exemple.com/ressource"
                              AutomationProperties.Name="URL de la requête">
                         <TextBox.KeyBindings>
@@ -59,7 +60,49 @@
                         </TextBox.KeyBindings>
                     </TextBox>
 
-                    <Panel Grid.Column="3" Margin="4,0,0,0">
+                    <Border Grid.Column="3"
+                            Width="1"
+                            Background="{DynamicResource BorderBrush}"
+                            Margin="0,5" />
+
+                    <ComboBox Grid.Column="4"
+                              Classes="borderless"
+                              ItemsSource="{x:Static vm:ResponseViewModel.FilterModes}"
+                              SelectedItem="{Binding Response.FilterMode}"
+                              MinWidth="86"
+                              ToolTip.Tip="Mode d'affinage de la réponse (Auto, JSONPath, Regex, XPath)"
+                              AutomationProperties.Name="Mode d'affinage de la réponse">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="models:ResponseFilterMode">
+                                <TextBlock Text="{Binding Converter={x:Static conv:ResponseFilterModeConverters.ToLabel}}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <TextBox Grid.Column="5"
+                             Classes="borderless mono"
+                             Text="{Binding Response.FilterExpression}"
+                             MinWidth="140"
+                             PlaceholderText="Regex ou parse (ex. data.items[*].id)"
+                             ToolTip.Tip="Expression Regex, JSONPath ou XPath pour affiner la réponse affichée (optionnel)"
+                             AutomationProperties.Name="Regex ou expression de parse pour affiner la réponse">
+                        <TextBox.KeyBindings>
+                            <KeyBinding Gesture="Enter" Command="{Binding Response.ApplyFilterCommand}" />
+                        </TextBox.KeyBindings>
+                    </TextBox>
+
+                    <Button Grid.Column="6"
+                            Classes="icon"
+                            IsVisible="{Binding Response.IsFilterActive}"
+                            Command="{Binding Response.ClearFilterCommand}"
+                            VerticalAlignment="Center"
+                            Margin="0,0,2,0"
+                            ToolTip.Tip="Effacer le filtre de réponse"
+                            AutomationProperties.Name="Effacer le filtre de réponse">
+                        <Path Classes="iconStroke" Data="{StaticResource IconClose}" />
+                    </Button>
+
+                    <Panel Grid.Column="7" Margin="4,0,0,0">
                         <Button Classes="primary"
                                 Command="{Binding SendCommand}"
                                 IsVisible="{Binding !Response.IsBusy}"

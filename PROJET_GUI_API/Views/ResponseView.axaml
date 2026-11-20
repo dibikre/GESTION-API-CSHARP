@@ -193,29 +193,78 @@
                         AutomationProperties.Name="Extraire une valeur dans l'onglet Extracteur" />
             </WrapPanel>
 
-            <!-- Bandeau d'erreur fin -->
-            <Border Grid.Row="1"
-                    IsVisible="{Binding HasError}"
-                    Background="{DynamicResource DangerSoftBrush}"
-                    BorderBrush="{DynamicResource DangerBorderSoftBrush}"
-                    BorderThickness="1"
-                    CornerRadius="{DynamicResource ControlCornerRadius}"
-                    Padding="10,6">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Path Classes="iconStroke"
-                          Width="14"
-                          Height="14"
-                          Data="{StaticResource IconWarning}"
-                          Stroke="{DynamicResource DangerBrush}"
-                          VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding ErrorMessage}"
-                               Foreground="{DynamicResource DangerBrush}"
-                               FontSize="12"
-                               TextWrapping="Wrap"
-                               VerticalAlignment="Center"
-                               AutomationProperties.Name="Message d'erreur" />
-                </StackPanel>
-            </Border>
+            <!-- Bandeau d'erreur et/ou d'affinage actif -->
+            <StackPanel Grid.Row="1"
+                        IsVisible="{Binding HasRow1Banner}"
+                        Spacing="6">
+                <Border IsVisible="{Binding HasError}"
+                        Background="{DynamicResource DangerSoftBrush}"
+                        BorderBrush="{DynamicResource DangerBorderSoftBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                        Padding="10,6">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Path Classes="iconStroke"
+                              Width="14"
+                              Height="14"
+                              Data="{StaticResource IconWarning}"
+                              Stroke="{DynamicResource DangerBrush}"
+                              VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding ErrorMessage}"
+                                   Foreground="{DynamicResource DangerBrush}"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center"
+                                   AutomationProperties.Name="Message d'erreur" />
+                    </StackPanel>
+                </Border>
+
+                <Border IsVisible="{Binding IsFilterBannerVisible}"
+                        Background="{DynamicResource SurfaceAltBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                        Padding="8,4">
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock IsVisible="{Binding HasFilterStatus}"
+                                       Text="{Binding FilterStatusText}"
+                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                       FontSize="11.5"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource AccentBrush}"
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center" />
+                            <TextBlock IsVisible="{Binding HasFilterError}"
+                                       Text="{Binding FilterErrorText}"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource WarningBrush}"
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Classes="ghost"
+                                Command="{Binding ToggleUnfilteredBodyCommand}"
+                                Content="{Binding ToggleRawFilterButtonText}"
+                                FontSize="{DynamicResource FontSizeSmall}"
+                                Height="24"
+                                MinHeight="24"
+                                Padding="8,0"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Basculer entre la réponse affinée et la réponse brute" />
+
+                        <Button Grid.Column="2"
+                                Classes="icon"
+                                Command="{Binding ClearFilterCommand}"
+                                ToolTip.Tip="Effacer le filtre"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Effacer le filtre de réponse">
+                            <Path Classes="iconStroke" Data="{StaticResource IconClose}" />
+                        </Button>
+                    </Grid>
+                </Border>
+            </StackPanel>
 
             <!-- Onglets Corps et En-têtes -->
             <TabControl Grid.Row="2"

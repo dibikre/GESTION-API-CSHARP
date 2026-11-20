@@ -425,3 +425,17 @@ public static class ChainCliLanguageConverters
         });
 }
 
+public static class ResponseFilterModeConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ResponseFilterMode, string>(mode => mode switch
+        {
+            ResponseFilterMode.Auto => "Auto",
+            ResponseFilterMode.JsonPath => "JSONPath",
+            ResponseFilterMode.Regex => "Regex",
+            ResponseFilterMode.XPath => "XPath",
+            _ => mode.ToString()
+        });
+}
+
+
