@@ -65,7 +65,7 @@ public partial class ChainViewModel : ViewModelBase
             OnPropertyChanged(nameof(HasResults));
             OnPropertyChanged(nameof(HasChainStats));
         };
-        AccumulatedVariables.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasAccumulatedVariables));
+        DeclaredVariables.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasDeclaredVariables));
         Steps.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(HasSteps));
@@ -208,9 +208,9 @@ public partial class ChainViewModel : ViewModelBase
         $"{SkippedCount} {(SkippedCount <= 1 ? "ignorée" : "ignorées")}" +
         (RetryCount > 0 ? $" · {RetryCount} {(RetryCount <= 1 ? "nouvelle tentative" : "nouvelles tentatives")}" : string.Empty);
 
-    public ObservableCollection<ChainAccumulatedVariableItem> AccumulatedVariables { get; } = [];
+    public ObservableCollection<ChainDeclaredVariableItem> DeclaredVariables { get; } = [];
 
-    public bool HasAccumulatedVariables => AccumulatedVariables.Count > 0;
+    public bool HasDeclaredVariables => DeclaredVariables.Count > 0;
 
     public ObservableCollection<ChainStepResult> Results { get; } = [];
 
@@ -828,6 +828,7 @@ public partial class ChainViewModel : ViewModelBase
                 extraction.LastExtractedValue = null;
                 extraction.ErrorText = listOutcome.ErrorMessage;
             }
+            RefreshDeclaredVariables();
             return;
         }
 
@@ -843,6 +844,8 @@ public partial class ChainViewModel : ViewModelBase
             extraction.LastExtractedValue = null;
             extraction.ErrorText = outcome.ErrorMessage;
         }
+
+        RefreshDeclaredVariables();
     }
 
     [RelayCommand]
@@ -866,16 +869,27 @@ public partial class ChainViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void InspectAccumulatedVariable(ChainAccumulatedVariableItem? item)
+    private async Task CopyDeclaredVariableAsync(ChainDeclaredVariableItem? item)
     {
-        if (item is null || !item.HasInspectableText || string.IsNullOrEmpty(item.FullText))
+        if (item is null || !item.CanCopyOrInspect || _clipboardService is null)
+        {
+            return;
+        }
+
+        await _clipboardService.SetTextAsync(item.RawContentForCopy);
+    }
+
+    [RelayCommand]
+    private void InspectDeclaredVariable(ChainDeclaredVariableItem? item)
+    {
+        if (item is null || !item.CanCopyOrInspect)
         {
             return;
         }
 
         _overlayEditor?.RequestOpen(new OverlayEditorRequest(
-            $"Contenu de {item.Name}",
-            item.FullText,
+            $"Contenu de {item.TokenName}",
+            item.RawContentForCopy,
             IsReadOnly: true,
             OnSave: null));
     }
@@ -987,9 +1001,9 @@ public partial class ChainViewModel : ViewModelBase
         }
 
         Results.Clear();
-        AccumulatedVariables.Clear();
         _lastAccumulatedVariables.Clear();
         _lastAccumulatedLists.Clear();
+        RefreshDeclaredVariables();
         foreach (var step in Steps)
         {
             step.LastReturnValue = string.Empty;
@@ -1114,9 +1128,7 @@ public partial class ChainViewModel : ViewModelBase
 
             if (report.AccumulatedVariables is not null || report.AccumulatedLists is not null)
             {
-                UpdateAccumulatedVariablesDisplay(
-                    report.AccumulatedVariables ?? new Dictionary<string, string>(),
-                    report.AccumulatedLists);
+                RefreshDeclaredVariables();
             }
 
             OnPropertyChanged(nameof(ChainStatsSummaryText));
@@ -1134,7 +1146,7 @@ public partial class ChainViewModel : ViewModelBase
                 k => k.Key,
                 v => (IReadOnlyList<string>)v.Value.ToList(),
                 StringComparer.Ordinal);
-            UpdateAccumulatedVariablesDisplay(runResult.AllVariables, runResult.AllLists);
+            RefreshDeclaredVariables();
             FinalStatusText = runResult.FinalStatus switch
             {
                 ChainRunStatus.Success => $"Chaîne réussie ({runResult.TotalDurationMs} ms)",
@@ -1161,34 +1173,24 @@ public partial class ChainViewModel : ViewModelBase
         }
     }
 
-    private void UpdateAccumulatedVariablesDisplay(
-        IReadOnlyDictionary<string, string> variables,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? lists = null)
+    private void RefreshDeclaredVariables()
     {
-        AccumulatedVariables.Clear();
-        foreach (var kvp in variables.OrderBy(k => k.Key, StringComparer.Ordinal))
+        var previousStates = new Dictionary<string, bool>(DeclaredVariables.Count, StringComparer.Ordinal);
+        foreach (var existing in DeclaredVariables)
         {
-            AccumulatedVariables.Add(new ChainAccumulatedVariableItem
-            {
-                Name = kvp.Key,
-                RawValue = kvp.Value
-            });
+            previousStates[existing.Key] = existing.IsExpanded;
         }
 
-        if (lists is not null)
+        var rebuilt = ChainDeclaredVariableBuilder.Build(
+            Steps,
+            _lastAccumulatedVariables,
+            _lastAccumulatedLists,
+            previousStates);
+
+        DeclaredVariables.Clear();
+        foreach (var item in rebuilt)
         {
-            foreach (var kvp in lists.OrderBy(k => k.Key, StringComparer.Ordinal))
-            {
-                var preview = kvp.Value.Count == 0
-                    ? "(vide)"
-                    : $"[{kvp.Value.Count}] {string.Join(", ", kvp.Value.Take(5))}{(kvp.Value.Count > 5 ? " …" : string.Empty)}";
-                AccumulatedVariables.Add(new ChainAccumulatedVariableItem
-                {
-                    Name = $"[[{kvp.Key}]]",
-                    RawValue = preview,
-                    FullText = kvp.Value.Count == 0 ? null : string.Join(Environment.NewLine, kvp.Value)
-                });
-            }
+            DeclaredVariables.Add(item);
         }
     }
 
@@ -1463,6 +1465,8 @@ public partial class ChainViewModel : ViewModelBase
         {
             ChainWarnings.Add(w);
         }
+
+        RefreshDeclaredVariables();
 
         OnPropertyChanged(nameof(HasChainWarnings));
         OnPropertyChanged(nameof(AvailableExtractedVariablesText));

@@ -211,7 +211,8 @@ Permet d'enchaîner plusieurs requêtes HTTP où les valeurs extraites d'une ét
   - L'application valide avant lancement que chaque `[[liste]]` provient d'une étape précédente et qu'aucun `{{variable}}` n'est utilisé à la place d'une liste.
 - **Exécution et résultats** :
   - La chaîne s'exécute séquentiellement d'étape en étape ; la première réponse arrivée s'affiche immédiatement dans le panneau de droite.
-  - Un panneau `Variables accumulées` liste les valeurs scalaires et les listes collectées au fil de l'exécution, avec un bouton `Voir` pour afficher l'intégralité d'une liste dans l'overlay (masqué pour les variables sensibles).
+  - La zone inférieure gauche est divisée en deux panneaux redimensionnables : la liste des résultats d'exécution à gauche et un panneau vertical `Variables déclarées` à droite.
+  - Chaque variable ou liste déclarée (variables d'étape `{{...}}` et règles d'extraction `{{...}}` / `[[...]]`) y apparaît verticalement sous forme de menu déroulant (`Expander`) indiquant son étape d'origine, son type et son contenu en direct (valeur fixe, plage/liste, test hors ligne ou valeur extraite lors de l'exécution, avec boutons `Copier` et `Voir` pour les contenus complets ; masquage automatique des noms sensibles).
 - **Générateur CLI autonome (`ChainCliGenerator`)** :
   - Génère un script exécutable complet reproduisant fidèlement l'enchaînement configuré (en-têtes, authentification, substitution `{{...}}`, itération `[[...]]`, boucles Combinaisons/Parallèle, extractions JSONPath y compris `[n++]`/`[*]`, extractions Regex, étapes de retour pur et évaluation des expressions `Retour`) :
     - **Python** (`PythonChainCliEmitter`) : Python 3 utilisant uniquement la bibliothèque standard (`urllib.request`, `json`, `re`, `gzip`, `zlib`, `uuid`).
@@ -344,7 +345,7 @@ PROJET_GUI_API/
 │   ├── BatchVariable.cs               Modèle complet de variable de gabarit (Fixe, Plage, Liste, Aléatoire)
 │   ├── ChainEnums.cs                  Énumérations de chaîne (sources, types d'extraction, statuts, langages CLI)
 │   ├── ChainExtraction.cs             Règle d'extraction entre étapes (corps/en-tête, JSONPath/Regex, liste)
-│   ├── ChainResults.cs                Résultats de planification, d'exécution, retours et variables accumulées de chaîne
+│   ├── ChainResults.cs                Résultats de planification, d'exécution, retours et variables déclarées de chaîne
 │   ├── ChainStep.cs                   Modèle d'une étape de chaîne HTTP et de son expression de retour
 │   ├── CookiePairItem.cs              Paire cookie activable (nom, valeur) pour l'éditeur popup
 │   ├── CurlParseResult.cs             Résultat du parseur curl et liste d'avertissements
@@ -362,6 +363,7 @@ PROJET_GUI_API/
 │   ├── BatchResultWriter.cs           Écriture asynchrone sur disque (fichiers unitaires, JSON, JSONL, CSV)
 │   ├── BatchRunner.cs                 Moteur d'exécution et de prévisualisation des lots
 │   ├── ChainCliGenerator.cs           Orchestrateur d'export CLI et construction des spécifications
+│   ├── ChainDeclaredVariableBuilder.cs Agrégation des variables et extractions déclarées avec aperçu de contenu
 │   ├── ChainRunner.cs                 Moteur d'exécution séquentielle et dynamique des chaînes (avec retours)
 │   ├── ClipboardService.cs            Accès au presse-papiers via TopLevel Avalonia
 │   ├── CookieEditorService.cs         Bus d'ouverture et découpage/recomposition des en-têtes Cookie

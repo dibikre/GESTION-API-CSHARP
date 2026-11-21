@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using ApiTester.Services;
 using ApiTester.ViewModels;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace ApiTester.Models;
 
@@ -12,14 +13,21 @@ public sealed class ChainDefinition
     public ObservableCollection<ChainStep> Steps { get; } = [];
 }
 
-public sealed class ChainAccumulatedVariableItem
+public sealed partial class ChainDeclaredVariableItem : ObservableObject
 {
-    public required string Name { get; init; }
-    public required string RawValue { get; init; }
-    public string? FullText { get; init; }
-    public string DisplayValue => BatchExecutionHelper.MaskIfSensitive(Name, RawValue);
-    public bool HasInspectableText =>
-        !string.IsNullOrEmpty(FullText) && !BatchExecutionHelper.IsSensitiveName(Name);
+    public required string Key { get; init; }
+    public required string TokenName { get; init; }
+    public required string RawName { get; init; }
+    public required string SourceBadge { get; init; }
+    public required string ContentText { get; init; }
+    public string RawContentForCopy { get; init; } = string.Empty;
+    public bool HasValue { get; init; }
+    public bool IsSensitive { get; init; }
+
+    public bool CanCopyOrInspect => HasValue && !IsSensitive && !string.IsNullOrEmpty(RawContentForCopy);
+
+    [ObservableProperty]
+    public partial bool IsExpanded { get; set; }
 }
 
 public sealed class ChainStepResult

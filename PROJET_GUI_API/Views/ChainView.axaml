@@ -50,6 +50,10 @@
         <Style Selector="Border.chainStatusPill.skipped TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource TextFaintBrush}" />
         </Style>
+
+        <Style Selector="SelectableTextBlock.varPending">
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        </Style>
     </UserControl.Styles>
 
     <Grid RowSpacing="6">
@@ -929,54 +933,6 @@
                         </Expander>
                     </Border>
 
-                    <!-- Variables accumulées (section repliable, valeurs sensibles masquées) -->
-                    <Border IsVisible="{Binding HasAccumulatedVariables}"
-                            BorderBrush="{DynamicResource BorderBrush}"
-                            BorderThickness="0,1,0,0"
-                            Padding="0,4,0,0">
-                        <Expander Classes="sectionExpander" IsExpanded="False">
-                            <Expander.Header>
-                                <TextBlock Text="{Binding AccumulatedVariables.Count, StringFormat='Variables accumulées ({0})'}"
-                                           FontSize="{DynamicResource FontSizeSmall}"
-                                           Foreground="{DynamicResource TextMutedBrush}" />
-                            </Expander.Header>
-                            <ItemsControl ItemsSource="{Binding AccumulatedVariables}" Margin="0,4,0,2">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="models:ChainAccumulatedVariableItem">
-                                        <Grid ColumnDefinitions="180,*,Auto" ColumnSpacing="8" Margin="0,1">
-                                            <TextBlock Grid.Column="0"
-                                                       Text="{Binding Name}"
-                                                       FontFamily="{DynamicResource MonoFontFamily}"
-                                                       FontSize="{DynamicResource FontSizeCaption}"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource TextMutedBrush}"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       VerticalAlignment="Center" />
-                                            <SelectableTextBlock Grid.Column="1"
-                                                                 Text="{Binding DisplayValue}"
-                                                                 FontFamily="{DynamicResource MonoFontFamily}"
-                                                                 FontSize="{DynamicResource FontSizeCaption}"
-                                                                 TextTrimming="CharacterEllipsis"
-                                                                 VerticalAlignment="Center" />
-                                            <Button Grid.Column="2"
-                                                    Classes="ghost"
-                                                    IsVisible="{Binding HasInspectableText}"
-                                                    Content="Voir"
-                                                    Command="{Binding #ChainRoot.ViewModel.InspectAccumulatedVariableCommand}"
-                                                    CommandParameter="{Binding}"
-                                                    FontSize="{DynamicResource FontSizeCaption}"
-                                                    Height="20"
-                                                    MinHeight="20"
-                                                    Padding="6,0"
-                                                    VerticalAlignment="Center"
-                                                    AutomationProperties.Name="Afficher tout le contenu de la liste" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </Expander>
-                    </Border>
-
                     <!-- Enregistrement des réponses (replié par défaut) -->
                     <Border BorderBrush="{DynamicResource BorderBrush}"
                             BorderThickness="0,1,0,0"
@@ -1070,19 +1026,26 @@
                 </StackPanel>
             </Border>
 
-            <!-- Résultats de la chaîne à gauche + ResponseView à droite -->
+            <!-- Résultats + Variables déclarées à gauche | ResponseView à droite -->
             <Grid Grid.Row="1" ColumnSpacing="4">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" MinWidth="320" />
+                    <ColumnDefinition Width="1.15*" MinWidth="320" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" MinWidth="320" />
+                    <ColumnDefinition Width="0.85*" MinWidth="300" />
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0"
-                        Background="{DynamicResource SurfaceBrush}"
-                        CornerRadius="{DynamicResource PanelCornerRadius}"
-                        Padding="10">
-                    <Grid RowDefinitions="Auto,*" RowSpacing="6">
+                <Grid Grid.Column="0" ColumnSpacing="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.05*" MinWidth="140" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="0.95*" MinWidth="140" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0"
+                            Background="{DynamicResource SurfaceBrush}"
+                            CornerRadius="{DynamicResource PanelCornerRadius}"
+                            Padding="10">
+                        <Grid RowDefinitions="Auto,*" RowSpacing="6">
                         <StackPanel Grid.Row="0" IsVisible="{Binding HasChainStats}" Spacing="4">
                             <Grid IsVisible="{Binding IsRunning}"
                                   ColumnDefinitions="*,Auto"
@@ -1200,6 +1163,137 @@
                         </ListBox>
                     </Grid>
                 </Border>
+
+                    <GridSplitter Grid.Column="1"
+                                  Classes="vertical"
+                                  ResizeDirection="Columns" />
+
+                    <!-- Liste verticale des variables déclarées avec dropdown -->
+                    <Border Grid.Column="2"
+                            Background="{DynamicResource SurfaceBrush}"
+                            CornerRadius="{DynamicResource PanelCornerRadius}"
+                            Padding="10">
+                        <Grid RowDefinitions="Auto,*" RowSpacing="6">
+                            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                <TextBlock Grid.Column="0"
+                                           Text="Variables déclarées"
+                                           FontSize="{DynamicResource FontSizeSmall}"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Border Grid.Column="1"
+                                        IsVisible="{Binding HasDeclaredVariables}"
+                                        Background="{DynamicResource AccentSoftBrush}"
+                                        CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                        Padding="6,1"
+                                        VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding DeclaredVariables.Count}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentBrush}" />
+                                </Border>
+                            </Grid>
+
+                            <TextBlock Grid.Row="1"
+                                       IsVisible="{Binding !HasDeclaredVariables}"
+                                       Text="Aucune variable déclarée."
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+
+                            <ScrollViewer Grid.Row="1"
+                                          IsVisible="{Binding HasDeclaredVariables}"
+                                          AllowAutoHide="False"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                                <ItemsControl ItemsSource="{Binding DeclaredVariables}" Margin="0,0,4,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="models:ChainDeclaredVariableItem">
+                                            <Border Background="{DynamicResource SurfaceAltBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                                                    Padding="8,2"
+                                                    Margin="0,0,0,4">
+                                                <Expander Classes="sectionExpander"
+                                                          IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
+                                                    <Expander.Header>
+                                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                                            <TextBlock Grid.Column="0"
+                                                                       Text="{Binding TokenName}"
+                                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{DynamicResource AccentBrush}"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       ToolTip.Tip="{Binding TokenName}"
+                                                                       VerticalAlignment="Center" />
+                                                            <Border Grid.Column="1"
+                                                                    Background="{DynamicResource SurfaceBrush}"
+                                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                                    Padding="5,1"
+                                                                    VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding SourceBadge}"
+                                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                                           Foreground="{DynamicResource TextMutedBrush}" />
+                                                            </Border>
+                                                        </Grid>
+                                                    </Expander.Header>
+
+                                                    <StackPanel Spacing="6" Margin="0,4,0,6">
+                                                        <Border Background="{DynamicResource SurfaceBrush}"
+                                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                                BorderThickness="1"
+                                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                                Padding="8,6">
+                                                            <ScrollViewer MaxHeight="140"
+                                                                          AllowAutoHide="False"
+                                                                          VerticalScrollBarVisibility="Auto"
+                                                                          HorizontalScrollBarVisibility="Auto">
+                                                                <SelectableTextBlock Text="{Binding ContentText}"
+                                                                                     Classes.varPending="{Binding !HasValue}"
+                                                                                     FontFamily="{DynamicResource MonoFontFamily}"
+                                                                                     FontSize="{DynamicResource FontSizeCaption}"
+                                                                                     TextWrapping="Wrap" />
+                                                            </ScrollViewer>
+                                                        </Border>
+
+                                                        <StackPanel IsVisible="{Binding CanCopyOrInspect}"
+                                                                    Orientation="Horizontal"
+                                                                    HorizontalAlignment="Right"
+                                                                    Spacing="4">
+                                                            <Button Classes="ghost"
+                                                                    Content="Copier"
+                                                                    Command="{Binding #ChainRoot.ViewModel.CopyDeclaredVariableCommand}"
+                                                                    CommandParameter="{Binding}"
+                                                                    FontSize="{DynamicResource FontSizeCaption}"
+                                                                    Height="22"
+                                                                    MinHeight="22"
+                                                                    Padding="8,0"
+                                                                    AutomationProperties.Name="Copier le contenu de la variable" />
+                                                            <Button Classes="ghost"
+                                                                    Content="Voir"
+                                                                    Command="{Binding #ChainRoot.ViewModel.InspectDeclaredVariableCommand}"
+                                                                    CommandParameter="{Binding}"
+                                                                    FontSize="{DynamicResource FontSizeCaption}"
+                                                                    Height="22"
+                                                                    MinHeight="22"
+                                                                    Padding="8,0"
+                                                                    AutomationProperties.Name="Afficher tout le contenu de la variable" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Expander>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+                </Grid>
 
                 <GridSplitter Grid.Column="1"
                               Classes="vertical"
