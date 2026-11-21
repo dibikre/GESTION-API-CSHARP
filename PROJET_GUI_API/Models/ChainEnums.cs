@@ -101,3 +101,11 @@ public enum ExtractionConditionMatchMode
     All,
     Any
 }
+
+public enum ChainResultSortMode
+{
+    ChronologicalAsc,
+    ChronologicalDesc,
+    SizeDesc,
+    SizeAsc
+}

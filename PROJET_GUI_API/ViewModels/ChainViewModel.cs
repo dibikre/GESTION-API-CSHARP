@@ -31,7 +31,9 @@ public partial class ChainViewModel : ViewModelBase
     private readonly RateLimitPolicy _sharedRateLimitPolicy;
     private Dictionary<string, string> _lastAccumulatedVariables = new(StringComparer.Ordinal);
     private Dictionary<string, IReadOnlyList<string>> _lastAccumulatedLists = new(StringComparer.Ordinal);
+    private readonly List<ChainStepResult> _rawResults = [];
     private bool _isBulkUpdating;
+    private bool _isSortingResults;
     private string? _lastPipelineDirectory;
     private string? _lastPipelineFileName;
 
@@ -90,6 +92,7 @@ public partial class ChainViewModel : ViewModelBase
     public static IReadOnlyList<SaveMode> SaveModes { get; } = BatchViewModel.SaveModes;
     public static IReadOnlyList<GroupedFormat> GroupedFormats { get; } = BatchViewModel.GroupedFormats;
     public static IReadOnlyList<ChainCliLanguage> CliLanguages { get; } = Enum.GetValues<ChainCliLanguage>();
+    public static IReadOnlyList<ChainResultSortMode> ResultSortModes { get; } = Enum.GetValues<ChainResultSortMode>();
 
     public ChainDefinition Definition { get; } = new();
 
@@ -223,6 +226,9 @@ public partial class ChainViewModel : ViewModelBase
     public bool HasResults => Results.Count > 0;
 
     [ObservableProperty]
+    public partial ChainResultSortMode SelectedResultSortMode { get; set; } = ChainResultSortMode.ChronologicalAsc;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSelectedReturnValue))]
     [NotifyPropertyChangedFor(nameof(SelectedReturnPreviewText))]
     [NotifyCanExecuteChangedFor(nameof(CopySelectedReturnCommand))]
@@ -304,8 +310,18 @@ public partial class ChainViewModel : ViewModelBase
         MoveStepDownCommand.NotifyCanExecuteChanged();
     }
 
+    partial void OnSelectedResultSortModeChanged(ChainResultSortMode value)
+    {
+        RebuildSortedResults();
+    }
+
     partial void OnSelectedResultChanged(ChainStepResult? value)
     {
+        if (_isSortingResults)
+        {
+            return;
+        }
+
         if (value is null)
         {
             SelectedResponse.Clear();
@@ -682,6 +698,21 @@ public partial class ChainViewModel : ViewModelBase
             value,
             IsReadOnly: true,
             OnSave: null));
+    }
+
+    [RelayCommand]
+    private async Task CopyResultAsCurlAsync(ChainStepResult? result)
+    {
+        if (result is null || !result.CanCopyAsCurl || result.ExecutedRequest is null || _clipboardService is null)
+        {
+            return;
+        }
+
+        var curlCommand = CurlCommandBuilder.Build(result.ExecutedRequest);
+        if (!string.IsNullOrWhiteSpace(curlCommand))
+        {
+            await _clipboardService.SetTextAsync(curlCommand);
+        }
     }
 
     [RelayCommand]
@@ -1212,6 +1243,7 @@ public partial class ChainViewModel : ViewModelBase
             return;
         }
 
+        _rawResults.Clear();
         Results.Clear();
         _lastAccumulatedVariables.Clear();
         _lastAccumulatedLists.Clear();
@@ -1285,7 +1317,9 @@ public partial class ChainViewModel : ViewModelBase
 
             if (!report.IsRetryUpdate && report.Item is not null)
             {
-                Results.Add(report.Item);
+                report.Item.SequenceOrder = _rawResults.Count;
+                _rawResults.Add(report.Item);
+                InsertResultSorted(report.Item);
                 if (SelectedResult is null)
                 {
                     SelectedResult = report.Item;
@@ -1383,6 +1417,79 @@ public partial class ChainViewModel : ViewModelBase
             IsRunning = false;
             OnPropertyChanged(nameof(ChainStatsSummaryText));
         }
+    }
+
+    private void InsertResultSorted(ChainStepResult item)
+    {
+        if (Results.Count == 0 || CompareResults(item, Results[^1], SelectedResultSortMode) >= 0)
+        {
+            Results.Add(item);
+            return;
+        }
+
+        for (var i = 0; i < Results.Count; i++)
+        {
+            if (CompareResults(item, Results[i], SelectedResultSortMode) < 0)
+            {
+                Results.Insert(i, item);
+                return;
+            }
+        }
+
+        Results.Add(item);
+    }
+
+    private void RebuildSortedResults()
+    {
+        if (_rawResults.Count == 0)
+        {
+            Results.Clear();
+            return;
+        }
+
+        var previousSelection = SelectedResult;
+        var ordered = new List<ChainStepResult>(_rawResults);
+        ordered.Sort((left, right) => CompareResults(left, right, SelectedResultSortMode));
+
+        _isSortingResults = true;
+        try
+        {
+            Results.Clear();
+            foreach (var item in ordered)
+            {
+                Results.Add(item);
+            }
+
+            if (previousSelection is not null && Results.Contains(previousSelection))
+            {
+                SelectedResult = previousSelection;
+            }
+        }
+        finally
+        {
+            _isSortingResults = false;
+        }
+
+        if (previousSelection is not null && !ReferenceEquals(SelectedResult, previousSelection))
+        {
+            SelectedResult = Results.FirstOrDefault();
+        }
+    }
+
+    private static int CompareResults(ChainStepResult left, ChainStepResult right, ChainResultSortMode sortMode)
+    {
+        var comparison = sortMode switch
+        {
+            ChainResultSortMode.ChronologicalAsc => left.SequenceOrder.CompareTo(right.SequenceOrder),
+            ChainResultSortMode.ChronologicalDesc => right.SequenceOrder.CompareTo(left.SequenceOrder),
+            ChainResultSortMode.SizeDesc => right.SizeBytes.CompareTo(left.SizeBytes),
+            ChainResultSortMode.SizeAsc => left.SizeBytes.CompareTo(right.SizeBytes),
+            _ => left.SequenceOrder.CompareTo(right.SequenceOrder)
+        };
+
+        return comparison != 0
+            ? comparison
+            : left.SequenceOrder.CompareTo(right.SequenceOrder);
     }
 
     private void RefreshDeclaredVariables()

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using ApiTester.Services;
 using ApiTester.ViewModels;
@@ -33,12 +34,14 @@ public sealed partial class ChainDeclaredVariableItem : ObservableObject
 public sealed class ChainStepResult
 {
     public int Index { get; set; }
+    public int SequenceOrder { get; set; }
     public int StepIndex { get; set; }
     public string StepName { get; set; } = string.Empty;
     public int Iteration { get; set; } = 1;
     public int TotalIterationsForStep { get; set; } = 1;
     public string RequestSummary { get; set; } = string.Empty;
     public string RequestUrl { get; set; } = string.Empty;
+    public RequestModel? ExecutedRequest { get; set; }
     public int StatusCode { get; set; }
     public StatusCategory StatusCategory { get; set; } = StatusCategory.None;
     public long DurationMs { get; set; }
@@ -65,6 +68,24 @@ public sealed class ChainStepResult
     public string StepIterationLabel => TotalIterationsForStep > 1
         ? $"{StepIndex}. {StepName} ({Iteration}/{TotalIterationsForStep})"
         : $"{StepIndex}. {StepName}";
+
+    public string SizeKbText
+    {
+        get
+        {
+            if (SizeBytes <= 0)
+            {
+                return "0 KB";
+            }
+
+            var kb = SizeBytes / 1024.0;
+            return kb < 0.01
+                ? string.Create(CultureInfo.InvariantCulture, $"{kb:0.###} KB")
+                : string.Create(CultureInfo.InvariantCulture, $"{kb:0.##} KB");
+        }
+    }
+
+    public bool CanCopyAsCurl => ExecutedRequest is not null && !IsReturnOnly;
 
     public bool IsSuccessStatus => Status == ChainStepStatus.Success;
     public bool IsFailedStatus => Status == ChainStepStatus.Failed;

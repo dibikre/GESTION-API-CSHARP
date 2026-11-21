@@ -1088,17 +1088,40 @@
                                            Foreground="{DynamicResource TextMutedBrush}" />
                             </Grid>
 
-                            <WrapPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding ChainStatsSummaryText}"
-                                           FontSize="{DynamicResource FontSizeSmall}"
-                                           Foreground="{DynamicResource TextMutedBrush}"
-                                           Margin="0,0,10,0" />
-                                <TextBlock IsVisible="{Binding HasFinalStatusText}"
-                                           Text="{Binding FinalStatusText}"
-                                           FontSize="{DynamicResource FontSizeSmall}"
-                                           FontWeight="Medium"
-                                           Foreground="{DynamicResource TextBrush}" />
-                            </WrapPanel>
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <WrapPanel Grid.Column="0"
+                                           Orientation="Horizontal"
+                                           VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding ChainStatsSummaryText}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               Foreground="{DynamicResource TextMutedBrush}"
+                                               Margin="0,0,10,0" />
+                                    <TextBlock IsVisible="{Binding HasFinalStatusText}"
+                                               Text="{Binding FinalStatusText}"
+                                               FontSize="{DynamicResource FontSizeSmall}"
+                                               FontWeight="Medium"
+                                               Foreground="{DynamicResource TextBrush}" />
+                                </WrapPanel>
+
+                                <ComboBox Grid.Column="1"
+                                          IsVisible="{Binding HasResults}"
+                                          ItemsSource="{x:Static vm:ChainViewModel.ResultSortModes}"
+                                          SelectedItem="{Binding SelectedResultSortMode}"
+                                          Height="24"
+                                          MinHeight="24"
+                                          MinWidth="125"
+                                          Padding="8,1"
+                                          FontSize="{DynamicResource FontSizeCaption}"
+                                          VerticalAlignment="Center"
+                                          ToolTip.Tip="Trier les résultats"
+                                          AutomationProperties.Name="Trier les résultats de la chaîne">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="models:ChainResultSortMode">
+                                            <TextBlock Text="{Binding Converter={x:Static conv:ChainResultSortModeConverters.ToLabel}}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </Grid>
                         </StackPanel>
 
                         <TextBlock Grid.Row="1"
@@ -1118,70 +1141,92 @@
                                  AutomationProperties.Name="Résultats de la chaîne">
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="models:ChainStepResult">
-                                    <StackPanel Spacing="2" Margin="0,2,8,2">
-                                        <Grid ColumnDefinitions="*,Auto,64" ColumnSpacing="8">
-                                            <TextBlock Grid.Column="0"
-                                                       Text="{Binding StepIterationLabel}"
-                                                       FontSize="{DynamicResource FontSizeSmall}"
-                                                       FontWeight="Medium"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       ToolTip.Tip="{Binding RequestSummary}"
-                                                       VerticalAlignment="Center" />
+                                    <Border Background="Transparent">
+                                        <Border.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Copier en cURL"
+                                                          IsEnabled="{Binding CanCopyAsCurl}"
+                                                          Click="OnCopyResultAsCurlMenuItemClick">
+                                                    <MenuItem.Icon>
+                                                        <Path Classes="iconStroke" Data="{StaticResource IconCopy}" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                            </ContextMenu>
+                                        </Border.ContextMenu>
 
-                                            <Border Grid.Column="1"
-                                                    Classes="chainStatusPill"
-                                                    Classes.success="{Binding IsSuccessStatus}"
-                                                    Classes.failed="{Binding IsFailedStatus}"
-                                                    Classes.skipped="{Binding IsSkippedStatus}"
-                                                    VerticalAlignment="Center">
-                                                <StackPanel Orientation="Horizontal" Spacing="5">
-                                                    <Ellipse Classes="chainDot"
-                                                             Width="6"
-                                                             Height="6"
-                                                             VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding StatusBadgeText}"
-                                                               FontFamily="{DynamicResource MonoFontFamily}"
-                                                               FontSize="{DynamicResource FontSizeCaption}"
-                                                               FontWeight="SemiBold"
-                                                               VerticalAlignment="Center" />
-                                                    <TextBlock IsVisible="{Binding WasRateLimited}"
-                                                               Text="{Binding RateLimitSuffixText}"
-                                                               FontSize="{DynamicResource FontSizeCaption}"
-                                                               VerticalAlignment="Center" />
-                                                </StackPanel>
-                                            </Border>
+                                        <StackPanel Spacing="2" Margin="0,2,8,2">
+                                            <Grid ColumnDefinitions="*,Auto,Auto,60" ColumnSpacing="8">
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding StepIterationLabel}"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           FontWeight="Medium"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip.Tip="{Binding RequestSummary}"
+                                                           VerticalAlignment="Center" />
 
-                                            <TextBlock Grid.Column="2"
-                                                       Text="{Binding DurationMs, StringFormat='{}{0} ms'}"
+                                                <Border Grid.Column="1"
+                                                        Classes="chainStatusPill"
+                                                        Classes.success="{Binding IsSuccessStatus}"
+                                                        Classes.failed="{Binding IsFailedStatus}"
+                                                        Classes.skipped="{Binding IsSkippedStatus}"
+                                                        VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal" Spacing="5">
+                                                        <Ellipse Classes="chainDot"
+                                                                 Width="6"
+                                                                 Height="6"
+                                                                 VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding StatusBadgeText}"
+                                                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                                   FontWeight="SemiBold"
+                                                                   VerticalAlignment="Center" />
+                                                        <TextBlock IsVisible="{Binding WasRateLimited}"
+                                                                   Text="{Binding RateLimitSuffixText}"
+                                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                                   VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding SizeKbText}"
+                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center" />
+
+                                                <TextBlock Grid.Column="3"
+                                                           Text="{Binding DurationMs, StringFormat='{}{0} ms'}"
+                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                           FontSize="{DynamicResource FontSizeSmall}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+
+                                            <TextBlock IsVisible="{Binding HasExtractedSummary}"
+                                                       Text="{Binding ExtractedSummaryText}"
                                                        FontFamily="{DynamicResource MonoFontFamily}"
-                                                       FontSize="{DynamicResource FontSizeSmall}"
-                                                       Foreground="{DynamicResource TextMutedBrush}"
-                                                       HorizontalAlignment="Right"
-                                                       VerticalAlignment="Center" />
-                                        </Grid>
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource AccentBrush}"
+                                                       TextTrimming="CharacterEllipsis" />
 
-                                        <TextBlock IsVisible="{Binding HasExtractedSummary}"
-                                                   Text="{Binding ExtractedSummaryText}"
-                                                   FontFamily="{DynamicResource MonoFontFamily}"
-                                                   FontSize="{DynamicResource FontSizeCaption}"
-                                                   Foreground="{DynamicResource AccentBrush}"
-                                                   TextTrimming="CharacterEllipsis" />
+                                            <TextBlock IsVisible="{Binding HasReturnValue}"
+                                                       Text="{Binding ReturnPreviewText}"
+                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource SuccessBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding ReturnValue}" />
 
-                                        <TextBlock IsVisible="{Binding HasReturnValue}"
-                                                   Text="{Binding ReturnPreviewText}"
-                                                   FontFamily="{DynamicResource MonoFontFamily}"
-                                                   FontSize="{DynamicResource FontSizeCaption}"
-                                                   Foreground="{DynamicResource SuccessBrush}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   ToolTip.Tip="{Binding ReturnValue}" />
-
-                                        <TextBlock IsVisible="{Binding HasErrorMessage}"
-                                                   Text="{Binding ErrorMessage}"
-                                                   FontSize="{DynamicResource FontSizeCaption}"
-                                                   Foreground="{DynamicResource DangerBrush}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   ToolTip.Tip="{Binding ErrorMessage}" />
-                                    </StackPanel>
+                                            <TextBlock IsVisible="{Binding HasErrorMessage}"
+                                                       Text="{Binding ErrorMessage}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource DangerBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding ErrorMessage}" />
+                                        </StackPanel>
+                                    </Border>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>

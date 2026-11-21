@@ -1,7 +1,9 @@
 using System;
+using ApiTester.Models;
 using ApiTester.ViewModels;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 
 namespace ApiTester.Views;
 
@@ -25,5 +27,14 @@ public partial class ChainView : UserControl
     {
         base.OnDataContextChanged(e);
         ViewModel = DataContext as ChainViewModel;
+    }
+
+    private void OnCopyResultAsCurlMenuItemClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { DataContext: ChainStepResult result } &&
+            ViewModel?.CopyResultAsCurlCommand.CanExecute(result) == true)
+        {
+            ViewModel.CopyResultAsCurlCommand.Execute(result);
+        }
     }
 }

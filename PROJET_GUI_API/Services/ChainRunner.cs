@@ -730,6 +730,7 @@ public sealed class ChainRunner : IChainRunner
                             TotalIterationsForStep = stepIterationsCount,
                             RequestSummary = BuildRequestSummary(finalRequest.Method, maskedUrl, iterStep.ParamsText),
                             RequestUrl = maskedUrl,
+                            ExecutedRequest = finalRequest,
                             StatusCode = response.StatusCode,
                             StatusCategory = BatchExecutionHelper.DetermineStatusCategory(response),
                             DurationMs = response.DurationMs,

@@ -547,3 +547,16 @@ public static class HeaderKeyConverters
         new FuncValueConverter<string?, bool>(key =>
             string.Equals(key?.Trim(), "Cookie", StringComparison.OrdinalIgnoreCase));
 }
+
+public static class ChainResultSortModeConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ChainResultSortMode, string>(mode => mode switch
+        {
+            ChainResultSortMode.ChronologicalAsc => "Chronologique (ancien)",
+            ChainResultSortMode.ChronologicalDesc => "Chronologique (récent)",
+            ChainResultSortMode.SizeDesc => "Taille (décroissante)",
+            ChainResultSortMode.SizeAsc => "Taille (croissante)",
+            _ => mode.ToString()
+        });
+}
