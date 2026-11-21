@@ -743,15 +743,15 @@ internal static class BatchExecutionHelper
         return string.Create(CultureInfo.InvariantCulture, $"{bytes / gb:0.##} GB");
     }
 
-    public static string TruncateForDisplay(string? value)
+    public static string TruncateForDisplay(string? value, int maxLength = ParamsPreviewMaxLength)
     {
-        if (string.IsNullOrEmpty(value))
+        if (string.IsNullOrEmpty(value) || maxLength <= 0)
         {
             return string.Empty;
         }
-
-        return value.Length > ParamsPreviewMaxLength
-            ? $"{value[..ParamsPreviewMaxLength]}…"
+    
+        return value.Length > maxLength
+            ? $"{value[..maxLength]}…"
             : value;
     }
 
