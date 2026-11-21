@@ -1,0 +1,293 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="460" d:DesignHeight="480"
+             x:Class="ApiTester.Views.ExtractionConditionsView"
+             x:Name="ConditionsRoot"
+             x:DataType="vm:ExtractionConditionsViewModel">
+
+    <Border Background="{DynamicResource SurfaceAltBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="{DynamicResource ControlCornerRadius}"
+            Padding="10">
+        <Grid RowDefinitions="Auto,*" RowSpacing="8">
+            <!-- Barre supérieure : titre + bascule Guidé / Manuel + Tout vider -->
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <TextBlock Text="Conditions d'affinage"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextBrush}"
+                               VerticalAlignment="Center" />
+                    <Border IsVisible="{Binding HasActiveConditionsBadge}"
+                            Background="{DynamicResource AccentSoftBrush}"
+                            CornerRadius="{DynamicResource BadgeCornerRadius}"
+                            Padding="6,1"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="{Binding ActiveConditionsCount}"
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource AccentBrush}" />
+                    </Border>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                    <Button Classes.primary="{Binding IsGuidedMode}"
+                            Classes.secondary="{Binding IsManualMode}"
+                            Content="Guidé"
+                            Height="24"
+                            MinHeight="24"
+                            Padding="8,0"
+                            FontSize="{DynamicResource FontSizeCaption}"
+                            Command="{Binding SwitchToGuidedCommand}"
+                            AutomationProperties.Name="Mode guidé des conditions" />
+                    <Button Classes.primary="{Binding IsManualMode}"
+                            Classes.secondary="{Binding IsGuidedMode}"
+                            Content="Manuel"
+                            Height="24"
+                            MinHeight="24"
+                            Padding="8,0"
+                            FontSize="{DynamicResource FontSizeCaption}"
+                            Command="{Binding SwitchToManualCommand}"
+                            AutomationProperties.Name="Mode manuel des conditions" />
+                </StackPanel>
+
+                <Button Grid.Column="2"
+                        Classes="ghost"
+                        Content="Réinitialiser"
+                        Height="24"
+                        MinHeight="24"
+                        Padding="8,0"
+                        FontSize="{DynamicResource FontSizeCaption}"
+                        Command="{Binding ClearConditionsCommand}"
+                        ToolTip.Tip="Supprimer toutes les conditions"
+                        AutomationProperties.Name="Réinitialiser les conditions" />
+            </Grid>
+
+            <!-- Mode Guidé -->
+            <Grid Grid.Row="1"
+                  IsVisible="{Binding IsGuidedMode}"
+                  RowDefinitions="Auto,*,Auto"
+                  RowSpacing="8">
+                <!-- Options globales : combinateur ET/OU + déduplication -->
+                <WrapPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,4" VerticalAlignment="Center">
+                        <TextBlock Text="Logique"
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{x:Static vm:ExtractionConditionsViewModel.MatchModeOptions}"
+                                  SelectedItem="{Binding MatchMode}"
+                                  MinWidth="140"
+                                  AutomationProperties.Name="Mode de combinaison des conditions">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:ExtractionConditionMatchMode">
+                                    <TextBlock Text="{Binding Converter={x:Static conv:ExtractionConditionMatchModeConverters.ToLabel}}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <CheckBox IsChecked="{Binding DeduplicateList}"
+                              Content="Sans doublons"
+                              Margin="0,0,0,4"
+                              VerticalAlignment="Center"
+                              ToolTip.Tip="Conserver uniquement la première occurrence de chaque valeur"
+                              AutomationProperties.Name="Supprimer les doublons" />
+                </WrapPanel>
+
+                <!-- Liste des règles ou état vide -->
+                <Grid Grid.Row="1">
+                    <StackPanel IsVisible="{Binding #ConditionItems.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsZero}}"
+                                Spacing="8"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="Aucune condition définie. Ajoute une règle pour filtrer, exclure ou extraire via Regex."
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center" />
+                        <Button Classes="secondary"
+                                HorizontalAlignment="Center"
+                                Command="{Binding AddConditionCommand}"
+                                AutomationProperties.Name="Ajouter une condition">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                                <TextBlock Text="Ajouter une condition" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <ScrollViewer IsVisible="{Binding #ConditionItems.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
+                                  AllowAutoHide="False"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Spacing="6" Margin="0,0,8,4">
+                            <ItemsControl x:Name="ConditionItems" ItemsSource="{Binding Conditions}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:ChainExtractionCondition">
+                                        <Border Background="{DynamicResource SurfaceBrush}"
+                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="{DynamicResource ControlCornerRadius}"
+                                                Padding="8,6"
+                                                Margin="0,0,0,4">
+                                            <StackPanel Spacing="6">
+                                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="4">
+                                                    <CheckBox Grid.Column="0"
+                                                              IsChecked="{Binding IsEnabled}"
+                                                              ToolTip.Tip="Activer ou désactiver cette condition"
+                                                              VerticalAlignment="Center"
+                                                              AutomationProperties.Name="Activer la condition" />
+
+                                                    <ComboBox Grid.Column="1"
+                                                              ItemsSource="{x:Static vm:ExtractionConditionsViewModel.OperatorOptions}"
+                                                              SelectedItem="{Binding Operator}"
+                                                              HorizontalAlignment="Stretch"
+                                                              AutomationProperties.Name="Opérateur de condition">
+                                                        <ComboBox.ItemTemplate>
+                                                            <DataTemplate x:DataType="models:ExtractionConditionOperator">
+                                                                <TextBlock Text="{Binding Converter={x:Static conv:ExtractionConditionOperatorConverters.ToLabel}}" />
+                                                            </DataTemplate>
+                                                        </ComboBox.ItemTemplate>
+                                                    </ComboBox>
+
+                                                    <Button Grid.Column="2"
+                                                            Classes="icon"
+                                                            Command="{Binding #ConditionsRoot.ViewModel.MoveConditionUpCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            ToolTip.Tip="Monter la condition"
+                                                            AutomationProperties.Name="Monter la condition">
+                                                        <Path Classes="iconStroke" Data="{StaticResource IconArrowUp}" />
+                                                    </Button>
+
+                                                    <Button Grid.Column="3"
+                                                            Classes="icon"
+                                                            Command="{Binding #ConditionsRoot.ViewModel.MoveConditionDownCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            ToolTip.Tip="Descendre la condition"
+                                                            AutomationProperties.Name="Descendre la condition">
+                                                        <Path Classes="iconStroke" Data="{StaticResource IconArrowDown}" />
+                                                    </Button>
+
+                                                    <Button Grid.Column="4"
+                                                            Classes="icon danger"
+                                                            Command="{Binding #ConditionsRoot.ViewModel.RemoveConditionCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            ToolTip.Tip="Supprimer cette condition"
+                                                            AutomationProperties.Name="Supprimer la condition">
+                                                        <Path Classes="iconStroke" Data="{StaticResource IconTrash}" />
+                                                    </Button>
+                                                </Grid>
+
+                                                <TextBox Classes="mono"
+                                                         IsVisible="{Binding RequiresValue}"
+                                                         Text="{Binding Value}"
+                                                         PlaceholderText="{Binding ValuePlaceholder}"
+                                                         AutomationProperties.Name="Valeur ou motif de la condition" />
+
+                                                <Grid IsVisible="{Binding IsRegexReplace}"
+                                                      ColumnDefinitions="Auto,*"
+                                                      ColumnSpacing="6">
+                                                    <TextBlock Grid.Column="0"
+                                                               Text="Remplacer par"
+                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                               Foreground="{DynamicResource TextMutedBrush}"
+                                                               VerticalAlignment="Center" />
+                                                    <TextBox Grid.Column="1"
+                                                             Classes="mono"
+                                                             Text="{Binding Replacement}"
+                                                             PlaceholderText="nouveau texte (vide pour supprimer)"
+                                                             AutomationProperties.Name="Texte de remplacement Regex" />
+                                                </Grid>
+
+                                                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <StackPanel IsVisible="{Binding IsRegexExtract}"
+                                                                Orientation="Horizontal"
+                                                                Spacing="6"
+                                                                Margin="0,0,12,0"
+                                                                VerticalAlignment="Center">
+                                                        <TextBlock Text="Groupe"
+                                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                                   VerticalAlignment="Center" />
+                                                        <NumericUpDown Value="{Binding RegexGroup, Converter={x:Static conv:RegexGroupToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                                       Minimum="0"
+                                                                       Maximum="99"
+                                                                       Increment="1"
+                                                                       FormatString="0"
+                                                                       ShowButtonSpinner="False"
+                                                                       Width="54"
+                                                                       AutomationProperties.Name="Index du groupe Regex de la condition" />
+                                                    </StackPanel>
+
+                                                    <CheckBox IsVisible="{Binding SupportsIgnoreCase}"
+                                                              IsChecked="{Binding IgnoreCase}"
+                                                              Content="Ignorer la casse"
+                                                              VerticalAlignment="Center"
+                                                              AutomationProperties.Name="Ignorer la casse" />
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <Button Classes="ghost"
+                                    HorizontalAlignment="Left"
+                                    Command="{Binding AddConditionCommand}"
+                                    AutomationProperties.Name="Ajouter une condition">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                                    <TextBlock Text="Ajouter une condition" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <TextBlock Grid.Row="2"
+                           Text="Les règles Regex extraire / remplacer affinent la valeur conservée pour les règles suivantes."
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource TextFaintBrush}"
+                           TextWrapping="Wrap" />
+            </Grid>
+
+            <!-- Mode Manuel -->
+            <Grid Grid.Row="1"
+                  IsVisible="{Binding IsManualMode}"
+                  RowDefinitions="*,Auto,Auto"
+                  RowSpacing="6">
+                <TextBox Grid.Row="0"
+                         Classes="mono"
+                         Text="{Binding ManualText, Mode=TwoWay}"
+                         AcceptsReturn="True"
+                         TextWrapping="NoWrap"
+                         FontSize="{DynamicResource FontSizeMono}"
+                         ScrollViewer.AllowAutoHide="False"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         AutomationProperties.Name="Édition manuelle des conditions" />
+
+                <TextBlock Grid.Row="1"
+                           IsVisible="{Binding HasManualError}"
+                           Text="{Binding ManualError}"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource DangerBrush}"
+                           TextWrapping="Wrap" />
+
+                <TextBlock Grid.Row="2"
+                           Text="Syntaxes : mode: et|ou · unique: true|false · contient &quot;...&quot; · !contient &quot;...&quot; · commence · finit · == · != · regex &quot;...&quot; · !regex &quot;...&quot; · regex_extraire &quot;...&quot; groupe=1 · regex_remplacer &quot;...&quot; -&gt; &quot;...&quot; · non_vide · longueur &gt;= N · nombre &gt; N · [icase] · [inactif]"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource TextFaintBrush}"
+                           TextWrapping="Wrap" />
+            </Grid>
+        </Grid>
+    </Border>
+
+</UserControl>

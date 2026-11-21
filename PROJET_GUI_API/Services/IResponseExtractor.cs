@@ -36,4 +36,9 @@ public interface IResponseExtractor
     /// Extrait toutes les valeurs correspondantes dans une liste (JSONPath avec [*] / [] ou tableau ciblé, ou Regex global).
     /// </summary>
     ListExtractionOutcome ExtractList(ResponseModel response, ChainExtraction extraction);
+
+    /// <summary>
+    /// Extrait la liste brute sans appliquer les conditions de filtrage ou de transformation.
+    /// </summary>
+    ListExtractionOutcome ExtractRawList(ResponseModel response, ChainExtraction extraction);
 }

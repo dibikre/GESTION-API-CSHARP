@@ -35,10 +35,36 @@ public partial class MainWindow : Window
 
     private void OnOverlayPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (_subscribedOverlay is null)
+        {
+            return;
+        }
+
+        if (e.PropertyName is nameof(OverlayEditorViewModel.IsOpen) or nameof(OverlayEditorViewModel.IsConditionsOpen))
+        {
+            UpdateOverlaySplitLayout();
+        }
+
         if (e.PropertyName == nameof(OverlayEditorViewModel.IsOpen) &&
-            _subscribedOverlay is { IsOpen: true })
+            _subscribedOverlay.IsOpen)
         {
             Dispatcher.UIThread.Post(() => OverlayEditorTextBox.Focus(), DispatcherPriority.Loaded);
+        }
+    }
+
+    private void UpdateOverlaySplitLayout()
+    {
+        if (_subscribedOverlay is { IsOpen: true, IsConditionsOpen: true })
+        {
+            OverlayBodyGrid.ColumnDefinitions = ColumnDefinitions.Parse("1.05*,Auto,0.95*");
+            OverlayBodyGrid.ColumnDefinitions[0].MinWidth = 240;
+            OverlayBodyGrid.ColumnDefinitions[2].MinWidth = 260;
+        }
+        else
+        {
+            OverlayBodyGrid.ColumnDefinitions = ColumnDefinitions.Parse("*,0,0");
+            OverlayBodyGrid.ColumnDefinitions[0].MinWidth = 0;
+            OverlayBodyGrid.ColumnDefinitions[2].MinWidth = 0;
         }
     }
 

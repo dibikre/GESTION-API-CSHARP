@@ -179,6 +179,7 @@
                                         <StackPanel IsVisible="{Binding IsOptional}"
                                                     Orientation="Horizontal"
                                                     Spacing="6"
+                                                    Margin="0,0,12,0"
                                                     VerticalAlignment="Center">
                                             <TextBlock Text="Valeur par défaut"
                                                        FontSize="{DynamicResource FontSizeSmall}"
@@ -190,6 +191,17 @@
                                                      PlaceholderText="si absent"
                                                      AutomationProperties.Name="Valeur par défaut si absent" />
                                         </StackPanel>
+
+                                        <Border IsVisible="{Binding HasConditions}"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="7,2"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding ConditionsSummaryText}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource AccentBrush}" />
+                                        </Border>
                                     </WrapPanel>
 
                                     <Grid IsVisible="{Binding HasLastExtractedValue}"
@@ -205,7 +217,7 @@
 
                                         <Button Grid.Column="1"
                                                 Classes="ghost"
-                                                IsVisible="{Binding HasLastExtractedList}"
+                                                IsVisible="{Binding CanInspectList}"
                                                 Content="Voir tout"
                                                 Command="{Binding #Root.InspectListCommand}"
                                                 CommandParameter="{Binding}"
@@ -214,15 +226,34 @@
                                                 MinHeight="22"
                                                 Padding="6,0"
                                                 VerticalAlignment="Center"
-                                                ToolTip.Tip="Afficher tous les éléments extraits dans cette liste"
+                                                ToolTip.Tip="Afficher tous les éléments extraits et gérer les conditions"
                                                 AutomationProperties.Name="Afficher tous les éléments extraits" />
                                     </Grid>
 
-                                    <TextBlock IsVisible="{Binding HasError}"
-                                               Text="{Binding ErrorText}"
-                                               FontSize="{DynamicResource FontSizeCaption}"
-                                               Foreground="{DynamicResource DangerBrush}"
-                                               TextWrapping="Wrap" />
+                                    <Grid IsVisible="{Binding HasError}"
+                                          ColumnDefinitions="*,Auto"
+                                          ColumnSpacing="8">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding ErrorText}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   Foreground="{DynamicResource DangerBrush}"
+                                                   TextWrapping="Wrap"
+                                                   VerticalAlignment="Center" />
+
+                                        <Button Grid.Column="1"
+                                                Classes="ghost"
+                                                IsVisible="{Binding CanInspectList}"
+                                                Content="Voir tout"
+                                                Command="{Binding #Root.InspectListCommand}"
+                                                CommandParameter="{Binding}"
+                                                FontSize="{DynamicResource FontSizeCaption}"
+                                                Height="22"
+                                                MinHeight="22"
+                                                Padding="6,0"
+                                                VerticalAlignment="Center"
+                                                ToolTip.Tip="Ouvrir la liste brute et ajuster les conditions"
+                                                AutomationProperties.Name="Ouvrir la liste brute et ajuster les conditions" />
+                                    </Grid>
                                 </StackPanel>
                             </Border>
                         </DataTemplate>

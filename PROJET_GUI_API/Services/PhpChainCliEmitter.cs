@@ -124,6 +124,14 @@ internal static class PhpChainCliEmitter
                 sb.AppendLine($"                'required' => {FormatBool(ext.IsRequired)},");
                 sb.AppendLine($"                'defaultValue' => {EscapeString(ext.DefaultValueIfMissing)},");
                 sb.AppendLine($"                'isList' => {FormatBool(ext.IsList)},");
+                sb.AppendLine($"                'conditionMode' => {EscapeString(ext.ConditionMatchMode)},");
+                sb.AppendLine($"                'deduplicate' => {FormatBool(ext.DeduplicateList)},");
+                sb.AppendLine("                'conditions' => [");
+                foreach (var c in ext.Conditions)
+                {
+                    sb.AppendLine($"                    ['op' => {EscapeString(c.Operator)}, 'value' => {EscapeString(c.Value)}, 'replacement' => {EscapeString(c.Replacement)}, 'regexGroup' => {c.RegexGroup}, 'ignoreCase' => {FormatBool(c.IgnoreCase)}],");
+                }
+                sb.AppendLine("                ],");
                 sb.AppendLine("            ],");
             }
             sb.AppendLine("        ],");
@@ -554,7 +562,198 @@ function extractRegexList(string $text, string $pattern, int $groupIdx): array {
     return [true, $values];
 }
 
+function buildConditionRegex(string $pattern, bool $ignoreCase): string {
+    $delim = "\x01";
+    $escaped = str_replace($delim, '\\' . $delim, $pattern);
+    $mods = 'u' . ($ignoreCase ? 'i' : '');
+    $candidate = $delim . $escaped . $delim . $mods;
+    if (@preg_match($candidate, '') !== false) {
+        return $candidate;
+    }
+    $fallback = $delim . $escaped . $delim . ($ignoreCase ? 'i' : '');
+    if (@preg_match($fallback, '') !== false) {
+        return $fallback;
+    }
+    throw new RuntimeException("Condition Regex invalide : {$pattern}");
+}
+
+function evalConditionFilter(array $cond, string $value): bool {
+    $op = $cond['op'];
+    $target = (string)$cond['value'];
+    $icase = !empty($cond['ignoreCase']);
+    $vCmp = $icase ? mb_strtolower($value, 'UTF-8') : $value;
+    $tCmp = $icase ? mb_strtolower($target, 'UTF-8') : $target;
+
+    return match ($op) {
+        'contains' => $tCmp === '' || str_contains($vCmp, $tCmp),
+        'not_contains' => $tCmp !== '' && !str_contains($vCmp, $tCmp),
+        'starts_with' => str_starts_with($vCmp, $tCmp),
+        'ends_with' => str_ends_with($vCmp, $tCmp),
+        'equals' => $vCmp === $tCmp,
+        'not_equals' => $vCmp !== $tCmp,
+        'regex_match' => @preg_match(buildConditionRegex($target, $icase), $value) === 1,
+        'regex_not_match' => @preg_match(buildConditionRegex($target, $icase), $value) !== 1,
+        'not_empty' => trim($value) !== '',
+        'length_min' => mb_strlen($value, 'UTF-8') >= (int)trim($target),
+        'length_max' => mb_strlen($value, 'UTF-8') <= (int)trim($target),
+        'greater_than' => is_numeric(str_replace(',', '.', trim($value)))
+            && (float)str_replace(',', '.', trim($value)) > (float)str_replace(',', '.', trim($target)),
+        'less_than' => is_numeric(str_replace(',', '.', trim($value)))
+            && (float)str_replace(',', '.', trim($value)) < (float)str_replace(',', '.', trim($target)),
+        default => true,
+    };
+}
+
+function applyConditionExtract(array $cond, string $value): array {
+    $regex = buildConditionRegex((string)$cond['value'], !empty($cond['ignoreCase']));
+    $matched = @preg_match($regex, $value, $matches);
+    if ($matched !== 1) {
+        return [false, ''];
+    }
+    $grp = max(0, (int)($cond['regexGroup'] ?? 1));
+    if (!array_key_exists($grp, $matches)) {
+        return [false, ''];
+    }
+    return [true, (string)$matches[$grp]];
+}
+
+function applyConditionReplace(array $cond, string $value): string {
+    $regex = buildConditionRegex((string)$cond['value'], !empty($cond['ignoreCase']));
+    $rawTpl = (string)($cond['replacement'] ?? '');
+    $phpTpl = (string)preg_replace_callback('/\$\$|\$&/', static fn(array $m): string => $m[0] === '$$' ? '\\$' : '$0', $rawTpl);
+    return (string)@preg_replace($regex, $phpTpl, $value);
+}
+
+function applyExtractionConditions(array $rawValues, array $ext): array {
+    $conditions = $ext['conditions'] ?? [];
+    $dedup = !empty($ext['deduplicate']);
+    if (count($conditions) === 0 && !$dedup) {
+        return [true, $rawValues];
+    }
+
+    try {
+        foreach ($conditions as $cond) {
+            $op = $cond['op'];
+            $val = (string)($cond['value'] ?? '');
+            if ($op !== 'not_empty' && $val === '') {
+                return [false, "Condition d'extraction vide."];
+            }
+            if (in_array($op, ['regex_match', 'regex_not_match', 'regex_extract', 'regex_replace'], true)) {
+                buildConditionRegex($val, !empty($cond['ignoreCase']));
+            } elseif (in_array($op, ['length_min', 'length_max'], true)) {
+                $trimmed = trim($val);
+                if (!preg_match('/^\d+$/', $trimmed)) {
+                    return [false, "Longueur invalide : {$val}"];
+                }
+            } elseif (in_array($op, ['greater_than', 'less_than'], true)) {
+                $numStr = str_replace(',', '.', trim($val));
+                if (!is_numeric($numStr)) {
+                    return [false, "Nombre invalide : {$val}"];
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        return [false, $e->getMessage()];
+    }
+
+    $mode = $ext['conditionMode'] ?? 'all';
+    $out = [];
+    $seen = [];
+
+    foreach ($rawValues as $raw) {
+        $curr = (string)$raw;
+        if ($mode === 'all') {
+            $ok = true;
+            foreach ($conditions as $cond) {
+                $op = $cond['op'];
+                if ($op === 'regex_extract') {
+                    [$okEx, $curr] = applyConditionExtract($cond, $curr);
+                    if (!$okEx) {
+                        $ok = false;
+                        break;
+                    }
+                } elseif ($op === 'regex_replace') {
+                    $curr = applyConditionReplace($cond, $curr);
+                } else {
+                    if (!evalConditionFilter($cond, $curr)) {
+                        $ok = false;
+                        break;
+                    }
+                }
+            }
+            if (!$ok) {
+                continue;
+            }
+        } else {
+            $filters = array_values(array_filter($conditions, static fn(array $c): bool => !in_array($c['op'], ['regex_extract', 'regex_replace'], true)));
+            $extracts = array_values(array_filter($conditions, static fn(array $c): bool => $c['op'] === 'regex_extract'));
+            $replaces = array_values(array_filter($conditions, static fn(array $c): bool => $c['op'] === 'regex_replace'));
+
+            if (count($filters) > 0) {
+                $passed = false;
+                foreach ($filters as $fc) {
+                    if (evalConditionFilter($fc, $curr)) {
+                        $passed = true;
+                        break;
+                    }
+                }
+                if (!$passed) {
+                    continue;
+                }
+            }
+
+            if (count($extracts) > 0) {
+                if (count($filters) === 0 && count($extracts) > 1) {
+                    $matchedAny = false;
+                    foreach ($extracts as $ec) {
+                        [$okEx, $valEx] = applyConditionExtract($ec, $curr);
+                        if ($okEx) {
+                            $curr = $valEx;
+                            $matchedAny = true;
+                            break;
+                        }
+                    }
+                    if (!$matchedAny) {
+                        continue;
+                    }
+                } else {
+                    $okAll = true;
+                    foreach ($extracts as $ec) {
+                        [$okEx, $curr] = applyConditionExtract($ec, $curr);
+                        if (!$okEx) {
+                            $okAll = false;
+                            break;
+                        }
+                    }
+                    if (!$okAll) {
+                        continue;
+                    }
+                }
+            }
+
+            foreach ($replaces as $rc) {
+                $curr = applyConditionReplace($rc, $curr);
+            }
+        }
+
+        if ($dedup) {
+            if (array_key_exists($curr, $seen)) {
+                continue;
+            }
+            $seen[$curr] = true;
+        }
+        $out[] = $curr;
+    }
+
+    if (count($out) === 0 && count($rawValues) > 0) {
+        $rawCnt = count($rawValues);
+        return [false, "Aucun élément ne satisfait les conditions ({$rawCnt} brut(s) filtré(s))."];
+    }
+    return [true, $out];
+}
+
 function runExtraction(array $ext, string $respBody, array $respHeaders): array {
+    $rawOutcome = [false, 'Aucune correspondance'];
     if ($ext['source'] === 'header') {
         $target = strtolower($ext['headerName']);
         $matching = [];
@@ -566,21 +765,29 @@ function runExtraction(array $ext, string $respBody, array $respHeaders): array 
         if (count($matching) === 0) {
             return [false, "En-tête « {$ext['headerName']} » absent"];
         }
-        $lastErr = 'Aucune correspondance';
         foreach ($matching as $val) {
             [$ok, $res] = extractRegex($val, $ext['expression'], $ext['regexGroup']);
-            if ($ok) return [true, $res];
-            $lastErr = $res;
+            $rawOutcome = [$ok, $res];
+            if ($ok) break;
         }
-        return [false, $lastErr];
+    } elseif ($ext['kind'] === 'jsonpath') {
+        $rawOutcome = extractJsonPath($respBody, $ext['expression']);
+    } else {
+        $rawOutcome = extractRegex($respBody, $ext['expression'], $ext['regexGroup']);
     }
-    if ($ext['kind'] === 'jsonpath') {
-        return extractJsonPath($respBody, $ext['expression']);
+
+    if (!$rawOutcome[0] || empty($ext['conditions'])) {
+        return $rawOutcome;
     }
-    return extractRegex($respBody, $ext['expression'], $ext['regexGroup']);
+    [$cOk, $cRes] = applyExtractionConditions([(string)$rawOutcome[1]], $ext);
+    if ($cOk && is_array($cRes) && count($cRes) > 0) {
+        return [true, (string)$cRes[0]];
+    }
+    return [false, is_string($cRes) ? $cRes : 'La valeur extraite ne satisfait pas les conditions.'];
 }
 
 function runListExtraction(array $ext, string $respBody, array $respHeaders): array {
+    $rawValues = [];
     if ($ext['source'] === 'header') {
         $target = strtolower($ext['headerName']);
         $matching = [];
@@ -592,24 +799,31 @@ function runListExtraction(array $ext, string $respBody, array $respHeaders): ar
         if (count($matching) === 0) {
             return [false, "En-tête « {$ext['headerName']} » absent"];
         }
-        $collected = [];
         $lastErr = 'Aucune correspondance';
         foreach ($matching as $val) {
             [$ok, $res] = extractRegexList($val, $ext['expression'], $ext['regexGroup']);
             if ($ok) {
                 foreach ($res as $item) {
-                    $collected[] = $item;
+                    $rawValues[] = $item;
                 }
             } else {
                 $lastErr = $res;
             }
         }
-        return count($collected) > 0 ? [true, $collected] : [false, $lastErr];
+        if (count($rawValues) === 0) {
+            return [false, $lastErr];
+        }
+    } elseif ($ext['kind'] === 'jsonpath') {
+        [$ok, $res] = extractJsonPathList($respBody, $ext['expression']);
+        if (!$ok) return [false, $res];
+        $rawValues = $res;
+    } else {
+        [$ok, $res] = extractRegexList($respBody, $ext['expression'], $ext['regexGroup']);
+        if (!$ok) return [false, $res];
+        $rawValues = $res;
     }
-    if ($ext['kind'] === 'jsonpath') {
-        return extractJsonPathList($respBody, $ext['expression']);
-    }
-    return extractRegexList($respBody, $ext['expression'], $ext['regexGroup']);
+
+    return applyExtractionConditions($rawValues, $ext);
 }
 
 function sendHttp(string $method, string $url, array $headers, ?string $body, int $timeoutSeconds): array {

@@ -299,6 +299,41 @@ public static class ChainExtractionSourceConverters
         });
 }
 
+public static class ExtractionConditionOperatorConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ExtractionConditionOperator, string>(op => op switch
+        {
+            ExtractionConditionOperator.Contains => "Contient",
+            ExtractionConditionOperator.NotContains => "Ne contient pas",
+            ExtractionConditionOperator.StartsWith => "Commence par",
+            ExtractionConditionOperator.EndsWith => "Finit par",
+            ExtractionConditionOperator.Equals => "Égal à",
+            ExtractionConditionOperator.NotEquals => "Différent de",
+            ExtractionConditionOperator.RegexMatch => "Regex correspond",
+            ExtractionConditionOperator.RegexNotMatch => "Regex exclut",
+            ExtractionConditionOperator.RegexExtract => "Regex extraire (groupe)",
+            ExtractionConditionOperator.RegexReplace => "Regex remplacer",
+            ExtractionConditionOperator.NotEmpty => "Non vide",
+            ExtractionConditionOperator.LengthMin => "Longueur >=",
+            ExtractionConditionOperator.LengthMax => "Longueur <=",
+            ExtractionConditionOperator.GreaterThan => "Nombre >",
+            ExtractionConditionOperator.LessThan => "Nombre <",
+            _ => op.ToString()
+        });
+}
+
+public static class ExtractionConditionMatchModeConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ExtractionConditionMatchMode, string>(mode => mode switch
+        {
+            ExtractionConditionMatchMode.All => "Toutes (ET)",
+            ExtractionConditionMatchMode.Any => "Au moins une (OU)",
+            _ => mode.ToString()
+        });
+}
+
 public sealed class RegexGroupToDecimalConverter : IValueConverter
 {
     public static readonly RegexGroupToDecimalConverter Instance = new();

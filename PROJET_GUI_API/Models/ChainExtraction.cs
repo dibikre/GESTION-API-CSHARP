@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -7,6 +9,11 @@ namespace ApiTester.Models;
 
 public partial class ChainExtraction : ObservableObject
 {
+    public ChainExtraction()
+    {
+        Conditions.CollectionChanged += OnConditionsCollectionChanged;
+    }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(LastExtractedDisplay))]
     [NotifyPropertyChangedFor(nameof(VariablePlaceholderHint))]
@@ -54,7 +61,23 @@ public partial class ChainExtraction : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasLastExtractedList))]
+    [NotifyPropertyChangedFor(nameof(CanInspectList))]
     public partial IReadOnlyList<string>? LastExtractedList { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanInspectList))]
+    public partial IReadOnlyList<string>? LastRawExtractedList { get; set; }
+
+    [ObservableProperty]
+    public partial ExtractionConditionMatchMode ConditionMatchMode { get; set; } = ExtractionConditionMatchMode.All;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasConditions))]
+    [NotifyPropertyChangedFor(nameof(ConditionsCount))]
+    [NotifyPropertyChangedFor(nameof(ConditionsSummaryText))]
+    public partial bool DeduplicateList { get; set; }
+
+    public ObservableCollection<ChainExtractionCondition> Conditions { get; } = [];
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasError))]
@@ -76,6 +99,21 @@ public partial class ChainExtraction : ObservableObject
 
     public bool HasLastExtractedList =>
         LastExtractedList is { Count: > 0 } && !BatchExecutionHelper.IsSensitiveName(VariableName);
+
+    public bool CanInspectList =>
+        (LastExtractedList is { Count: > 0 } || (LastRawExtractedList is { Count: > 0 } && HasConditions)) &&
+        !BatchExecutionHelper.IsSensitiveName(VariableName);
+
+    public bool HasConditions => Conditions.Count > 0 || DeduplicateList;
+
+    public int ConditionsCount => Conditions.Count + (DeduplicateList ? 1 : 0);
+
+    public string ConditionsSummaryText => ConditionsCount switch
+    {
+        0 => "Conditions",
+        1 => "Conditions (1)",
+        _ => $"Conditions ({ConditionsCount})"
+    };
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorText);
 
@@ -135,23 +173,49 @@ public partial class ChainExtraction : ObservableObject
         ClearPreviewState();
     }
 
+    public void NotifyConditionsChanged()
+    {
+        OnPropertyChanged(nameof(HasConditions));
+        OnPropertyChanged(nameof(ConditionsCount));
+        OnPropertyChanged(nameof(ConditionsSummaryText));
+        OnPropertyChanged(nameof(CanInspectList));
+    }
+
+    private void OnConditionsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        NotifyConditionsChanged();
+    }
+
     private void ClearPreviewState()
     {
         LastExtractedValue = null;
         LastExtractedList = null;
+        LastRawExtractedList = null;
         ErrorText = null;
     }
 
-    public ChainExtraction Clone() => new()
+    public ChainExtraction Clone()
     {
-        VariableName = VariableName,
-        Kind = Kind,
-        Expression = Expression,
-        RegexGroup = RegexGroup,
-        Source = Source,
-        HeaderName = HeaderName,
-        IsRequired = IsRequired,
-        IsList = IsList,
-        DefaultValueIfMissing = DefaultValueIfMissing
-    };
+        var clone = new ChainExtraction
+        {
+            VariableName = VariableName,
+            Kind = Kind,
+            Expression = Expression,
+            RegexGroup = RegexGroup,
+            Source = Source,
+            HeaderName = HeaderName,
+            IsRequired = IsRequired,
+            IsList = IsList,
+            DefaultValueIfMissing = DefaultValueIfMissing,
+            ConditionMatchMode = ConditionMatchMode,
+            DeduplicateList = DeduplicateList
+        };
+
+        foreach (var cond in Conditions)
+        {
+            clone.Conditions.Add(cond.Clone());
+        }
+
+        return clone;
+    }
 }

@@ -194,7 +194,11 @@ Permet d'enchaîner plusieurs requêtes HTTP où les valeurs extraites d'une ét
   - Nom de variable cible : utilisé ensuite via `{{variable}}` pour une valeur simple, ou `[[variable]]` lorsque la case `En liste [[...]]` est cochée.
   - Option `Obligatoire` et `Valeur par défaut si absent` (utilisable lorsqu'une extraction scalaire n'est pas obligatoire).
   - Bouton `Tester` sur chaque règle d'extraction : teste l'expression hors ligne sur la dernière réponse reçue par l'étape. La modification d'une expression efface l'ancien aperçu, et le basculement de `En liste [[...]]` relance automatiquement le test si une réponse est déjà disponible.
-  - Lorsque l'extraction produit une liste, un bouton `Voir tout` ouvre l'overlay avec la totalité des éléments extraits (un par ligne).
+  - Lorsque l'extraction produit une liste, un bouton `Voir tout` ouvre l'overlay avec la totalité des éléments extraits (un par ligne) et un badge rappelle le nombre de conditions actives lorsqu'un filtrage est configuré.
+  - **Affinage par conditions (`Conditions`)** : dans le popup ouvert par `Voir tout`, un bouton `Conditions` placé à gauche de `Copier` divise la fenêtre en deux panneaux redimensionnables (liste filtrée en direct à gauche, éditeur de conditions à droite) :
+    - **Mode `Guidé`** : combinaison `Toutes (ET)` ou `Au moins une (OU)`, option `Sans doublons` (conserve la première occurrence), activation/désactivation et réordonnancement par règle, et choix de l'opérateur : `Contient`, `Ne contient pas`, `Commence par`, `Finit par`, `Égal à`, `Différent de`, `Regex correspond`, `Regex exclut`, `Regex extraire (groupe)` (affine la valeur conservée à partir d'un groupe capturant), `Regex remplacer`, `Non vide`, `Longueur >=`, `Longueur <=`, `Nombre >` et `Nombre <`, avec option `Ignorer la casse`.
+    - **Mode `Manuel`** : édition directe sous forme de règles textuelles synchronisées dans les deux sens avec le mode guidé (`mode: et|ou`, `unique: true|false`, `contient`, `!contient`, `commence`, `finit`, `==`, `!=`, `regex`, `!regex`, `regex_extraire "..." groupe=N`, `regex_remplacer "..." -> "..."`, `non_vide`, `longueur >= N`, `longueur <= N`, `nombre > N`, `nombre < N`, drapeaux `[icase]` / `[casse]` / `[inactif]` et commentaires `#` / `//`).
+    - Les conditions validées par `Appliquer` sont conservées sur la règle d'extraction (`ChainExtraction`), réévaluées à chaque test hors ligne, appliquées pendant l'exécution de `ChainRunner` et embarquées dans les scripts CLI Python, JavaScript et PHP générés.
 - **Expression de retour d'étape (`Retour` / `StepReturnEvaluator`)** :
   - Chaque étape comporte un onglet `Retour` permettant de construire la valeur produite par l'étape, soit après son appel HTTP et ses extractions, soit en tant qu'**étape de retour pur** (badge `RET` dans la liste de gauche lorsque l'URL est laissée vide : aucun appel HTTP n'est envoyé et la valeur calculée devient directement le résultat de l'étape).
   - Syntaxes prises en charge par `StepReturnParser` :
@@ -215,7 +219,7 @@ Permet d'enchaîner plusieurs requêtes HTTP où les valeurs extraites d'une ét
   - La zone inférieure gauche est divisée en deux panneaux redimensionnables : la liste des résultats d'exécution à gauche et un panneau vertical `Variables déclarées` à droite.
   - Chaque variable ou liste déclarée (variables d'étape `{{...}}` et règles d'extraction `{{...}}` / `[[...]]`) y apparaît verticalement sous forme de menu déroulant (`Expander`) indiquant son étape d'origine, son type et son contenu en direct (valeur fixe, plage/liste, test hors ligne ou valeur extraite lors de l'exécution, avec boutons `Copier` et `Voir` pour les contenus complets ; masquage automatique des noms sensibles).
 - **Générateur CLI autonome (`ChainCliGenerator`)** :
-  - Génère un script exécutable complet reproduisant fidèlement l'enchaînement configuré (en-têtes, authentification, substitution `{{...}}`, itération `[[...]]`, boucles Combinaisons/Parallèle, extractions JSONPath y compris `[n++]`/`[*]`, extractions Regex, étapes de retour pur et évaluation des expressions `Retour`) :
+  - Génère un script exécutable complet reproduisant fidèlement l'enchaînement configuré (en-têtes, authentification, substitution `{{...}}`, itération `[[...]]`, boucles Combinaisons/Parallèle, extractions JSONPath y compris `[n++]`/`[*]`, extractions Regex, conditions d'affinage et déduplication sur les extractions, étapes de retour pur et évaluation des expressions `Retour`) :
     - **Python** (`PythonChainCliEmitter`) : Python 3 utilisant uniquement la bibliothèque standard (`urllib.request`, `json`, `re`, `gzip`, `zlib`, `uuid`).
     - **JavaScript** (`JavaScriptChainCliEmitter`) : Node.js (v18+) utilisant `fetch` natif et `node:crypto`.
     - **PHP** (`PhpChainCliEmitter`) : PHP 8+ CLI utilisant `ext-curl` et `json_*` / `preg_*`.
@@ -253,8 +257,9 @@ Accessibles par le bouton d'agrandissement (`Corps de la requête`, `Corps de la
 
 - Affichage plein cadre dans la fenêtre principale, sans troncature du contenu.
 - Détection automatique de JSON valide (`MaxDepth = 1024`) faisant apparaître le bouton `Indenter le JSON`.
+- Sur l'inspection d'une liste extraite (`Voir tout`), bouton `Conditions` à gauche de `Copier` pour diviser l'overlay en deux panneaux et affiner en direct les valeurs conservées.
 - Bouton `Copier` vers le presse-papiers système.
-- Mode lecture seule (`Fermer`) ou édition (`Annuler` / `Enregistrer` mettant à jour la source d'origine et relançant l'analyse si applicable).
+- Mode lecture seule (`Fermer`), application de conditions (`Annuler` / `Appliquer`) ou édition (`Annuler` / `Enregistrer` mettant à jour la source d'origine et relançant l'analyse si applicable).
 - Fermeture par la touche `Échap` ou par clic sur l'arrière-plan assombri.
 
 ---
@@ -344,8 +349,9 @@ PROJET_GUI_API/
 │   ├── BatchResultItem.cs             Résultat d'une requête exécutée en lot
 │   ├── BatchSaveModels.cs             Options d'enregistrement disque des lots
 │   ├── BatchVariable.cs               Modèle complet de variable de gabarit (Fixe, Plage, Liste, Aléatoire)
-│   ├── ChainEnums.cs                  Énumérations de chaîne (sources, types d'extraction, statuts, langages CLI)
-│   ├── ChainExtraction.cs             Règle d'extraction entre étapes (corps/en-tête, JSONPath/Regex, liste)
+│   ├── ChainEnums.cs                  Énumérations de chaîne (sources, types d'extraction, opérateurs de conditions, statuts, langages CLI)
+│   ├── ChainExtraction.cs             Règle d'extraction entre étapes (corps/en-tête, JSONPath/Regex, liste, conditions)
+│   ├── ChainExtractionCondition.cs    Modèle d'une condition d'affinage d'extraction (Regex, filtres texte/nombre)
 │   ├── ChainResults.cs                Résultats de planification, d'exécution, retours et variables déclarées de chaîne
 │   ├── ChainStep.cs                   Modèle d'une étape de chaîne HTTP et de son expression de retour
 │   ├── CookiePairItem.cs              Paire cookie activable (nom, valeur) pour l'éditeur popup
@@ -369,6 +375,8 @@ PROJET_GUI_API/
 │   ├── ClipboardService.cs            Accès au presse-papiers via TopLevel Avalonia
 │   ├── CookieEditorService.cs         Bus d'ouverture et découpage/recomposition des en-têtes Cookie
 │   ├── CurlParser.cs                  Analyseur multi-shell (POSIX, PowerShell, cmd.exe)
+│   ├── ExtractionConditionEngine.cs   Moteur d'évaluation, filtrage, transformation Regex et déduplication des extractions
+│   ├── ExtractionConditionSyntax.cs   Parseur et formateur bidirectionnel du mode manuel des conditions
 │   ├── ExtractionSuggester.cs         Détection de format, construction d'arbre JSON/XML/HTML et suggestion Regex
 │   ├── FolderPickerService.cs         Sélection et ouverture de dossiers système
 │   ├── HttpService.cs                 Exécution HTTP asynchrone et chronométrage
@@ -393,9 +401,10 @@ PROJET_GUI_API/
 │   ├── BatchViewModel.cs              Logique de présentation de l'onglet Lot (curl)
 │   ├── ChainViewModel.cs              Logique de présentation de l'onglet Chaîne, retours et export CLI
 │   ├── CookieEditorViewModel.cs       Logique du popup d'édition de cookies (bascule Tableau / Texte)
+│   ├── ExtractionConditionsViewModel.cs Logique du panneau d'édition Guidé / Manuel et aperçu temps réel des conditions
 │   ├── ExtractorViewModel.cs          Logique de présentation du laboratoire Extracteur
 │   ├── MainWindowViewModel.cs         Navigation entre onglets, overlay et popup cookies
-│   ├── OverlayEditorViewModel.cs      Logique de l'éditeur superposé et formatage JSON
+│   ├── OverlayEditorViewModel.cs      Logique de l'éditeur superposé, panneau scindé Conditions et formatage JSON
 │   ├── RequestViewModel.cs            Logique de construction de requête
 │   ├── ResponseViewModel.cs           Affichage, formatage et affinage de la réponse
 │   ├── SingleRequestViewModel.cs      Logique d'envoi et d'annulation unitaire
@@ -408,9 +417,10 @@ PROJET_GUI_API/
     ├── ChainExtractionEditor.axaml(.cs) Éditeur des règles d'extraction par étape
     ├── ChainView.axaml(.cs)           Interface de l'onglet Chaîne
     ├── CookieEditorView.axaml(.cs)    Popup d'édition des cookies en tableau ou texte brut
+    ├── ExtractionConditionsView.axaml(.cs) Panneau droit d'édition Guidé / Manuel des conditions d'extraction
     ├── ExtractorView.axaml(.cs)       Interface de l'onglet Extracteur
     ├── KeyValueEditor.axaml(.cs)      Composant réutilisable d'édition clé/valeur (avec accès cookies)
-    ├── MainWindow.axaml(.cs)          Fenêtre principale, onglets, overlay et hôte popup cookies
+    ├── MainWindow.axaml(.cs)          Fenêtre principale, onglets, overlay (simple ou scindé) et hôte popup cookies
     ├── RequestView.axaml(.cs)         Interface de configuration de requête
     ├── ResponseView.axaml(.cs)        Interface d'affichage de réponse
     ├── SingleRequestView.axaml(.cs)   Interface de l'onglet Requête unitaire

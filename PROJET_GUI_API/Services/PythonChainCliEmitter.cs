@@ -131,6 +131,14 @@ internal static class PythonChainCliEmitter
                 sb.AppendLine($"                \"required\": {FormatBool(ext.IsRequired)},");
                 sb.AppendLine($"                \"default\": {EscapeString(ext.DefaultValueIfMissing)},");
                 sb.AppendLine($"                \"is_list\": {FormatBool(ext.IsList)},");
+                sb.AppendLine($"                \"condition_mode\": {EscapeString(ext.ConditionMatchMode)},");
+                sb.AppendLine($"                \"deduplicate\": {FormatBool(ext.DeduplicateList)},");
+                sb.AppendLine("                \"conditions\": [");
+                foreach (var c in ext.Conditions)
+                {
+                    sb.AppendLine($"                    {{\"op\": {EscapeString(c.Operator)}, \"value\": {EscapeString(c.Value)}, \"replacement\": {EscapeString(c.Replacement)}, \"regex_group\": {c.RegexGroup}, \"ignore_case\": {FormatBool(c.IgnoreCase)}}},");
+                }
+                sb.AppendLine("                ],");
                 sb.AppendLine("            },");
             }
             sb.AppendLine("        ],");
@@ -458,22 +466,201 @@ def extract_regex_list(text: str, pattern: str, group_idx: int) -> tuple[bool, l
     return True, values
 
 
+def _compile_condition_regex(pattern: str, ignore_case: bool):
+    flags = re.IGNORECASE if ignore_case else 0
+    return re.compile(pattern, flags)
+
+
+def _eval_condition_filter(cond: dict, value: str) -> bool:
+    op = cond["op"]
+    target = cond["value"]
+    icase = cond.get("ignore_case", False)
+    v_cmp = value.lower() if icase else value
+    t_cmp = target.lower() if icase else target
+
+    if op == "contains":
+        return t_cmp in v_cmp
+    if op == "not_contains":
+        return t_cmp not in v_cmp
+    if op == "starts_with":
+        return v_cmp.startswith(t_cmp)
+    if op == "ends_with":
+        return v_cmp.endswith(t_cmp)
+    if op == "equals":
+        return v_cmp == t_cmp
+    if op == "not_equals":
+        return v_cmp != t_cmp
+    if op == "regex_match":
+        return _compile_condition_regex(target, icase).search(value) is not None
+    if op == "regex_not_match":
+        return _compile_condition_regex(target, icase).search(value) is None
+    if op == "not_empty":
+        return bool(value.strip())
+    if op == "length_min":
+        return len(value) >= int(target.strip())
+    if op == "length_max":
+        return len(value) <= int(target.strip())
+    if op == "greater_than":
+        try:
+            return float(value.strip().replace(",", ".")) > float(target.strip().replace(",", "."))
+        except ValueError:
+            return False
+    if op == "less_than":
+        try:
+            return float(value.strip().replace(",", ".")) < float(target.strip().replace(",", "."))
+        except ValueError:
+            return False
+    return True
+
+
+_REPL_TOKEN_RE = re.compile(r"\$\$|\$&|\$\{(\d+)\}|\$(\d+)|\\(\d+)")
+
+
+def _apply_condition_extract(cond: dict, value: str) -> tuple[bool, str]:
+    match = _compile_condition_regex(cond["value"], cond.get("ignore_case", False)).search(value)
+    if not match:
+        return False, ""
+    grp = int(cond.get("regex_group", 1))
+    try:
+        captured = match.group(grp)
+    except IndexError:
+        return False, ""
+    return (True, captured) if captured is not None else (False, "")
+
+
+def _apply_condition_replace(cond: dict, value: str) -> str:
+    regex = _compile_condition_regex(cond["value"], cond.get("ignore_case", False))
+    template = cond.get("replacement", "")
+
+    def _repl(match: re.Match[str]) -> str:
+        def _tok(tok: re.Match[str]) -> str:
+            s = tok.group(0)
+            if s == "$$":
+                return "$"
+            if s == "$&":
+                return match.group(0)
+            idx = int(tok.group(1) or tok.group(2) or tok.group(3))
+            try:
+                grp = match.group(idx)
+                return grp if grp is not None else ""
+            except IndexError:
+                return s
+        return _REPL_TOKEN_RE.sub(_tok, template)
+
+    return regex.sub(_repl, value)
+
+
+def apply_extraction_conditions(raw_values: list[str], ext: dict) -> tuple[bool, list[str] | str]:
+    conditions = ext.get("conditions") or []
+    dedup = bool(ext.get("deduplicate"))
+    if not conditions and not dedup:
+        return True, raw_values
+
+    mode = ext.get("condition_mode", "all")
+    try:
+        for cond in conditions:
+            op = cond["op"]
+            if op != "not_empty" and not cond["value"]:
+                return False, "Condition d'extraction vide."
+            if op in ("regex_match", "regex_not_match", "regex_extract", "regex_replace"):
+                _compile_condition_regex(cond["value"], cond.get("ignore_case", False))
+            elif op in ("length_min", "length_max"):
+                if int(cond["value"].strip()) < 0:
+                    return False, f"Longueur invalide : {cond['value']}"
+            elif op in ("greater_than", "less_than"):
+                float(cond["value"].strip().replace(",", "."))
+    except (re.error, ValueError) as exc:
+        return False, f"Condition invalide : {exc}"
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        curr = raw
+        if mode == "all":
+            ok = True
+            for cond in conditions:
+                op = cond["op"]
+                if op == "regex_extract":
+                    ok, curr = _apply_condition_extract(cond, curr)
+                    if not ok:
+                        break
+                elif op == "regex_replace":
+                    curr = _apply_condition_replace(cond, curr)
+                else:
+                    if not _eval_condition_filter(cond, curr):
+                        ok = False
+                        break
+            if not ok:
+                continue
+        else:
+            filters = [c for c in conditions if c["op"] not in ("regex_extract", "regex_replace")]
+            extracts = [c for c in conditions if c["op"] == "regex_extract"]
+            replaces = [c for c in conditions if c["op"] == "regex_replace"]
+            if filters and not any(_eval_condition_filter(c, curr) for c in filters):
+                continue
+            if extracts:
+                if not filters and len(extracts) > 1:
+                    matched_any = False
+                    for ec in extracts:
+                        ok_ex, val_ex = _apply_condition_extract(ec, curr)
+                        if ok_ex:
+                            curr = val_ex
+                            matched_any = True
+                            break
+                    if not matched_any:
+                        continue
+                else:
+                    ok_all = True
+                    for ec in extracts:
+                        ok_ex, curr = _apply_condition_extract(ec, curr)
+                        if not ok_ex:
+                            ok_all = False
+                            break
+                    if not ok_all:
+                        continue
+            for rc in replaces:
+                curr = _apply_condition_replace(rc, curr)
+
+        if dedup:
+            if curr in seen:
+                continue
+            seen.add(curr)
+        out.append(curr)
+
+    if not out and raw_values:
+        return False, f"Aucun élément ne satisfait les conditions ({len(raw_values)} brut(s) filtré(s))."
+    return True, out
+
+
 def run_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]]) -> tuple[bool, str]:
     if ext["source"] == "header":
         target_name = ext["header_name"].lower()
         matching = [v for k, v in resp_headers if k.lower() == target_name]
         if not matching:
             return False, f"En-tête « {ext['header_name']} » absent"
-        last_err = "Aucune correspondance"
+        ok = False
+        res = "Aucune correspondance"
         for header_val in matching:
             ok, res = extract_regex(header_val, ext["expression"], ext["regex_group"])
             if ok:
-                return True, res
-            last_err = res
-        return False, last_err
-    if ext["kind"] == "jsonpath":
-        return extract_json_path(resp_body, ext["expression"])
-    return extract_regex(resp_body, ext["expression"], ext["regex_group"])
+                break
+        if not ok:
+            return False, res
+    elif ext["kind"] == "jsonpath":
+        ok, res = extract_json_path(resp_body, ext["expression"])
+        if not ok:
+            return False, res
+    else:
+        ok, res = extract_regex(resp_body, ext["expression"], ext["regex_group"])
+        if not ok:
+            return False, res
+
+    if not ext.get("conditions"):
+        return True, res
+    cond_ok, cond_res = apply_extraction_conditions([res], ext)
+    if cond_ok and isinstance(cond_res, list) and cond_res:
+        return True, cond_res[0]
+    return False, cond_res if isinstance(cond_res, str) else "La valeur extraite ne satisfait pas les conditions."
 
 
 def run_list_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]]) -> tuple[bool, list[str] | str]:
@@ -490,10 +677,21 @@ def run_list_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str,
                 collected.extend(res)
             elif isinstance(res, str):
                 last_err = res
-        return (True, collected) if collected else (False, last_err)
-    if ext["kind"] == "jsonpath":
-        return extract_json_path_list(resp_body, ext["expression"])
-    return extract_regex_list(resp_body, ext["expression"], ext["regex_group"])
+        if not collected:
+            return False, last_err
+        raw_values = collected
+    elif ext["kind"] == "jsonpath":
+        ok, res = extract_json_path_list(resp_body, ext["expression"])
+        if not ok or not isinstance(res, list):
+            return False, res
+        raw_values = res
+    else:
+        ok, res = extract_regex_list(resp_body, ext["expression"], ext["regex_group"])
+        if not ok or not isinstance(res, list):
+            return False, res
+        raw_values = res
+
+    return apply_extraction_conditions(raw_values, ext)
 
 
 def send_http(method: str, url: str, headers: list[tuple[str, str]], body_bytes: bytes | None, timeout_s: int) -> tuple[int, list[tuple[str, str]], str, str | None]:

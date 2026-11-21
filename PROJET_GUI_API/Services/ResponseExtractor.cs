@@ -70,17 +70,25 @@ public sealed class ResponseExtractor : IResponseExtractor
             return ExtractionOutcome.Failure($"Expression vide pour la variable « {extraction.VariableName} ».");
         }
 
-        if (extraction.Source == ChainExtractionSource.Header)
+        var outcome = extraction.Source == ChainExtractionSource.Header
+            ? ExtractFromHeader(response, extraction, expression)
+            : extraction.Kind == ExtractionKind.JsonPath
+                ? ExtractJsonPathFromBody(response.Body ?? string.Empty, expression)
+                : ExtractRegex(response.Body ?? string.Empty, expression, extraction.RegexGroup);
+
+        if (!outcome.IsSuccess || extraction.Conditions.Count == 0)
         {
-            return ExtractFromHeader(response, extraction, expression);
+            return outcome;
         }
 
-        return extraction.Kind == ExtractionKind.JsonPath
-            ? ExtractJsonPathFromBody(response.Body ?? string.Empty, expression)
-            : ExtractRegex(response.Body ?? string.Empty, expression, extraction.RegexGroup);
+        return ExtractionConditionEngine.ApplyToScalar(
+            outcome.Value,
+            extraction.Conditions,
+            extraction.ConditionMatchMode,
+            extraction.DeduplicateList);
     }
 
-    public ListExtractionOutcome ExtractList(ResponseModel response, ChainExtraction extraction)
+    public ListExtractionOutcome ExtractRawList(ResponseModel response, ChainExtraction extraction)
     {
         if (response is null)
         {
@@ -111,6 +119,26 @@ public sealed class ResponseExtractor : IResponseExtractor
         return extraction.Kind == ExtractionKind.JsonPath
             ? ExtractListJsonPathFromBody(response.Body ?? string.Empty, expression)
             : ExtractRegexList(response.Body ?? string.Empty, expression, extraction.RegexGroup);
+    }
+
+    public ListExtractionOutcome ExtractList(ResponseModel response, ChainExtraction extraction)
+    {
+        var rawOutcome = ExtractRawList(response, extraction);
+        if (!rawOutcome.IsSuccess || (!extraction.HasConditions && extraction.Conditions.Count == 0))
+        {
+            return rawOutcome;
+        }
+
+        var filtered = ExtractionConditionEngine.ApplyToList(
+            rawOutcome.Values,
+            extraction.Conditions,
+            extraction.ConditionMatchMode,
+            extraction.DeduplicateList,
+            failWhenEmpty: true);
+
+        return filtered.IsSuccess
+            ? ListExtractionOutcome.Success(filtered.Values)
+            : ListExtractionOutcome.Failure(filtered.ErrorMessage ?? "Aucun élément extrait après application des conditions.");
     }
 
     private static ExtractionOutcome ExtractFromHeader(

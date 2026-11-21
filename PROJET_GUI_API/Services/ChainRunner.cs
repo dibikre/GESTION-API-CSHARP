@@ -93,6 +93,13 @@ public sealed class ChainRunner : IChainRunner
                     result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : saisis le nom d'en-tête pour « {ext.VariableName} ».";
                     return result;
                 }
+
+                if (ext.Conditions.Count > 0 &&
+                    !ExtractionConditionEngine.ValidateConditions(ext.Conditions, out var condError))
+                {
+                    result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : extraction « {ext.VariableName} » — {condError}";
+                    return result;
+                }
             }
 
             var template = step.BuildTemplateRequest();

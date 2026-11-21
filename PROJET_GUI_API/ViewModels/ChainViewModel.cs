@@ -814,31 +814,55 @@ public partial class ChainViewModel : ViewModelBase
 
         if (extraction.IsList)
         {
-            var listOutcome = _responseExtractor.ExtractList(response, extraction);
-            if (listOutcome.IsSuccess)
+            var rawOutcome = _responseExtractor.ExtractRawList(response, extraction);
+            if (!rawOutcome.IsSuccess)
             {
-                extraction.LastExtractedList = listOutcome.Values;
-                if (BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
+                extraction.LastRawExtractedList = null;
+                extraction.LastExtractedList = null;
+                extraction.LastExtractedValue = null;
+                extraction.ErrorText = rawOutcome.ErrorMessage;
+                RefreshDeclaredVariables();
+                return;
+            }
+
+            extraction.LastRawExtractedList = rawOutcome.Values;
+            var finalValues = rawOutcome.Values;
+            if (extraction.HasConditions)
+            {
+                var filteredOutcome = ExtractionConditionEngine.ApplyToList(
+                    rawOutcome.Values,
+                    extraction.Conditions,
+                    extraction.ConditionMatchMode,
+                    extraction.DeduplicateList,
+                    failWhenEmpty: true);
+                if (!filteredOutcome.IsSuccess)
                 {
-                    extraction.LastExtractedValue = $"[{listOutcome.Values.Count} éléments] ***";
+                    extraction.LastExtractedList = null;
+                    extraction.LastExtractedValue = null;
+                    extraction.ErrorText = filteredOutcome.ErrorMessage;
+                    RefreshDeclaredVariables();
+                    return;
                 }
-                else
-                {
-                    var preview = BatchExecutionHelper.TruncateForDisplay(string.Join(", ", listOutcome.Values.Take(5)));
-                    extraction.LastExtractedValue = $"[{listOutcome.Values.Count} éléments] {preview}";
-                }
-                extraction.ErrorText = null;
+
+                finalValues = filteredOutcome.Values;
+            }
+
+            extraction.LastExtractedList = finalValues;
+            if (BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
+            {
+                extraction.LastExtractedValue = $"[{finalValues.Count} éléments] ***";
             }
             else
             {
-                extraction.LastExtractedList = null;
-                extraction.LastExtractedValue = null;
-                extraction.ErrorText = listOutcome.ErrorMessage;
+                var preview = BatchExecutionHelper.TruncateForDisplay(string.Join(", ", finalValues.Take(5)));
+                extraction.LastExtractedValue = $"[{finalValues.Count} éléments] {preview}";
             }
+            extraction.ErrorText = null;
             RefreshDeclaredVariables();
             return;
         }
 
+        extraction.LastRawExtractedList = null;
         extraction.LastExtractedList = null;
         var outcome = _responseExtractor.Extract(response, extraction);
         if (outcome.IsSuccess)
@@ -858,9 +882,31 @@ public partial class ChainViewModel : ViewModelBase
     [RelayCommand]
     private void InspectExtractedList(ChainExtraction? extraction)
     {
-        if (extraction?.LastExtractedList is null ||
-            extraction.LastExtractedList.Count == 0 ||
-            BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
+        if (extraction is null || BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
+        {
+            return;
+        }
+
+        IReadOnlyList<string>? rawItems = extraction.LastRawExtractedList;
+        if (rawItems is null || rawItems.Count == 0)
+        {
+            if (SelectedStep?.LastResponse is not null)
+            {
+                var rawOutcome = _responseExtractor.ExtractRawList(SelectedStep.LastResponse, extraction);
+                if (rawOutcome.IsSuccess && rawOutcome.Values.Count > 0)
+                {
+                    extraction.LastRawExtractedList = rawOutcome.Values;
+                    rawItems = rawOutcome.Values;
+                }
+            }
+        }
+
+        if (rawItems is null || rawItems.Count == 0)
+        {
+            rawItems = extraction.LastExtractedList;
+        }
+
+        if (rawItems is null || rawItems.Count == 0)
         {
             return;
         }
@@ -868,11 +914,74 @@ public partial class ChainViewModel : ViewModelBase
         var varName = string.IsNullOrWhiteSpace(extraction.VariableName)
             ? "liste"
             : extraction.VariableName.Trim();
+
         _overlayEditor?.RequestOpen(new OverlayEditorRequest(
-            $"Liste [[{varName}]] — {extraction.LastExtractedList.Count} élément(s)",
-            string.Join(Environment.NewLine, extraction.LastExtractedList),
+            $"Liste [[{varName}]] — {rawItems.Count} élément(s)",
+            string.Join(Environment.NewLine, extraction.LastExtractedList ?? rawItems),
             IsReadOnly: true,
-            OnSave: null));
+            OnSave: null,
+            ExtractionConditions: new ExtractionConditionsOverlayRequest(
+                varName,
+                rawItems,
+                extraction.Conditions,
+                extraction.ConditionMatchMode,
+                extraction.DeduplicateList,
+                (newConditions, newMode, newDedup) => ApplyExtractionConditions(extraction, rawItems, newConditions, newMode, newDedup))));
+    }
+
+    private void ApplyExtractionConditions(
+        ChainExtraction extraction,
+        IReadOnlyList<string> rawItems,
+        IReadOnlyList<ChainExtractionCondition> newConditions,
+        ExtractionConditionMatchMode newMode,
+        bool newDedup)
+    {
+        _isBulkUpdating = true;
+        try
+        {
+            extraction.Conditions.Clear();
+            foreach (var cond in newConditions)
+            {
+                extraction.Conditions.Add(cond.Clone());
+            }
+            extraction.ConditionMatchMode = newMode;
+            extraction.DeduplicateList = newDedup;
+            extraction.NotifyConditionsChanged();
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
+
+        if (SelectedStep?.LastResponse is not null)
+        {
+            TestExtraction(extraction);
+        }
+        else
+        {
+            var filtered = ExtractionConditionEngine.ApplyToList(
+                rawItems,
+                extraction.Conditions,
+                extraction.ConditionMatchMode,
+                extraction.DeduplicateList,
+                failWhenEmpty: true);
+            if (filtered.IsSuccess)
+            {
+                extraction.LastExtractedList = filtered.Values;
+                var preview = BatchExecutionHelper.TruncateForDisplay(string.Join(", ", filtered.Values.Take(5)));
+                extraction.LastExtractedValue = $"[{filtered.Values.Count} éléments] {preview}";
+                extraction.ErrorText = null;
+            }
+            else
+            {
+                extraction.LastExtractedList = null;
+                extraction.LastExtractedValue = null;
+                extraction.ErrorText = filtered.ErrorMessage;
+            }
+            RefreshDeclaredVariables();
+        }
+
+        RefreshAllStepsAndPlan();
     }
 
     [RelayCommand]
@@ -1379,6 +1488,7 @@ public partial class ChainViewModel : ViewModelBase
 
         if (e.PropertyName is nameof(ChainExtraction.LastExtractedValue)
             or nameof(ChainExtraction.LastExtractedList)
+            or nameof(ChainExtraction.LastRawExtractedList)
             or nameof(ChainExtraction.ErrorText))
         {
             return;

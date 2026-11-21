@@ -263,6 +263,10 @@ internal static class ChainDeclaredVariableBuilder
             : extraction.Expression.Trim();
 
         var desc = $"En attente d'exécution ({kind} sur {source} : {expr})";
+        if (extraction.HasConditions)
+        {
+            desc += $"{Environment.NewLine}{extraction.ConditionsSummaryText}";
+        }
         if (!string.IsNullOrEmpty(extraction.DefaultValueIfMissing))
         {
             desc += $"{Environment.NewLine}Valeur par défaut : {extraction.DefaultValueIfMissing}";

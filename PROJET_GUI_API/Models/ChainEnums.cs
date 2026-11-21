@@ -38,3 +38,28 @@ public enum ChainStepKind
     HttpRequest,
     Return
 }
+
+public enum ExtractionConditionOperator
+{
+    Contains,
+    NotContains,
+    StartsWith,
+    EndsWith,
+    Equals,
+    NotEquals,
+    RegexMatch,
+    RegexNotMatch,
+    RegexExtract,
+    RegexReplace,
+    NotEmpty,
+    LengthMin,
+    LengthMax,
+    GreaterThan,
+    LessThan
+}
+
+public enum ExtractionConditionMatchMode
+{
+    All,
+    Any
+}

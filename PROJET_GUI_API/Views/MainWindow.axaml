@@ -57,8 +57,8 @@
                         Padding="14"
                         PointerPressed="OnOverlayCardPointerPressed">
                     <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
-                        <!-- En-tête : titre + Indenter le JSON + Copier + Fermer -->
-                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                        <!-- En-tête : titre + Indenter le JSON + Conditions + Copier + Fermer -->
+                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
                             <TextBlock Grid.Column="0"
                                        Text="{Binding Overlay.Title}"
                                        FontSize="{DynamicResource FontSizeBase}"
@@ -75,6 +75,28 @@
                                     AutomationProperties.Name="Indenter le JSON" />
 
                             <Button Grid.Column="2"
+                                    Classes.primary="{Binding Overlay.IsConditionsOpen}"
+                                    Classes.secondary="{Binding !Overlay.IsConditionsOpen}"
+                                    IsVisible="{Binding Overlay.HasConditionsSupport}"
+                                    Command="{Binding Overlay.ToggleConditionsCommand}"
+                                    ToolTip.Tip="Diviser l'écran et affiner l'extraction par conditions (Regex, filtres, mode manuel)"
+                                    AutomationProperties.Name="Conditions d'extraction">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="Conditions" VerticalAlignment="Center" />
+                                    <Border IsVisible="{Binding Overlay.HasActiveConditionsBadge}"
+                                            Background="{DynamicResource AccentSoftBrush}"
+                                            CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                            Padding="5,0"
+                                            VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Overlay.ActiveConditionsCount}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource AccentBrush}" />
+                                    </Border>
+                                </StackPanel>
+                            </Button>
+
+                            <Button Grid.Column="3"
                                     Classes="ghost"
                                     Command="{Binding Overlay.CopyCommand}"
                                     AutomationProperties.Name="Copier le contenu">
@@ -84,7 +106,7 @@
                                 </StackPanel>
                             </Button>
 
-                            <Button Grid.Column="3"
+                            <Button Grid.Column="4"
                                     Classes="icon"
                                     Command="{Binding Overlay.CloseCommand}"
                                     ToolTip.Tip="Fermer (Échap)"
@@ -93,40 +115,98 @@
                             </Button>
                         </Grid>
 
-                        <!-- Corps : TextBox monospace multi-lignes -->
-                        <TextBox x:Name="OverlayEditorTextBox"
-                                 Grid.Row="1"
-                                 Classes="mono"
-                                 Text="{Binding Overlay.Text, Mode=TwoWay}"
-                                 IsReadOnly="{Binding Overlay.IsReadOnly}"
-                                 AcceptsReturn="True"
-                                 TextWrapping="NoWrap"
-                                 FontSize="{DynamicResource FontSizeMono}"
-                                 ScrollViewer.AllowAutoHide="False"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                 AutomationProperties.Name="Contenu de l'éditeur agrandi" />
+                        <!-- Corps : pleine largeur ou divisé en deux avec Conditions à droite -->
+                        <Grid x:Name="OverlayBodyGrid"
+                              Grid.Row="1"
+                              ColumnDefinitions="*,0,0">
+                            <Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="6">
+                                <Border Grid.Row="0"
+                                        IsVisible="{Binding Overlay.HasConditionsSupport}"
+                                        Background="{DynamicResource SurfaceAltBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                                        Padding="8,4">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding Overlay.ConditionFilterSummaryText}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1"
+                                                   IsVisible="{Binding Overlay.HasConditionFilterError}"
+                                                   Text="{Binding Overlay.ConditionFilterError}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   Foreground="{DynamicResource DangerBrush}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
 
-                        <!-- Pied : Annuler / Enregistrer en édition, Fermer seul en lecture seule -->
+                                <TextBox x:Name="OverlayEditorTextBox"
+                                         Grid.Row="1"
+                                         Classes="mono"
+                                         Text="{Binding Overlay.Text, Mode=TwoWay}"
+                                         IsReadOnly="{Binding Overlay.IsReadOnly}"
+                                         AcceptsReturn="True"
+                                         TextWrapping="NoWrap"
+                                         FontSize="{DynamicResource FontSizeMono}"
+                                         ScrollViewer.AllowAutoHide="False"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                         AutomationProperties.Name="Contenu de l'éditeur agrandi" />
+                            </Grid>
+
+                            <GridSplitter x:Name="OverlayConditionsSplitter"
+                                          Grid.Column="1"
+                                          Classes="vertical"
+                                          ResizeDirection="Columns"
+                                          Margin="4,0"
+                                          IsVisible="{Binding Overlay.IsConditionsOpen}" />
+
+                            <views:ExtractionConditionsView x:Name="OverlayConditionsPanel"
+                                                            Grid.Column="2"
+                                                            DataContext="{Binding Overlay.ConditionsPanel}"
+                                                            IsVisible="{Binding Overlay.IsConditionsOpen}" />
+                        </Grid>
+
+                        <!-- Pied : Annuler / Enregistrer, Appliquer conditions, ou Fermer -->
                         <StackPanel Grid.Row="2"
                                     Orientation="Horizontal"
                                     HorizontalAlignment="Right"
                                     Spacing="8">
                             <Button Classes="secondary"
                                     Content="Annuler"
-                                    IsVisible="{Binding !Overlay.IsReadOnly}"
+                                    IsVisible="{Binding Overlay.ShowStandardSaveButtons}"
                                     Command="{Binding Overlay.CloseCommand}"
                                     AutomationProperties.Name="Annuler les modifications" />
                             <Button Classes="primary"
                                     Content="Enregistrer"
-                                    IsVisible="{Binding !Overlay.IsReadOnly}"
+                                    IsVisible="{Binding Overlay.ShowStandardSaveButtons}"
                                     Command="{Binding Overlay.SaveAndCloseCommand}"
                                     AutomationProperties.Name="Enregistrer les modifications" />
                             <Button Classes="secondary"
                                     Content="Fermer"
-                                    IsVisible="{Binding Overlay.IsReadOnly}"
+                                    IsVisible="{Binding Overlay.ShowStandardCloseButton}"
                                     Command="{Binding Overlay.CloseCommand}"
                                     AutomationProperties.Name="Fermer l'éditeur" />
+
+                            <Button Classes="secondary"
+                                    Content="Annuler"
+                                    IsVisible="{Binding Overlay.ShowConditionsApplyButtons}"
+                                    Command="{Binding Overlay.CloseCommand}"
+                                    AutomationProperties.Name="Annuler les conditions" />
+                            <Button Classes="primary"
+                                    Content="Appliquer"
+                                    IsVisible="{Binding Overlay.ShowConditionsApplyButtons}"
+                                    Command="{Binding Overlay.ApplyConditionsCommand}"
+                                    AutomationProperties.Name="Appliquer les conditions d'extraction" />
+                            <Button Classes="secondary"
+                                    Content="Fermer"
+                                    IsVisible="{Binding Overlay.ShowConditionsCloseButton}"
+                                    Command="{Binding Overlay.CloseCommand}"
+                                    AutomationProperties.Name="Fermer la liste extraite" />
                         </StackPanel>
                     </Grid>
                 </Border>

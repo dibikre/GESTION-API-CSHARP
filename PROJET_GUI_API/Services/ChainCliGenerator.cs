@@ -28,6 +28,13 @@ internal sealed record CliAxisSpec(
     CliRangeSpec? Range,
     IReadOnlyList<string> Values);
 
+internal sealed record CliExtractionConditionSpec(
+    string Operator,
+    string Value,
+    string Replacement,
+    int RegexGroup,
+    bool IgnoreCase);
+
 internal sealed record CliExtractionSpec(
     string VariableName,
     string Source,
@@ -37,7 +44,10 @@ internal sealed record CliExtractionSpec(
     string HeaderName,
     bool IsRequired,
     string DefaultValueIfMissing,
-    bool IsList);
+    bool IsList,
+    string ConditionMatchMode,
+    bool DeduplicateList,
+    IReadOnlyList<CliExtractionConditionSpec> Conditions);
 
 internal sealed record CliStepSpec(
     int Rank,
@@ -419,6 +429,22 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                 continue;
             }
 
+            var condSpecs = new List<CliExtractionConditionSpec>(ext.Conditions.Count);
+            foreach (var cond in ext.Conditions)
+            {
+                if (!cond.IsEnabled)
+                {
+                    continue;
+                }
+
+                condSpecs.Add(new CliExtractionConditionSpec(
+                    MapConditionOperator(cond.Operator),
+                    cond.Value ?? string.Empty,
+                    cond.Replacement ?? string.Empty,
+                    Math.Max(0, cond.RegexGroup),
+                    cond.IgnoreCase));
+            }
+
             result.Add(new CliExtractionSpec(
                 ext.VariableName.Trim(),
                 ext.Source == ChainExtractionSource.Header ? "header" : "body",
@@ -428,11 +454,34 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                 ext.HeaderName?.Trim() ?? string.Empty,
                 ext.IsRequired,
                 ext.DefaultValueIfMissing ?? string.Empty,
-                ext.IsList));
+                ext.IsList,
+                ext.ConditionMatchMode == ExtractionConditionMatchMode.Any ? "any" : "all",
+                ext.DeduplicateList,
+                condSpecs));
         }
 
         return result;
     }
+
+    private static string MapConditionOperator(ExtractionConditionOperator op) => op switch
+    {
+        ExtractionConditionOperator.Contains => "contains",
+        ExtractionConditionOperator.NotContains => "not_contains",
+        ExtractionConditionOperator.StartsWith => "starts_with",
+        ExtractionConditionOperator.EndsWith => "ends_with",
+        ExtractionConditionOperator.Equals => "equals",
+        ExtractionConditionOperator.NotEquals => "not_equals",
+        ExtractionConditionOperator.RegexMatch => "regex_match",
+        ExtractionConditionOperator.RegexNotMatch => "regex_not_match",
+        ExtractionConditionOperator.RegexExtract => "regex_extract",
+        ExtractionConditionOperator.RegexReplace => "regex_replace",
+        ExtractionConditionOperator.NotEmpty => "not_empty",
+        ExtractionConditionOperator.LengthMin => "length_min",
+        ExtractionConditionOperator.LengthMax => "length_max",
+        ExtractionConditionOperator.GreaterThan => "greater_than",
+        ExtractionConditionOperator.LessThan => "less_than",
+        _ => "contains"
+    };
 
     private static void RemoveHeaderIgnoreCase(List<CliHeaderSpec> headers, string key)
     {
