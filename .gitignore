@@ -1,7 +1,17 @@
+# Node (reste du template)
 node_modules/
 build/
 dist/
 coverage/
+
+# .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# Divers
 .DS_Store
 *.log
 .env*
