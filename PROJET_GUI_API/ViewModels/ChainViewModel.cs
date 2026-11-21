@@ -524,9 +524,9 @@ public partial class ChainViewModel : ViewModelBase
                     continue;
                 }
 
-                if (v.Mode == VariableMode.Fixed)
+                if (!v.IsVarying)
                 {
-                    mergedScalars[v.Name] = v.FixedValue ?? string.Empty;
+                    mergedScalars[v.Name] = v.FixedValue;
                 }
                 else
                 {
