@@ -157,7 +157,7 @@ public partial class ChainExtractionEditor : UserControl
         }
     }
 
-    private void OnSuggestionTextBoxGotFocus(object? sender, GotFocusEventArgs e)
+    private void OnSuggestionTextBoxGotFocus(object? sender, RoutedEventArgs e)
     {
         if (sender is not TextBox tb || tb.DataContext is not ChainExtraction extraction)
         {
