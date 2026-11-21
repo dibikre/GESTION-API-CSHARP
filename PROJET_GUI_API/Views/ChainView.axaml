@@ -861,6 +861,16 @@
                                 </StackPanel>
                             </Button>
 
+                            <Button Classes="secondary"
+                                    Command="{Binding SavePipelineCommand}"
+                                    ToolTip.Tip="Enregistrer le pipeline dans un fichier .apit"
+                                    AutomationProperties.Name="Enregistrer le pipeline au format .apit">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Path Classes="iconStroke" Data="{StaticResource IconSave}" />
+                                    <TextBlock Text="Enregistrer .apit" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
                             <TextBlock Text="{Binding TotalRequestsText}"
                                        FontSize="{DynamicResource FontSizeSmall}"
                                        Foreground="{DynamicResource TextMutedBrush}"
@@ -890,6 +900,20 @@
                             </Panel>
                         </StackPanel>
                     </Grid>
+
+                    <TextBlock IsVisible="{Binding HasPipelineSaveError}"
+                               Text="{Binding PipelineSaveError}"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               FontWeight="Medium"
+                               Foreground="{DynamicResource DangerBrush}"
+                               TextWrapping="Wrap" />
+
+                    <TextBlock IsVisible="{Binding HasPipelineSaveStatus}"
+                               Text="{Binding PipelineSaveStatusText}"
+                               ToolTip.Tip="{Binding LastSavedPipelinePath}"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource SuccessBrush}"
+                               TextWrapping="Wrap" />
 
                     <TextBlock IsVisible="{Binding HasPlanError}"
                                Text="{Binding PlanError}"

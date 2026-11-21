@@ -26,11 +26,14 @@ public partial class ChainViewModel : ViewModelBase
     private readonly ICookieEditorService? _cookieEditor;
     private readonly IClipboardService? _clipboardService;
     private readonly IChainCliGenerator _chainCliGenerator;
+    private readonly IChainPipelineFileService _pipelineFileService;
     private readonly IStepReturnEvaluator _stepReturnEvaluator;
     private readonly RateLimitPolicy _sharedRateLimitPolicy;
     private Dictionary<string, string> _lastAccumulatedVariables = new(StringComparer.Ordinal);
     private Dictionary<string, IReadOnlyList<string>> _lastAccumulatedLists = new(StringComparer.Ordinal);
     private bool _isBulkUpdating;
+    private string? _lastPipelineDirectory;
+    private string? _lastPipelineFileName;
 
     public ChainViewModel(
         ICurlParser curlParser,
@@ -44,7 +47,8 @@ public partial class ChainViewModel : ViewModelBase
         IChainCliGenerator? chainCliGenerator = null,
         ICookieEditorService? cookieEditor = null,
         IStepReturnEvaluator? stepReturnEvaluator = null,
-        IClipboardService? clipboardService = null)
+        IClipboardService? clipboardService = null,
+        IChainPipelineFileService? pipelineFileService = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
@@ -56,6 +60,7 @@ public partial class ChainViewModel : ViewModelBase
         _cookieEditor = cookieEditor;
         _clipboardService = clipboardService;
         _chainCliGenerator = chainCliGenerator ?? new ChainCliGenerator();
+        _pipelineFileService = pipelineFileService ?? new ChainPipelineFileService();
         _stepReturnEvaluator = stepReturnEvaluator ?? new StepReturnEvaluator();
         _sharedRateLimitPolicy = batchViewModel?.RateLimitPolicy ?? new RateLimitPolicy();
         SelectedResponse = new ResponseViewModel(overlayEditor);
@@ -70,6 +75,7 @@ public partial class ChainViewModel : ViewModelBase
         {
             OnPropertyChanged(nameof(HasSteps));
             GenerateCliCommand.NotifyCanExecuteChanged();
+            SavePipelineCommand.NotifyCanExecuteChanged();
         };
         SelectedResponse.ExtractRequested += (_, args) => ExtractToLabCallback?.Invoke(args.Body, args.ContentType);
 
@@ -270,6 +276,25 @@ public partial class ChainViewModel : ViewModelBase
     public partial string? SaveError { get; set; }
 
     public bool HasSaveError => !string.IsNullOrWhiteSpace(SaveError);
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SavePipelineCommand))]
+    public partial bool IsSavingPipeline { get; set; }
+
+    [ObservableProperty]
+    public partial string LastSavedPipelinePath { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPipelineSaveStatus))]
+    public partial string PipelineSaveStatusText { get; set; } = string.Empty;
+
+    public bool HasPipelineSaveStatus => !string.IsNullOrWhiteSpace(PipelineSaveStatusText);
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPipelineSaveError))]
+    public partial string? PipelineSaveError { get; set; }
+
+    public bool HasPipelineSaveError => !string.IsNullOrWhiteSpace(PipelineSaveError);
 
     partial void OnSelectedStepChanged(ChainStep? value)
     {
@@ -1097,6 +1122,77 @@ public partial class ChainViewModel : ViewModelBase
             script,
             IsReadOnly: true,
             OnSave: null));
+    }
+
+    private bool CanSavePipeline() => Steps.Count > 0 && !IsSavingPipeline;
+
+    [RelayCommand(CanExecute = nameof(CanSavePipeline))]
+    private async Task SavePipelineAsync()
+    {
+        if (Steps.Count == 0 || IsSavingPipeline)
+        {
+            return;
+        }
+
+        IsSavingPipeline = true;
+        PipelineSaveError = null;
+        PipelineSaveStatusText = string.Empty;
+
+        try
+        {
+            var saveOptions = new BatchSaveOptions
+            {
+                SaveMode = SaveMode,
+                OutputFolder = OutputFolder,
+                GroupedFormat = GroupedFormat,
+                CreateTimestampSubfolder = CreateTimestampSubfolder,
+                IncludeSummaryCsv = IncludeSummaryCsv
+            };
+
+            var document = ChainPipelineSerializer.CreateDocument(
+                Steps,
+                KeepBodies,
+                SelectedCliLanguage,
+                _sharedRateLimitPolicy,
+                saveOptions);
+
+            var result = await _pipelineFileService.SavePipelineAsync(
+                document,
+                _lastPipelineDirectory,
+                _lastPipelineFileName);
+
+            if (result.IsCancelled)
+            {
+                return;
+            }
+
+            if (!result.IsSuccess)
+            {
+                PipelineSaveError = result.ErrorMessage ?? "Impossible d'enregistrer le pipeline.";
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.FilePath))
+            {
+                LastSavedPipelinePath = result.FilePath;
+                _lastPipelineDirectory = Path.GetDirectoryName(result.FilePath);
+                _lastPipelineFileName = Path.GetFileName(result.FilePath);
+            }
+            else if (!string.IsNullOrWhiteSpace(result.FileName))
+            {
+                LastSavedPipelinePath = result.FileName;
+                _lastPipelineFileName = result.FileName;
+            }
+
+            var displayName = !string.IsNullOrWhiteSpace(result.FileName)
+                ? result.FileName
+                : "pipeline.apit";
+            PipelineSaveStatusText = $"Pipeline enregistré : {displayName}";
+        }
+        finally
+        {
+            IsSavingPipeline = false;
+        }
     }
 
     private bool CanRun() =>

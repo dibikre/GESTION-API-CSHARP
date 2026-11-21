@@ -71,6 +71,7 @@ public partial class App : Application
         services.AddSingleton<IChainRunner, ChainRunner>();
         services.AddSingleton<IStepReturnEvaluator, StepReturnEvaluator>();
         services.AddSingleton<IChainCliGenerator, ChainCliGenerator>();
+        services.AddSingleton<IChainPipelineFileService, ChainPipelineFileService>();
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
         services.AddSingleton<IBatchResultWriter, BatchResultWriter>();
         services.AddSingleton<SingleRequestViewModel>();
