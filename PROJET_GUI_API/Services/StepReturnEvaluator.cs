@@ -12,9 +12,7 @@ namespace ApiTester.Services;
 
 public sealed class StepReturnEvaluator : IStepReturnEvaluator
 {
-    private static readonly Regex TemplateMarkerRegex = new(
-        @"(?:\{\{\s*(\$?[\p{L}_][\p{L}\p{N}_]*)\s*\}\}|\[\[\s*([\p{L}_][\p{L}\p{N}_]*)\s*\]\])",
-        RegexOptions.Compiled);
+    private static readonly Regex TemplateMarkerRegex = VariablePathHelper.AnyMarkerRegex;
 
     private static readonly JsonSerializerOptions IndentedOptions = new()
     {
@@ -265,6 +263,76 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                 result = JsonValue.Create(resolvedIp ?? IpResolutionHelper.ResolveIpSync());
                 error = null;
                 return true;
+        }
+
+        if (VariablePathHelper.TrySplit(id.Name, out var rootName, out var jsonPath) && jsonPath is not null)
+        {
+            if (id.ForceList)
+            {
+                if (activeListItems is not null && activeListItems.TryGetValue(id.Name, out var itemValue))
+                {
+                    result = JsonValue.Create(itemValue ?? string.Empty);
+                    error = null;
+                    return true;
+                }
+
+                if (scalars.TryGetValue(rootName, out var listRootJson))
+                {
+                    var listOutcome = ResponseExtractor.ExtractListJsonPathFromBody(listRootJson, jsonPath);
+                    if (listOutcome.IsSuccess)
+                    {
+                        result = BuildJsonArray(listOutcome.Values);
+                        error = null;
+                        return true;
+                    }
+
+                    result = null;
+                    error = $"[[{id.Name}]] : {listOutcome.ErrorMessage}";
+                    return false;
+                }
+
+                result = null;
+                error = accumulatedLists is not null && accumulatedLists.ContainsKey(rootName)
+                    ? $"[[{id.Name}]] : « {rootName} » est déjà une liste simple ; utilise [[{rootName}]]."
+                    : $"Variable inconnue ou non définie : « {rootName} » (pour [[{id.Name}]]).";
+                return false;
+            }
+
+            if (!scalars.TryGetValue(rootName, out var rootJson))
+            {
+                result = null;
+                error = accumulatedLists is not null && accumulatedLists.ContainsKey(rootName)
+                    ? $"« {rootName} » est une liste simple et ne supporte pas l'accès « .{jsonPath} »."
+                    : $"Variable inconnue ou non définie : « {rootName} » (pour « {id.Name} »).";
+                return false;
+            }
+
+            if (!id.ForceScalar && ResponseExtractor.JsonPathHasWildcard(jsonPath))
+            {
+                var wildcardOutcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, jsonPath);
+                if (wildcardOutcome.IsSuccess)
+                {
+                    result = BuildJsonArray(wildcardOutcome.Values);
+                    error = null;
+                    return true;
+                }
+
+                result = null;
+                error = $"{id.Name} : {wildcardOutcome.ErrorMessage}";
+                return false;
+            }
+
+            var jpOutcome = ResponseExtractor.ExtractJsonPathFromBody(rootJson, jsonPath);
+            if (jpOutcome.IsSuccess)
+            {
+                result = JsonValue.Create(jpOutcome.Value);
+                error = null;
+                return true;
+            }
+
+            result = null;
+            error = $"{id.Name} : {jpOutcome.ErrorMessage}";
+            return false;
         }
 
         if (id.ForceList)

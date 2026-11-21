@@ -85,3 +85,19 @@ public sealed record ExtractionSuggestion(
     int OccurrenceCount,
     string? OccurrenceWarning,
     string? InfoMessage);
+
+public sealed record RealtimeExtractionSuggestion(
+    string Expression,
+    string SuggestedVariableName,
+    string PreviewValue,
+    string BadgeText,
+    string DetailText,
+    bool SuggestsList,
+    int MatchCount = 1,
+    string? TargetHeaderName = null)
+{
+    public bool HasPreviewValue => !string.IsNullOrWhiteSpace(PreviewValue);
+
+    public bool HasDetailText => !string.IsNullOrWhiteSpace(DetailText);
+}
+

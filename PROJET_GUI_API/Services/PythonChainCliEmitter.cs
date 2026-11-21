@@ -31,7 +31,7 @@ internal static class PythonChainCliEmitter
         sb.AppendLine("import uuid");
         sb.AppendLine("import zlib");
         sb.AppendLine();
-        sb.AppendLine(@"MARKER_RE = re.compile(r""(?:\{\{\s*(\$?(?!\d)\w+)\s*\}\}|\[\[\s*((?!\d)(?!\$)\w+)\s*\]\])"")");
+        sb.AppendLine(@"MARKER_RE = re.compile(r""(?:\{\{\s*(\$(?!\d)\w+|(?!\d)(?!\$)\w+(?:(?:\.[^.\{\}\[\]\r\n\s]+|\[[^\{\}\[\]\r\n]*\])+)?)\s*\}\}|\[\[\s*((?!\d)(?!\$)\w+(?:(?:\.[^.\{\}\[\]\r\n\s]+|\[[^\{\}\[\]\r\n]*\])+)?)\s*\]\])"")");
         sb.AppendLine();
 
         AppendStepsData(sb, steps);
@@ -188,29 +188,84 @@ def make_range(spec: dict) -> list[str]:
     return values
 
 
-def build_iterations(axes: list[dict], mode: str, accumulated_lists: dict[str, list[str]]) -> tuple[list[tuple[str, ...]], str | None]:
+_ALLOWED_URI_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%")
+
+
+def split_var_path(expr: str) -> tuple[str, str | None]:
+    trimmed = expr.strip()
+    if not trimmed or trimmed.startswith("$"):
+        return trimmed, None
+    dot_idx = trimmed.find(".")
+    br_idx = trimmed.find("[")
+    candidates = [idx for idx in (dot_idx, br_idx) if idx >= 0]
+    if not candidates:
+        return trimmed, None
+    sep_idx = min(candidates)
+    if sep_idx <= 0:
+        return trimmed, None
+    root = trimmed[:sep_idx].strip()
+    raw_path = trimmed[sep_idx + 1:].strip() if trimmed[sep_idx] == "." else trimmed[sep_idx:].strip()
+    if not root or not raw_path:
+        return trimmed, None
+    return root, raw_path
+
+
+def _is_in_query_value_context(prefix: str) -> bool:
+    if "#" in prefix or "?" not in prefix:
+        return False
+    after_q = prefix.split("?", 1)[1]
+    current_pair = after_q.rsplit("&", 1)[-1]
+    return "=" in current_pair
+
+
+def _escape_url_preserving_structure(value: str) -> str:
+    if not value:
+        return ""
+    out: list[str] = []
+    for ch in value:
+        if ch in _ALLOWED_URI_CHARS:
+            out.append(ch)
+        else:
+            for b in ch.encode("utf-8"):
+                out.append(f"%{b:02X}")
+    return "".join(out)
+
+
+def build_iterations(axes: list[dict], mode: str, accumulated_lists: dict[str, list[str]], scalar_vars: dict[str, str]) -> tuple[list[tuple[str, ...]], str | None, str | None]:
     if not axes:
-        return [()], None
+        return [()], None, None
     axis_lists: list[list[str]] = []
     for a in axes:
         if a["kind"] == "list":
-            lst = list(accumulated_lists.get(a["name"], []))
-            if not lst:
-                return [], a["name"]
+            root, jp = split_var_path(a["name"])
+            if jp is not None:
+                if root not in scalar_vars:
+                    return [], None, f"Variable « {root} » introuvable pour [[{a['name']}]]."
+                ok, res = extract_json_path_list(scalar_vars[root], jp)
+                if ok and isinstance(res, list) and res:
+                    lst = res
+                elif isinstance(res, str) and "est vide" in res.lower():
+                    return [], a["name"], None
+                else:
+                    return [], None, f"[[{a['name']}]] : {res}"
+            else:
+                lst = list(accumulated_lists.get(a["name"], []))
+                if not lst:
+                    return [], a["name"], None
             axis_lists.append(lst)
         elif "range" in a:
             lst = make_range(a["range"])
             if not lst:
-                return [], None
+                return [], None, None
             axis_lists.append(lst)
         else:
             lst = list(a["values"])
             if not lst:
-                return [], None
+                return [], None, None
             axis_lists.append(lst)
     if mode == "parallel":
-        return list(zip(*axis_lists)), None
-    return list(itertools.product(*axis_lists)), None
+        return list(zip(*axis_lists)), None, None
+    return list(itertools.product(*axis_lists)), None, None
 
 
 def resolve_marker(match: re.Match[str], variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
@@ -218,6 +273,12 @@ def resolve_marker(match: re.Match[str], variables: dict[str, str], list_vars: d
     if list_name is not None:
         if list_name in list_vars:
             return list_vars[list_name]
+        root, jp = split_var_path(list_name)
+        if jp is not None and root in variables:
+            ok, res = extract_json_path_list(variables[root], jp)
+            if ok and isinstance(res, list) and res:
+                return res[0]
+            raise KeyError(f"[[{list_name}]] : {res}")
         raise KeyError(f"Liste inconnue ou non définie : [[{list_name}]]")
     name = match.group(1)
     if name in variables:
@@ -228,7 +289,36 @@ def resolve_marker(match: re.Match[str], variables: dict[str, str], list_vars: d
         return req_guid
     if name == "$timestamp":
         return req_ts
+    root, jp = split_var_path(name)
+    if jp is not None:
+        if root not in variables:
+            raise KeyError(f"Variable inconnue ou non définie : {{{{{root}}}}} (pour {{{{{name}}}}})")
+        ok, res = extract_json_path(variables[root], jp)
+        if not ok:
+            raise KeyError(f"{{{{{name}}}}} : {res}")
+        return res
     raise KeyError(f"Variable inconnue ou non définie : {{{{{name}}}}}")
+
+
+def substitute_url(text: str, variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
+    if not text:
+        return ""
+    matches = list(MARKER_RE.finditer(text))
+    if not matches:
+        return text
+    out: list[str] = []
+    last_idx = 0
+    for match in matches:
+        out.append(text[last_idx:match.start()])
+        prefix = "".join(out)
+        val = resolve_marker(match, variables, list_vars, global_index, req_guid, req_ts)
+        if _is_in_query_value_context(prefix):
+            out.append(urllib.parse.quote(val, safe=""))
+        else:
+            out.append(_escape_url_preserving_structure(val.strip() if not prefix.strip() else val))
+        last_idx = match.end()
+    out.append(text[last_idx:])
+    return "".join(out)
 
 
 def substitute_simple(text: str, variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str, url_encode: bool = False) -> str:
@@ -306,6 +396,8 @@ def decode_response_bytes(raw_bytes: bytes, headers: list[tuple[str, str]]) -> s
 
 def parse_json_path(raw_path: str) -> list[tuple[str | None, int | None, bool]]:
     path = raw_path.strip()
+    if path == "$":
+        return []
     if path.startswith("$."):
         path = path[2:]
     elif path.startswith("$"):
@@ -845,6 +937,8 @@ def run_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]
                 break
         if not ok:
             return False, res
+    elif ext["kind"] == "full_response":
+        res = resp_body
     elif ext["kind"] == "jsonpath":
         ok, res = extract_json_path(resp_body, ext["expression"])
         if not ok:
@@ -974,6 +1068,33 @@ def resolve_return_identifier(name: str, force_scalar: bool, force_list: bool, s
         return req_ts
     if name == "$ip":
         return resolve_current_ip()
+    root, jp = split_var_path(name)
+    if jp is not None:
+        if force_list:
+            if name in list_vars:
+                return list_vars[name]
+            if root in scalars:
+                ok, res = extract_json_path_list(scalars[root], jp)
+                if ok and isinstance(res, list):
+                    return res
+                raise KeyError(f"[[{name}]] : {res}")
+            raise KeyError(f"Variable inconnue ou non définie : {root} (pour [[{name}]])")
+        if root not in scalars:
+            raise KeyError(f"Variable inconnue ou non définie : {root} (pour {name})")
+        if not force_scalar:
+            try:
+                steps = parse_json_path(jp)
+                if any(w for _, _, w in steps):
+                    ok, res = extract_json_path_list(scalars[root], jp)
+                    if ok and isinstance(res, list):
+                        return res
+                    raise KeyError(f"{name} : {res}")
+            except ValueError as exc:
+                raise KeyError(f"{name} : {exc}")
+        ok, res = extract_json_path(scalars[root], jp)
+        if ok:
+            return res
+        raise KeyError(f"{name} : {res}")
     if force_list:
         if name in list_vars:
             return list_vars[name]
@@ -1100,7 +1221,14 @@ def main() -> int:
             print(f"[ERREUR] Étape {step['rank']} ({step['name']}) : URL vide.", file=sys.stderr)
             return 1
 
-        iterations, empty_list_name = build_iterations(step["axes"], step["mode"], accumulated_lists)
+        scalar_candidates = {**accumulated_vars, **step["fixed_variables"]}
+        iterations, empty_list_name, list_err = build_iterations(step["axes"], step["mode"], accumulated_lists, scalar_candidates)
+        if list_err is not None:
+            print(f"[ÉCHEC] Étape {step['rank']} ({step['name']}) : {list_err}", file=sys.stderr)
+            has_any_failure = True
+            if not step["continue_on_error"]:
+                return 1
+            continue
         if empty_list_name is not None:
             print(f"[IGNORÉE] Étape {step['rank']} ({step['name']}) : liste [[{empty_list_name}]] vide.")
             continue
@@ -1146,7 +1274,7 @@ def main() -> int:
                 continue
 
             try:
-                final_base_url = substitute_simple(step["url"], merged_vars, list_vars, global_index, req_guid, req_ts, url_encode=True)
+                final_base_url = substitute_url(step["url"], merged_vars, list_vars, global_index, req_guid, req_ts)
                 query_items = []
                 for qp in step["query_params"]:
                     if qp["axis_index"] is not None:

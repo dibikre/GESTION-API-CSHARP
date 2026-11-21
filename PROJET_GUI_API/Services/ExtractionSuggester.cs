@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Text;
@@ -201,6 +202,50 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             : null;
 
         return new ExtractionSuggestion(null, finalRegex, occurrences, warning, null);
+    }
+
+    public IReadOnlyList<RealtimeExtractionSuggestion> SuggestRealtime(
+        ResponseModel response,
+        ChainExtractionSource source,
+        ExtractionKind kind,
+        string? query,
+        string? headerName = null,
+        string? variableName = null,
+        bool isList = false,
+        int maxResults = 25)
+    {
+        if (response is null)
+        {
+            return [];
+        }
+
+        return RealtimeExtractionMatcher.SuggestRealtime(
+            response,
+            source,
+            kind,
+            query,
+            headerName,
+            variableName,
+            isList,
+            this,
+            maxResults);
+    }
+
+    public IReadOnlyList<RealtimeExtractionSuggestion> SuggestHeaderNames(
+        ResponseModel response,
+        string? query,
+        int maxResults = 25)
+    {
+        if (response is null)
+        {
+            return [];
+        }
+
+        return RealtimeExtractionMatcher.SuggestHeaderNames(
+            response,
+            query,
+            this,
+            maxResults);
     }
 
     private static FormatAnalysisResult AnalyzeJson(string text)

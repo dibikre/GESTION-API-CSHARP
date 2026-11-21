@@ -689,11 +689,38 @@ public class CurlParser : ICurlParser
             request.Url = trimmed;
         }
 
-        if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var parsed) ||
-            (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+        if (!IsValidHttpUrlOrTemplate(request.Url))
         {
             warnings.Add(($"L'URL extraite semble invalide ou incomplète : {request.Url}", true));
         }
+    }
+
+    private static bool IsValidHttpUrlOrTemplate(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var parsed) &&
+            (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
+        {
+            return true;
+        }
+
+        var trimmed = url.TrimStart();
+        if (trimmed.StartsWith("{{", StringComparison.Ordinal) ||
+            trimmed.StartsWith("[[", StringComparison.Ordinal))
+        {
+            return VariablePathHelper.AnyMarkerRegex.IsMatch(trimmed);
+        }
+
+        if (VariablePathHelper.AnyMarkerRegex.IsMatch(trimmed))
+        {
+            var probe = VariablePathHelper.AnyMarkerRegex.Replace(trimmed, "placeholder");
+            if (Uri.TryCreate(probe, UriKind.Absolute, out var probeUri) &&
+                (probeUri.Scheme == Uri.UriSchemeHttp || probeUri.Scheme == Uri.UriSchemeHttps))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void ParseFormPairsInto(string encodedPairs, List<KeyValueItem> target)

@@ -28,7 +28,9 @@ public partial class ChainViewModel : ViewModelBase
     private readonly IChainCliGenerator _chainCliGenerator;
     private readonly IChainPipelineFileService _pipelineFileService;
     private readonly IStepReturnEvaluator _stepReturnEvaluator;
+    private readonly IExtractionSuggester _extractionSuggester;
     private readonly RateLimitPolicy _sharedRateLimitPolicy;
+    private CancellationTokenSource? _liveExtractionTestCts;
     private Dictionary<string, string> _lastAccumulatedVariables = new(StringComparer.Ordinal);
     private Dictionary<string, IReadOnlyList<string>> _lastAccumulatedLists = new(StringComparer.Ordinal);
     private readonly List<ChainStepResult> _rawResults = [];
@@ -50,7 +52,8 @@ public partial class ChainViewModel : ViewModelBase
         ICookieEditorService? cookieEditor = null,
         IStepReturnEvaluator? stepReturnEvaluator = null,
         IClipboardService? clipboardService = null,
-        IChainPipelineFileService? pipelineFileService = null)
+        IChainPipelineFileService? pipelineFileService = null,
+        IExtractionSuggester? extractionSuggester = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
@@ -64,6 +67,7 @@ public partial class ChainViewModel : ViewModelBase
         _chainCliGenerator = chainCliGenerator ?? new ChainCliGenerator();
         _pipelineFileService = pipelineFileService ?? new ChainPipelineFileService();
         _stepReturnEvaluator = stepReturnEvaluator ?? new StepReturnEvaluator();
+        _extractionSuggester = extractionSuggester ?? new ExtractionSuggester();
         _sharedRateLimitPolicy = batchViewModel?.RateLimitPolicy ?? new RateLimitPolicy();
         SelectedResponse = new ResponseViewModel(overlayEditor);
 
@@ -99,6 +103,8 @@ public partial class ChainViewModel : ViewModelBase
     public ObservableCollection<ChainStep> Steps => Definition.Steps;
 
     public bool HasSteps => Steps.Count > 0;
+
+    public IExtractionSuggester ExtractionSuggester => _extractionSuggester;
 
     public RateLimitPolicy GlobalRateLimitPolicy => _sharedRateLimitPolicy;
 
@@ -304,6 +310,7 @@ public partial class ChainViewModel : ViewModelBase
 
     partial void OnSelectedStepChanged(ChainStep? value)
     {
+        CancelPendingLiveExtractionTest();
         OnPropertyChanged(nameof(AvailableExtractedVariablesText));
         OnPropertyChanged(nameof(HasAvailableExtractedVariables));
         MoveStepUpCommand.NotifyCanExecuteChanged();
@@ -615,6 +622,16 @@ public partial class ChainViewModel : ViewModelBase
             {
                 activeListItems[listMarker.Name] = listVals[0];
             }
+            else if (VariablePathHelper.TrySplit(listMarker.Name, out var listRoot, out var listJsonPath) &&
+                     listJsonPath is not null &&
+                     mergedScalars.TryGetValue(listRoot, out var rootJson))
+            {
+                var jpList = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, listJsonPath);
+                if (jpList.IsSuccess && jpList.Values.Count > 0)
+                {
+                    activeListItems[listMarker.Name] = jpList.Values[0];
+                }
+            }
         }
 
         string? resolvedIp = null;
@@ -855,6 +872,11 @@ public partial class ChainViewModel : ViewModelBase
     [RelayCommand]
     private void TestExtraction(ChainExtraction? extraction)
     {
+        EvaluateExtraction(extraction, allowEmptyVariablePreview: false);
+    }
+
+    private void EvaluateExtraction(ChainExtraction? extraction, bool allowEmptyVariablePreview)
+    {
         if (SelectedStep is null || extraction is null)
         {
             return;
@@ -868,9 +890,25 @@ public partial class ChainViewModel : ViewModelBase
             return;
         }
 
+        if (allowEmptyVariablePreview &&
+            extraction.Kind != ExtractionKind.FullResponse &&
+            string.IsNullOrWhiteSpace(extraction.Expression) &&
+            (extraction.Source != ChainExtractionSource.Header || string.IsNullOrWhiteSpace(extraction.HeaderName)))
+        {
+            extraction.ClearPreviewState();
+            return;
+        }
+
+        var targetForEvaluation = extraction;
+        if (allowEmptyVariablePreview && string.IsNullOrWhiteSpace(extraction.VariableName))
+        {
+            targetForEvaluation = extraction.Clone();
+            targetForEvaluation.VariableName = "preview";
+        }
+
         if (extraction.IsList)
         {
-            var rawOutcome = _responseExtractor.ExtractRawList(response, extraction);
+            var rawOutcome = _responseExtractor.ExtractRawList(response, targetForEvaluation);
             if (!rawOutcome.IsSuccess)
             {
                 extraction.LastRawExtractedList = null;
@@ -920,7 +958,7 @@ public partial class ChainViewModel : ViewModelBase
 
         extraction.LastRawExtractedList = null;
         extraction.LastExtractedList = null;
-        var outcome = _responseExtractor.Extract(response, extraction);
+        var outcome = _responseExtractor.Extract(response, targetForEvaluation);
         if (outcome.IsSuccess)
         {
             extraction.LastExtractedValue = outcome.Value;
@@ -933,6 +971,61 @@ public partial class ChainViewModel : ViewModelBase
         }
 
         RefreshDeclaredVariables();
+    }
+
+    private async void ScheduleLiveExtractionTest(ChainExtraction extraction)
+    {
+        CancelPendingLiveExtractionTest();
+
+        if (SelectedStep?.LastResponse is null)
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _liveExtractionTestCts = cts;
+        var expectedStep = SelectedStep;
+
+        try
+        {
+            await Task.Delay(95, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (cts.IsCancellationRequested ||
+            !ReferenceEquals(SelectedStep, expectedStep) ||
+            expectedStep.LastResponse is null ||
+            !expectedStep.Extractions.Contains(extraction))
+        {
+            return;
+        }
+
+        EvaluateExtraction(extraction, allowEmptyVariablePreview: true);
+    }
+
+    private void CancelPendingLiveExtractionTest()
+    {
+        if (_liveExtractionTestCts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _liveExtractionTestCts.Cancel();
+            _liveExtractionTestCts.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Ignore if already disposed.
+        }
+        finally
+        {
+            _liveExtractionTestCts = null;
+        }
     }
 
     [RelayCommand]
@@ -1237,6 +1330,7 @@ public partial class ChainViewModel : ViewModelBase
     [RelayCommand(IncludeCancelCommand = true, CanExecute = nameof(CanRun))]
     private async Task RunAsync(CancellationToken ct)
     {
+        CancelPendingLiveExtractionTest();
         RefreshAllStepsAndPlan();
         if (!CanRun())
         {
@@ -1699,13 +1793,48 @@ public partial class ChainViewModel : ViewModelBase
 
         RefreshAllStepsAndPlan();
 
-        if (sender is ChainExtraction extraction &&
-            e.PropertyName == nameof(ChainExtraction.IsList) &&
-            SelectedStep?.LastResponse is not null &&
-            !string.IsNullOrWhiteSpace(extraction.VariableName) &&
-            !string.IsNullOrWhiteSpace(extraction.Expression))
+        if (sender is not ChainExtraction extraction)
         {
-            TestExtraction(extraction);
+            return;
+        }
+
+        if (SelectedStep?.LastResponse is null)
+        {
+            if (e.PropertyName is nameof(ChainExtraction.Expression)
+                or nameof(ChainExtraction.HeaderName)
+                or nameof(ChainExtraction.RegexGroup))
+            {
+                extraction.ClearPreviewState();
+            }
+            return;
+        }
+
+        if (e.PropertyName is nameof(ChainExtraction.IsList)
+            or nameof(ChainExtraction.Kind)
+            or nameof(ChainExtraction.Source))
+        {
+            if (extraction.Kind == ExtractionKind.FullResponse ||
+                !string.IsNullOrWhiteSpace(extraction.Expression))
+            {
+                CancelPendingLiveExtractionTest();
+                EvaluateExtraction(extraction, allowEmptyVariablePreview: true);
+            }
+            return;
+        }
+
+        if (e.PropertyName is nameof(ChainExtraction.Expression)
+            or nameof(ChainExtraction.HeaderName)
+            or nameof(ChainExtraction.RegexGroup)
+            or nameof(ChainExtraction.VariableName))
+        {
+            if (e.PropertyName == nameof(ChainExtraction.VariableName) &&
+                extraction.Kind != ExtractionKind.FullResponse &&
+                string.IsNullOrWhiteSpace(extraction.Expression))
+            {
+                return;
+            }
+
+            ScheduleLiveExtractionTest(extraction);
         }
     }
 
@@ -1866,6 +1995,19 @@ public partial class ChainViewModel : ViewModelBase
 
         foreach (var listExt in extractedLists)
         {
+            if (VariablePathHelper.TrySplit(listExt.Name, out var listRoot, out var listJsonPath) &&
+                listJsonPath is not null)
+            {
+                var hasRootInStep = step.Variables.Any(v => v.Name == listRoot && v.IsConfigured && !v.HasError);
+                if (!availableScalars.Contains(listRoot) && !hasRootInStep)
+                {
+                    errors.Add(availableLists.Contains(listRoot)
+                        ? $"[[{listExt.Name}]] : « {listRoot} » est une liste simple ; utilise [[{listRoot}]] ou extrais la réponse complète."
+                        : $"[[{listExt.Name}]] : aucune étape précédente n'extrait la variable « {listRoot} ».");
+                }
+                continue;
+            }
+
             if (!availableLists.Contains(listExt.Name))
             {
                 errors.Add(availableScalars.Contains(listExt.Name)
@@ -1969,7 +2111,11 @@ public partial class ChainViewModel : ViewModelBase
                 if (!string.IsNullOrWhiteSpace(ext.VariableName))
                 {
                     var name = ext.VariableName.Trim();
-                    var token = ext.IsList ? $"[[{name}]]" : $"{{{{{name}}}}}";
+                    var token = ext.IsList
+                        ? $"[[{name}]]"
+                        : ext.Kind == ExtractionKind.FullResponse
+                            ? $"{{{{{name}}}}} (.jsonpath)"
+                            : $"{{{{{name}}}}}";
                     if (seen.Add(token))
                     {
                         list.Add(token);

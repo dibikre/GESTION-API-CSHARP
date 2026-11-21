@@ -22,6 +22,9 @@ public partial class ChainExtraction : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsJsonPathKind))]
     [NotifyPropertyChangedFor(nameof(IsRegexKind))]
+    [NotifyPropertyChangedFor(nameof(IsFullResponseKind))]
+    [NotifyPropertyChangedFor(nameof(RequiresExpression))]
+    [NotifyPropertyChangedFor(nameof(CanBeList))]
     [NotifyPropertyChangedFor(nameof(ShowRegexGroup))]
     [NotifyPropertyChangedFor(nameof(ExpressionPlaceholder))]
     public partial ExtractionKind Kind { get; set; } = ExtractionKind.JsonPath;
@@ -91,6 +94,12 @@ public partial class ChainExtraction : ObservableObject
 
     public bool IsRegexKind => Kind == ExtractionKind.Regex;
 
+    public bool IsFullResponseKind => Kind == ExtractionKind.FullResponse;
+
+    public bool RequiresExpression => Kind != ExtractionKind.FullResponse || Source == ChainExtractionSource.Header;
+
+    public bool CanBeList => Kind != ExtractionKind.FullResponse;
+
     public bool ShowRegexGroup => Kind == ExtractionKind.Regex || Source == ChainExtractionSource.Header;
 
     public bool IsOptional => !IsRequired;
@@ -117,11 +126,27 @@ public partial class ChainExtraction : ObservableObject
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorText);
 
-    public string LastExtractedDisplay => LastExtractedValue is null
-        ? string.Empty
-        : BatchExecutionHelper.IsSensitiveName(VariableName)
-            ? $"*** ({LastExtractedValue.Length} car.)"
-            : LastExtractedValue;
+    public string LastExtractedDisplay
+    {
+        get
+        {
+            if (LastExtractedValue is null)
+            {
+                return string.Empty;
+            }
+
+            if (BatchExecutionHelper.IsSensitiveName(VariableName))
+            {
+                return $"*** ({LastExtractedValue.Length} car.)";
+            }
+
+            var collapsed = LastExtractedValue
+                .Replace("\r\n", " ", StringComparison.Ordinal)
+                .Replace("\r", " ", StringComparison.Ordinal)
+                .Replace("\n", " ", StringComparison.Ordinal);
+            return BatchExecutionHelper.TruncateForDisplay(collapsed, 220);
+        }
+    }
 
     public string VariablePlaceholderHint => string.IsNullOrWhiteSpace(VariableName)
         ? (IsList ? "nom_liste" : "nom_variable")
@@ -129,23 +154,36 @@ public partial class ChainExtraction : ObservableObject
 
     public string ExpressionPlaceholder => Source == ChainExtractionSource.Header
         ? "ex. Bearer (.+)"
-        : Kind == ExtractionKind.JsonPath
-            ? (IsList ? "ex. items[*].id, items[n++].id ou data.tags" : "ex. data.token ou items[0].id")
-            : "ex. \"token\":\"([^\"]+)\"";
+        : Kind == ExtractionKind.FullResponse
+            ? "(réponse complète — réutilisable via {{var.chemin}})"
+            : Kind == ExtractionKind.JsonPath
+                ? (IsList ? "ex. items[*].id, items[n++].id ou data.tags" : "ex. data.token ou items[0].id")
+                : "ex. \"token\":\"([^\"]+)\"";
 
     partial void OnKindChanged(ExtractionKind value)
     {
+        if (value == ExtractionKind.FullResponse && IsList)
+        {
+            IsList = false;
+        }
+
         ClearPreviewState();
     }
 
     partial void OnExpressionChanged(string value)
     {
-        ClearPreviewState();
+        if (string.IsNullOrWhiteSpace(value) && Kind != ExtractionKind.FullResponse)
+        {
+            ClearPreviewState();
+        }
     }
 
     partial void OnHeaderNameChanged(string value)
     {
-        ClearPreviewState();
+        if (string.IsNullOrWhiteSpace(value) && Source == ChainExtractionSource.Header)
+        {
+            ClearPreviewState();
+        }
     }
 
     partial void OnIsListChanged(bool value)
@@ -155,7 +193,7 @@ public partial class ChainExtraction : ObservableObject
 
     partial void OnSourceChanged(ChainExtractionSource value)
     {
-        if (value == ChainExtractionSource.Header && Kind == ExtractionKind.JsonPath)
+        if (value == ChainExtractionSource.Header && Kind != ExtractionKind.Regex)
         {
             Kind = ExtractionKind.Regex;
         }
@@ -169,8 +207,6 @@ public partial class ChainExtraction : ObservableObject
         {
             RegexGroup = 0;
         }
-
-        ClearPreviewState();
     }
 
     public void NotifyConditionsChanged()
@@ -186,7 +222,7 @@ public partial class ChainExtraction : ObservableObject
         NotifyConditionsChanged();
     }
 
-    private void ClearPreviewState()
+    internal void ClearPreviewState()
     {
         LastExtractedValue = null;
         LastExtractedList = null;

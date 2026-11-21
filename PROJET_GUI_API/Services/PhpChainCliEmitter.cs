@@ -24,7 +24,7 @@ internal static class PhpChainCliEmitter
         sb.AppendLine("    exit(1);");
         sb.AppendLine("}");
         sb.AppendLine();
-        sb.AppendLine("const MARKER_RE = '/(?:\\{\\{\\s*(\\$?(?![0-9])[\\p{L}\\p{N}_]+)\\s*\\}\\}|\\[\\[\\s*((?![0-9])[\\p{L}\\p{N}_]+)\\s*\\]\\])/u';");
+        sb.AppendLine("const MARKER_RE = '/(?:\\{\\{\\s*(\\$(?![0-9])[\\p{L}\\p{N}_]+|(?![0-9])(?!\\$)[\\p{L}\\p{N}_]+(?:(?:\\.[^.{}\\[\\]\\r\\n\\s]+|\\[[^{}\\[\\]\\r\\n]*\\])+)?)\\s*\\}\\}|\\[\\[\\s*((?![0-9])(?!\\$)[\\p{L}\\p{N}_]+(?:(?:\\.[^.{}\\[\\]\\r\\n\\s]+|\\[[^{}\\[\\]\\r\\n]*\\])+)?)\\s*\\]\\])/u';");
         sb.AppendLine();
 
         AppendStepsData(sb, steps);
@@ -191,22 +191,90 @@ function makeRange(array $spec): array {
     return $values;
 }
 
-function buildIterations(array $axes, string $mode, array $accumulatedLists): array {
+const ALLOWED_URI_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&\'()*+,;=%';
+
+function splitVarPath(string $expr): array {
+    $trimmed = trim($expr);
+    if ($trimmed === '' || str_starts_with($trimmed, '$')) {
+        return [$trimmed, null];
+    }
+    $dotIdx = strpos($trimmed, '.');
+    $brIdx = strpos($trimmed, '[');
+    $sepIdx = false;
+    if ($dotIdx !== false && $brIdx !== false) {
+        $sepIdx = min($dotIdx, $brIdx);
+    } elseif ($dotIdx !== false) {
+        $sepIdx = $dotIdx;
+    } elseif ($brIdx !== false) {
+        $sepIdx = $brIdx;
+    }
+    if ($sepIdx === false || $sepIdx <= 0) {
+        return [$trimmed, null];
+    }
+    $root = trim(substr($trimmed, 0, $sepIdx));
+    $rawPath = trim($trimmed[$sepIdx] === '.' ? substr($trimmed, $sepIdx + 1) : substr($trimmed, $sepIdx));
+    if ($root === '' || $rawPath === '') {
+        return [$trimmed, null];
+    }
+    return [$root, $rawPath];
+}
+
+function isInQueryValueContext(string $prefix): bool {
+    if (str_contains($prefix, '#')) return false;
+    $qIdx = strpos($prefix, '?');
+    if ($qIdx === false) return false;
+    $afterQ = substr($prefix, $qIdx + 1);
+    $ampIdx = strrpos($afterQ, '&');
+    $currentPair = $ampIdx !== false ? substr($afterQ, $ampIdx + 1) : $afterQ;
+    return str_contains($currentPair, '=');
+}
+
+function escapeUrlPreservingStructure(string $value): string {
+    if ($value === '') return '';
+    $out = '';
+    $len = strlen($value);
+    for ($i = 0; $i < $len; $i++) {
+        $byte = $value[$i];
+        if (str_contains(ALLOWED_URI_CHARS, $byte)) {
+            $out .= $byte;
+        } else {
+            $out .= sprintf('%%%02X', ord($byte));
+        }
+    }
+    return $out;
+}
+
+function buildIterations(array $axes, string $mode, array $accumulatedLists, array $scalarVars): array {
     if (count($axes) === 0) {
-        return [[[]], null];
+        return [[[]], null, null];
     }
     $lists = [];
     foreach ($axes as $axis) {
         if ($axis['kind'] === 'list') {
-            $list = $accumulatedLists[$axis['name']] ?? [];
-            if (count($list) === 0) {
-                return [[], $axis['name']];
+            [$root, $jp] = splitVarPath($axis['name']);
+            if ($jp !== null) {
+                if (!array_key_exists($root, $scalarVars)) {
+                    return [[], null, "Variable « {$root} » introuvable pour [[{$axis['name']}]]."];
+                }
+                [$ok, $res] = extractJsonPathList((string)$scalarVars[$root], $jp);
+                if ($ok && is_array($res) && count($res) > 0) {
+                    $list = $res;
+                } elseif (is_string($res) && stripos($res, 'est vide') !== false) {
+                    return [[], $axis['name'], null];
+                } else {
+                    return [[], null, "[[{$axis['name']}]] : {$res}"];
+                }
+            } else {
+                $list = $accumulatedLists[$axis['name']] ?? [];
+                if (count($list) === 0) {
+                    return [[], $axis['name'], null];
+                }
             }
             $lists[] = $list;
         } else {
             $list = isset($axis['range']) ? makeRange($axis['range']) : $axis['values'];
             if (count($list) === 0) {
-                return [[], null];
+                return [[], null, null];
             }
             $lists[] = $list;
         }
@@ -221,7 +289,7 @@ function buildIterations(array $axes, string $mode, array $accumulatedLists): ar
             }
             $rows[] = $row;
         }
-        return [$rows, null];
+        return [$rows, null, null];
     }
     $acc = [[]];
     foreach ($lists as $list) {
@@ -235,13 +303,21 @@ function buildIterations(array $axes, string $mode, array $accumulatedLists): ar
         }
         $acc = $next;
     }
-    return [$acc, null];
+    return [$acc, null, null];
 }
 
 function resolveMarker(?string $scalarName, ?string $listName, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs): string {
     if ($listName !== null && $listName !== '') {
         if (array_key_exists($listName, $listVars)) {
             return (string)$listVars[$listName];
+        }
+        [$root, $jp] = splitVarPath($listName);
+        if ($jp !== null && array_key_exists($root, $variables)) {
+            [$ok, $res] = extractJsonPathList((string)$variables[$root], $jp);
+            if ($ok && is_array($res) && count($res) > 0) {
+                return (string)$res[0];
+            }
+            throw new RuntimeException("[[{$listName}]] : " . (is_string($res) ? $res : 'Erreur JSONPath'));
         }
         throw new RuntimeException("Liste inconnue ou non définie : [[" . $listName . "]]");
     }
@@ -252,7 +328,47 @@ function resolveMarker(?string $scalarName, ?string $listName, array $variables,
     if ($name === '$index') return (string)$globalIndex;
     if ($name === '$guid') return $reqGuid;
     if ($name === '$timestamp') return $reqTs;
+    [$root, $jp] = splitVarPath($name);
+    if ($jp !== null) {
+        if (!array_key_exists($root, $variables)) {
+            throw new RuntimeException("Variable inconnue ou non définie : {{" . $root . "}} (pour {{" . $name . "}})");
+        }
+        [$ok, $res] = extractJsonPath((string)$variables[$root], $jp);
+        if (!$ok) {
+            throw new RuntimeException("{{" . $name . "}} : " . (string)$res);
+        }
+        return (string)$res;
+    }
     throw new RuntimeException("Variable inconnue ou non définie : {{" . $name . "}}");
+}
+
+function substituteUrl(string $text, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs): string {
+    if ($text === '') {
+        return '';
+    }
+    if (!preg_match_all(MARKER_RE, $text, $matches, PREG_OFFSET_CAPTURE)) {
+        return $text;
+    }
+    $out = '';
+    $lastOffset = 0;
+    foreach ($matches[0] as $idx => $fullMatch) {
+        $matchStr = $fullMatch[0];
+        $matchOffset = $fullMatch[1];
+        $scalarName = $matches[1][$idx][0] ?? '';
+        $listName = (isset($matches[2][$idx]) && $matches[2][$idx][1] >= 0) ? $matches[2][$idx][0] : '';
+
+        $out .= substr($text, $lastOffset, $matchOffset - $lastOffset);
+        $val = resolveMarker($scalarName, $listName, $variables, $listVars, $globalIndex, $reqGuid, $reqTs);
+        if (isInQueryValueContext($out)) {
+            $out .= rawurlencode($val);
+        } else {
+            $hasNonWsPrefix = trim($out) !== '';
+            $out .= escapeUrlPreservingStructure($hasNonWsPrefix ? $val : trim($val));
+        }
+        $lastOffset = $matchOffset + strlen($matchStr);
+    }
+    $out .= substr($text, $lastOffset);
+    return $out;
 }
 
 function substituteSimple(string $text, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs, bool $urlEncode = false): string {
@@ -338,6 +454,9 @@ function buildFinalUrl(string $rawUrl, array $queryItems): string {
 
 function parseJsonPath(string $rawPath): array {
     $path = trim($rawPath);
+    if ($path === '$') {
+        return [];
+    }
     if (str_starts_with($path, '$.')) {
         $path = substr($path, 2);
     } elseif (str_starts_with($path, '$')) {
@@ -972,6 +1091,8 @@ function runExtraction(array $ext, string $respBody, array $respHeaders): array 
             $rawOutcome = [$ok, $res];
             if ($ok) break;
         }
+    } elseif ($ext['kind'] === 'full_response') {
+        $rawOutcome = [true, $respBody];
     } elseif ($ext['kind'] === 'jsonpath') {
         $rawOutcome = extractJsonPath($respBody, $ext['expression']);
     } else {
@@ -1146,6 +1267,43 @@ function resolveReturnIdentifier(string $name, bool $forceScalar, bool $forceLis
     if ($name === '$timestamp') return $reqTs;
     if ($name === '$ip') return resolveCurrentIp();
 
+    [$root, $jp] = splitVarPath($name);
+    if ($jp !== null) {
+        if ($forceList) {
+            if (array_key_exists($name, $listVars)) {
+                return $listVars[$name];
+            }
+            if (array_key_exists($root, $scalars)) {
+                [$ok, $res] = extractJsonPathList((string)$scalars[$root], $jp);
+                if ($ok && is_array($res)) {
+                    return $res;
+                }
+                throw new RuntimeException("[[{$name}]] : " . (string)$res);
+            }
+            throw new RuntimeException("Variable inconnue ou non définie : {$root} (pour [[{$name}]])");
+        }
+        if (!array_key_exists($root, $scalars)) {
+            throw new RuntimeException("Variable inconnue ou non définie : {$root} (pour {$name})");
+        }
+        if (!$forceScalar) {
+            $steps = parseJsonPath($jp);
+            foreach ($steps as [, , $isWildcard]) {
+                if ($isWildcard) {
+                    [$ok, $res] = extractJsonPathList((string)$scalars[$root], $jp);
+                    if ($ok && is_array($res)) {
+                        return $res;
+                    }
+                    throw new RuntimeException("{$name} : " . (string)$res);
+                }
+            }
+        }
+        [$ok, $res] = extractJsonPath((string)$scalars[$root], $jp);
+        if ($ok) {
+            return $res;
+        }
+        throw new RuntimeException("{$name} : " . (string)$res);
+    }
+
     if ($forceList) {
         if (array_key_exists($name, $listVars)) {
             return $listVars[$name];
@@ -1287,7 +1445,16 @@ foreach ($steps as $stepIdx => $step) {
         exit(1);
     }
 
-    [$iterations, $emptyListName] = buildIterations($step['axes'], $step['mode'], $accumulatedLists);
+    $scalarCandidates = array_merge($accumulatedVars, $step['fixedVariables']);
+    [$iterations, $emptyListName, $listErr] = buildIterations($step['axes'], $step['mode'], $accumulatedLists, $scalarCandidates);
+    if ($listErr !== null) {
+        fwrite(STDERR, "[ÉCHEC] Étape {$step['rank']} ({$step['name']}) : {$listErr}\n");
+        $hasAnyFailure = true;
+        if (!$step['continueOnError']) {
+            exit(1);
+        }
+        continue;
+    }
     if ($emptyListName !== null) {
         echo "[IGNORÉE] Étape {$step['rank']} ({$step['name']}) : liste [[{$emptyListName}]] vide.\n";
         continue;
@@ -1342,7 +1509,7 @@ foreach ($steps as $stepIdx => $step) {
         }
 
         try {
-            $finalBaseUrl = substituteSimple($step['url'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs, true);
+            $finalBaseUrl = substituteUrl($step['url'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs);
             $queryItems = [];
             foreach ($step['queryParams'] as $qp) {
                 if ($qp['axisIndex'] !== null) {

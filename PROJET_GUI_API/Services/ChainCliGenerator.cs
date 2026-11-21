@@ -436,7 +436,8 @@ public sealed class ChainCliGenerator : IChainCliGenerator
         var result = new List<CliExtractionSpec>(extractions.Count);
         foreach (var ext in extractions)
         {
-            if (string.IsNullOrWhiteSpace(ext.VariableName) || string.IsNullOrWhiteSpace(ext.Expression))
+            if (string.IsNullOrWhiteSpace(ext.VariableName) ||
+                (ext.Kind != ExtractionKind.FullResponse && string.IsNullOrWhiteSpace(ext.Expression)))
             {
                 continue;
             }
@@ -464,8 +465,13 @@ public sealed class ChainCliGenerator : IChainCliGenerator
             result.Add(new CliExtractionSpec(
                 ext.VariableName.Trim(),
                 ext.Source == ChainExtractionSource.Header ? "header" : "body",
-                ext.Kind == ExtractionKind.Regex ? "regex" : "jsonpath",
-                ext.Expression.Trim(),
+                ext.Kind switch
+                {
+                    ExtractionKind.Regex => "regex",
+                    ExtractionKind.FullResponse => "full_response",
+                    _ => "jsonpath"
+                },
+                ext.Expression?.Trim() ?? string.Empty,
                 Math.Max(0, ext.RegexGroup),
                 ext.HeaderName?.Trim() ?? string.Empty,
                 ext.IsRequired,

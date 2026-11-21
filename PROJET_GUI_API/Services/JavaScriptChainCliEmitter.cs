@@ -21,7 +21,7 @@ internal static class JavaScriptChainCliEmitter
         sb.AppendLine("const { randomUUID } = require(\"node:crypto\");");
         sb.AppendLine("const os = require(\"node:os\");");
         sb.AppendLine("const net = require(\"node:net\");");
-        sb.AppendLine("const MARKER_RE = /(?:\\{\\{\\s*(\\$?(?!\\d)[\\p{L}\\p{N}_]+)\\s*\\}\\}|\\[\\[\\s*((?!\\d)[\\p{L}\\p{N}_]+)\\s*\\]\\])/gu;");
+        sb.AppendLine("const MARKER_RE = /(?:\\{\\{\\s*(\\$(?!\\d)[\\p{L}\\p{N}_]+|(?!\\d)(?!\\$)[\\p{L}\\p{N}_]+(?:(?:\\.[^.{}\\[\\]\\r\\n\\s]+|\\[[^{}\\[\\]\\r\\n]*\\])+)?)\\s*\\}\\}|\\[\\[\\s*((?!\\d)(?!\\$)[\\p{L}\\p{N}_]+(?:(?:\\.[^.{}\\[\\]\\r\\n\\s]+|\\[[^{}\\[\\]\\r\\n]*\\])+)?)\\s*\\]\\])/gu;");
         sb.AppendLine();
 
         AppendStepsData(sb, steps);
@@ -182,20 +182,78 @@ function makeRange(spec) {
   return values;
 }
 
-function buildIterations(axes, mode, accumulatedLists) {
-  if (!axes.length) return { iterations: [[]], emptyListName: null };
+const ALLOWED_URI_CHARS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%");
+
+function splitVarPath(expr) {
+  const trimmed = String(expr || "").trim();
+  if (!trimmed || trimmed.startsWith("$")) return { root: trimmed, jsonPath: null };
+  const dotIdx = trimmed.indexOf(".");
+  const brIdx = trimmed.indexOf("[");
+  let sepIdx = -1;
+  if (dotIdx >= 0 && brIdx >= 0) sepIdx = Math.min(dotIdx, brIdx);
+  else sepIdx = dotIdx >= 0 ? dotIdx : brIdx;
+  if (sepIdx <= 0) return { root: trimmed, jsonPath: null };
+  const root = trimmed.slice(0, sepIdx).trim();
+  const rawPath = trimmed[sepIdx] === "." ? trimmed.slice(sepIdx + 1).trim() : trimmed.slice(sepIdx).trim();
+  if (!root || !rawPath) return { root: trimmed, jsonPath: null };
+  return { root, jsonPath: rawPath };
+}
+
+function isInQueryValueContext(prefix) {
+  if (prefix.includes("#")) return false;
+  const qIdx = prefix.indexOf("?");
+  if (qIdx < 0) return false;
+  const afterQ = prefix.slice(qIdx + 1);
+  const ampIdx = afterQ.lastIndexOf("&");
+  const currentPair = ampIdx >= 0 ? afterQ.slice(ampIdx + 1) : afterQ;
+  return currentPair.includes("=");
+}
+
+function escapeUrlPreservingStructure(value) {
+  if (!value) return "";
+  let out = "";
+  for (const ch of value) {
+    if (ALLOWED_URI_CHARS.has(ch)) {
+      out += ch;
+    } else {
+      const buf = Buffer.from(ch, "utf8");
+      for (const b of buf) {
+        out += "%" + b.toString(16).toUpperCase().padStart(2, "0");
+      }
+    }
+  }
+  return out;
+}
+
+function buildIterations(axes, mode, accumulatedLists, scalarVars) {
+  if (!axes.length) return { iterations: [[]], emptyListName: null, error: null };
   const lists = [];
   for (const a of axes) {
     let lst;
     if (a.kind === "list") {
-      lst = Array.isArray(accumulatedLists[a.name]) ? [...accumulatedLists[a.name]] : [];
-      if (lst.length === 0) return { iterations: [], emptyListName: a.name };
+      const { root, jsonPath } = splitVarPath(a.name);
+      if (jsonPath !== null) {
+        if (!Object.prototype.hasOwnProperty.call(scalarVars, root)) {
+          return { iterations: [], emptyListName: null, error: `Variable « ${root} » introuvable pour [[${a.name}]].` };
+        }
+        const jpRes = extractJsonPathList(scalarVars[root], jsonPath);
+        if (jpRes.ok && Array.isArray(jpRes.values) && jpRes.values.length > 0) {
+          lst = jpRes.values;
+        } else if (typeof jpRes.error === "string" && jpRes.error.toLowerCase().includes("est vide")) {
+          return { iterations: [], emptyListName: a.name, error: null };
+        } else {
+          return { iterations: [], emptyListName: null, error: `[[${a.name}]] : ${jpRes.error}` };
+        }
+      } else {
+        lst = Array.isArray(accumulatedLists[a.name]) ? [...accumulatedLists[a.name]] : [];
+        if (lst.length === 0) return { iterations: [], emptyListName: a.name, error: null };
+      }
     } else if (a.range) {
       lst = makeRange(a.range);
-      if (lst.length === 0) return { iterations: [], emptyListName: null };
+      if (lst.length === 0) return { iterations: [], emptyListName: null, error: null };
     } else {
       lst = [...a.values];
-      if (lst.length === 0) return { iterations: [], emptyListName: null };
+      if (lst.length === 0) return { iterations: [], emptyListName: null, error: null };
     }
     lists.push(lst);
   }
@@ -206,7 +264,7 @@ function buildIterations(axes, mode, accumulatedLists) {
     for (let i = 0; i < minLen; i++) {
       rows.push(lists.map((l) => l[i]));
     }
-    return { iterations: rows, emptyListName: null };
+    return { iterations: rows, emptyListName: null, error: null };
   }
 
   let acc = [[]];
@@ -219,13 +277,21 @@ function buildIterations(axes, mode, accumulatedLists) {
     }
     acc = next;
   }
-  return { iterations: acc, emptyListName: null };
+  return { iterations: acc, emptyListName: null, error: null };
 }
 
 function resolveMarker(scalarName, listName, variables, listVars, globalIndex, reqGuid, reqTs) {
   if (listName !== undefined && listName !== null) {
     if (Object.prototype.hasOwnProperty.call(listVars, listName)) {
       return listVars[listName];
+    }
+    const { root, jsonPath } = splitVarPath(listName);
+    if (jsonPath !== null && Object.prototype.hasOwnProperty.call(variables, root)) {
+      const jpList = extractJsonPathList(variables[root], jsonPath);
+      if (jpList.ok && Array.isArray(jpList.values) && jpList.values.length > 0) {
+        return jpList.values[0];
+      }
+      throw new Error(`[[${listName}]] : ${jpList.error}`);
     }
     throw new Error(`Liste inconnue ou non définie : [[${listName}]]`);
   }
@@ -235,7 +301,40 @@ function resolveMarker(scalarName, listName, variables, listVars, globalIndex, r
   if (scalarName === "$index") return String(globalIndex);
   if (scalarName === "$guid") return reqGuid;
   if (scalarName === "$timestamp") return reqTs;
+  const { root, jsonPath } = splitVarPath(scalarName);
+  if (jsonPath !== null) {
+    if (!Object.prototype.hasOwnProperty.call(variables, root)) {
+      throw new Error(`Variable inconnue ou non définie : {{${root}}} (pour {{${scalarName}}})`);
+    }
+    const jpRes = extractJsonPath(variables[root], jsonPath);
+    if (!jpRes.ok) {
+      throw new Error(`{{${scalarName}}} : ${jpRes.value}`);
+    }
+    return jpRes.value;
+  }
   throw new Error(`Variable inconnue ou non définie : {{${scalarName}}}`);
+}
+
+function substituteUrl(text, variables, listVars, globalIndex, reqGuid, reqTs) {
+  if (!text) return "";
+  const matches = Array.from(text.matchAll(MARKER_RE));
+  if (matches.length === 0) return text;
+  let out = "";
+  let lastIdx = 0;
+  for (const match of matches) {
+    const matchStart = match.index ?? 0;
+    out += text.slice(lastIdx, matchStart);
+    const val = resolveMarker(match[1], match[2], variables, listVars, globalIndex, reqGuid, reqTs);
+    if (isInQueryValueContext(out)) {
+      out += encodeURIComponent(val);
+    } else {
+      const hasNonWsPrefix = out.trim().length > 0;
+      out += escapeUrlPreservingStructure(hasNonWsPrefix ? val : val.trim());
+    }
+    lastIdx = matchStart + match[0].length;
+  }
+  out += text.slice(lastIdx);
+  return out;
 }
 
 function substituteSimple(text, variables, listVars, globalIndex, reqGuid, reqTs, urlEncode = false) {
@@ -303,6 +402,7 @@ function buildFinalUrl(rawUrl, queryItems) {
 
 function parseJsonPath(rawPath) {
   let path = rawPath.trim();
+  if (path === "$") return [];
   if (path.startsWith("$.")) path = path.slice(2);
   else if (path.startsWith("$")) path = path.slice(1);
   if (!path.trim()) throw new Error("Chemin JSONPath vide.");
@@ -871,6 +971,8 @@ function runExtraction(ext, respBody, respHeaders) {
       }
       rawOutcome = res;
     }
+  } else if (ext.kind === "full_response") {
+    rawOutcome = { ok: true, value: respBody ?? "" };
   } else if (ext.kind === "jsonpath") {
     rawOutcome = extractJsonPath(respBody, ext.expression);
   } else {
@@ -988,6 +1090,33 @@ function resolveReturnIdentifier(name, forceScalar, forceList, scalars, listVars
   if (name === "$timestamp") return reqTs;
   if (name === "$ip") return cachedIp ?? "127.0.0.1";
 
+  const { root, jsonPath } = splitVarPath(name);
+  if (jsonPath !== null) {
+    if (forceList) {
+      if (Object.prototype.hasOwnProperty.call(listVars, name)) return listVars[name];
+      if (Object.prototype.hasOwnProperty.call(scalars, root)) {
+        const jpList = extractJsonPathList(scalars[root], jsonPath);
+        if (jpList.ok && Array.isArray(jpList.values)) return jpList.values;
+        throw new Error(`[[${name}]] : ${jpList.error}`);
+      }
+      throw new Error(`Variable inconnue ou non définie : ${root} (pour [[${name}]])`);
+    }
+    if (!Object.prototype.hasOwnProperty.call(scalars, root)) {
+      throw new Error(`Variable inconnue ou non définie : ${root} (pour ${name})`);
+    }
+    if (!forceScalar) {
+      const steps = parseJsonPath(jsonPath);
+      if (steps.some((s) => s.isWildcard)) {
+        const jpList = extractJsonPathList(scalars[root], jsonPath);
+        if (jpList.ok && Array.isArray(jpList.values)) return jpList.values;
+        throw new Error(`${name} : ${jpList.error}`);
+      }
+    }
+    const jpRes = extractJsonPath(scalars[root], jsonPath);
+    if (jpRes.ok) return jpRes.value;
+    throw new Error(`${name} : ${jpRes.value}`);
+  }
+
   if (forceList) {
     if (Object.prototype.hasOwnProperty.call(listVars, name)) return listVars[name];
     if (Object.prototype.hasOwnProperty.call(accumulatedLists, name)) return [...accumulatedLists[name]];
@@ -1098,7 +1227,14 @@ async function main() {
       process.exit(1);
     }
 
-    const { iterations, emptyListName } = buildIterations(step.axes, step.mode, accumulatedLists);
+    const scalarCandidates = { ...accumulatedVars, ...step.fixedVariables };
+    const { iterations, emptyListName, error: listErr } = buildIterations(step.axes, step.mode, accumulatedLists, scalarCandidates);
+    if (listErr !== null) {
+      console.error(`[ÉCHEC] Étape ${step.rank} (${step.name}) : ${listErr}`);
+      hasAnyFailure = true;
+      if (!step.continueOnError) process.exit(1);
+      continue;
+    }
     if (emptyListName !== null) {
       console.log(`[IGNORÉE] Étape ${step.rank} (${step.name}) : liste [[${emptyListName}]] vide.`);
       continue;
@@ -1155,7 +1291,7 @@ async function main() {
       let finalHeaders;
       let bodyToSend;
       try {
-        const finalBaseUrl = substituteSimple(step.url, mergedVars, listVars, globalIndex, reqGuid, reqTs, true);
+        const finalBaseUrl = substituteUrl(step.url, mergedVars, listVars, globalIndex, reqGuid, reqTs);
         const queryItems = step.queryParams.map((qp) =>
           qp.axisIndex !== null
             ? [qp.key, axisValues[qp.axisIndex]]

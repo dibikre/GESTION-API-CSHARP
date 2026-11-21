@@ -585,7 +585,9 @@
                                                              TestCommand="{Binding #ChainRoot.ViewModel.TestExtractionCommand}"
                                                              InspectListCommand="{Binding #ChainRoot.ViewModel.InspectExtractedListCommand}"
                                                              HasLastResponse="{Binding HasLastResponse}"
-                                                             LastResponseSummary="{Binding LastResponseSummary}" />
+                                                             LastResponseSummary="{Binding LastResponseSummary}"
+                                                             LastResponse="{Binding LastResponse}"
+                                                             ExtractionSuggester="{Binding #ChainRoot.ViewModel.ExtractionSuggester}" />
                             </TabItem>
 
                             <TabItem>

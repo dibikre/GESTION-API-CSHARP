@@ -64,17 +64,26 @@ public sealed class ResponseExtractor : IResponseExtractor
             return ExtractionOutcome.Failure(nameError!);
         }
 
+        var isFullResponse = extraction.Kind == ExtractionKind.FullResponse;
         var expression = extraction.Expression?.Trim() ?? string.Empty;
-        if (string.IsNullOrEmpty(expression))
+        if (!isFullResponse && string.IsNullOrEmpty(expression))
         {
             return ExtractionOutcome.Failure($"Expression vide pour la variable « {extraction.VariableName} ».");
         }
 
+        if (extraction.Source == ChainExtractionSource.Header && isFullResponse)
+        {
+            return ExtractionOutcome.Failure(
+                "Le mode Réponse complète ne s'applique qu'au corps ; utilise Regex pour les en-têtes.");
+        }
+
         var outcome = extraction.Source == ChainExtractionSource.Header
             ? ExtractFromHeader(response, extraction, expression)
-            : extraction.Kind == ExtractionKind.JsonPath
-                ? ExtractJsonPathFromBody(response.Body ?? string.Empty, expression)
-                : ExtractRegex(response.Body ?? string.Empty, expression, extraction.RegexGroup);
+            : isFullResponse
+                ? ExtractionOutcome.Success(response.Body ?? string.Empty)
+                : extraction.Kind == ExtractionKind.JsonPath
+                    ? ExtractJsonPathFromBody(response.Body ?? string.Empty, expression)
+                    : ExtractRegex(response.Body ?? string.Empty, expression, extraction.RegexGroup);
 
         if (!outcome.IsSuccess || extraction.Conditions.Count == 0)
         {
@@ -103,6 +112,12 @@ public sealed class ResponseExtractor : IResponseExtractor
         if (!TryValidateVariableName(extraction.VariableName, out var nameError))
         {
             return ListExtractionOutcome.Failure(nameError!);
+        }
+
+        if (extraction.Kind == ExtractionKind.FullResponse)
+        {
+            return ListExtractionOutcome.Failure(
+                "Le mode Réponse complète capture tout le corps dans une variable simple {{...}} ; décoche « En liste [[...]] » ou utilise JSONPath.");
         }
 
         var expression = extraction.Expression?.Trim() ?? string.Empty;
@@ -356,7 +371,7 @@ public sealed class ResponseExtractor : IResponseExtractor
         return ListExtractionOutcome.Success(values);
     }
 
-    private static ExtractionOutcome ExtractJsonPathFromBody(string body, string rawPath)
+    internal static ExtractionOutcome ExtractJsonPathFromBody(string body, string rawPath)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
@@ -433,7 +448,7 @@ public sealed class ResponseExtractor : IResponseExtractor
         }
     }
 
-    private static ListExtractionOutcome ExtractListJsonPathFromBody(string body, string rawPath)
+    internal static ListExtractionOutcome ExtractListJsonPathFromBody(string body, string rawPath)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
@@ -618,12 +633,35 @@ public sealed class ResponseExtractor : IResponseExtractor
 
     internal readonly record struct PathStep(string? PropertyName, int? ArrayIndex, bool IsWildcard = false);
 
+    internal static bool JsonPathHasWildcard(string rawPath)
+    {
+        if (!TryParseJsonPath(rawPath, out var steps, out _))
+        {
+            return false;
+        }
+
+        foreach (var step in steps)
+        {
+            if (step.IsWildcard)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     internal static bool TryParseJsonPath(string rawPath, out List<PathStep> steps, out string? error)
     {
         steps = [];
         error = null;
 
         var path = rawPath.Trim();
+        if (path == "$")
+        {
+            return true;
+        }
+
         if (path.StartsWith("$.", StringComparison.Ordinal))
         {
             path = path[2..];
@@ -705,7 +743,7 @@ public sealed class ResponseExtractor : IResponseExtractor
             }
         }
 
-        return steps.Count > 0;
+        return true;
     }
 
     private static bool IsWildcardIndexToken(string indexText)

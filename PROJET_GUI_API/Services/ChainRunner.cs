@@ -76,7 +76,7 @@ public sealed class ChainRunner : IChainRunner
                     return result;
                 }
 
-                if (string.IsNullOrWhiteSpace(ext.Expression))
+                if (ext.Kind != ExtractionKind.FullResponse && string.IsNullOrWhiteSpace(ext.Expression))
                 {
                     result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : expression vide pour l'extraction « {ext.VariableName} ».";
                     return result;
@@ -85,6 +85,18 @@ public sealed class ChainRunner : IChainRunner
                 if (ext.Source == ChainExtractionSource.Header && ext.Kind == ExtractionKind.JsonPath)
                 {
                     result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : JSONPath ne s'applique pas aux en-têtes pour « {ext.VariableName} ».";
+                    return result;
+                }
+
+                if (ext.Source == ChainExtractionSource.Header && ext.Kind == ExtractionKind.FullResponse)
+                {
+                    result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : le mode Réponse complète ne s'applique pas aux en-têtes pour « {ext.VariableName} ».";
+                    return result;
+                }
+
+                if (ext.Kind == ExtractionKind.FullResponse && ext.IsList)
+                {
+                    result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : le mode Réponse complète capture tout le corps dans « {ext.VariableName} » ; décoche « En liste [[...]] ».";
                     return result;
                 }
 
@@ -109,9 +121,27 @@ public sealed class ChainRunner : IChainRunner
                 return result;
             }
 
+            var configuredVarNames = step.Variables
+                .Where(v => v.IsUsed && v.IsConfigured && !v.HasError && !string.IsNullOrWhiteSpace(v.Name))
+                .Select(v => v.Name)
+                .ToHashSet(StringComparer.Ordinal);
+
             var usedLists = _templateEngine.ExtractListVariables(template);
             foreach (var listVar in usedLists)
             {
+                if (VariablePathHelper.TrySplit(listVar.Name, out var listRoot, out var listJsonPath) &&
+                    listJsonPath is not null)
+                {
+                    if (!availableFromPreviousSteps.Contains(listRoot) && !configuredVarNames.Contains(listRoot))
+                    {
+                        result.ValidationError = availableListsFromPreviousSteps.Contains(listRoot)
+                            ? $"Étape {stepNumber} ({stepLabel}) : [[{listVar.Name}]] — « {listRoot} » est une liste simple ; utilise [[{listRoot}]] ou extrais la réponse complète."
+                            : $"Étape {stepNumber} ({stepLabel}) : [[{listVar.Name}]] — la variable « {listRoot} » n'est extraite par aucune étape précédente.";
+                        return result;
+                    }
+                    continue;
+                }
+
                 if (!availableListsFromPreviousSteps.Contains(listVar.Name))
                 {
                     result.ValidationError = availableFromPreviousSteps.Contains(listVar.Name)
@@ -120,11 +150,6 @@ public sealed class ChainRunner : IChainRunner
                     return result;
                 }
             }
-
-            var configuredVarNames = step.Variables
-                .Where(v => v.IsUsed && v.IsConfigured && !v.HasError && !string.IsNullOrWhiteSpace(v.Name))
-                .Select(v => v.Name)
-                .ToHashSet(StringComparer.Ordinal);
 
             foreach (var scalarVar in _templateEngine.ExtractVariables(template))
             {
@@ -312,7 +337,62 @@ public sealed class ChainRunner : IChainRunner
                     .Select(v => v.Name)
                     .ToHashSet(StringComparer.Ordinal);
 
-                var runtimeAxes = ResolveRuntimeAxes(rawAxes, usedListNames, accumulatedLists, out var emptyListName);
+                var runtimeScalarCandidates = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal);
+                foreach (var kvp in fixedStepVars)
+                {
+                    runtimeScalarCandidates[kvp.Key] = kvp.Value;
+                }
+
+                var runtimeAxes = ResolveRuntimeAxes(
+                    rawAxes,
+                    usedListNames,
+                    accumulatedLists,
+                    runtimeScalarCandidates,
+                    out var emptyListName,
+                    out var listResolveError);
+                if (listResolveError is not null)
+                {
+                    globalIndex++;
+                    var listErrResult = new ChainStepResult
+                    {
+                        Index = globalIndex,
+                        StepIndex = stepNumber,
+                        StepName = stepName,
+                        Iteration = 1,
+                        TotalIterationsForStep = 1,
+                        RequestSummary = "(erreur de liste JSONPath)",
+                        Status = ChainStepStatus.Failed,
+                        StatusCategory = StatusCategory.NetworkError,
+                        ErrorMessage = listResolveError,
+                        TimestampUtc = DateTimeOffset.UtcNow
+                    };
+                    allResults.Add(listErrResult);
+                    if (onResultAsync is not null)
+                    {
+                        await onResultAsync(listErrResult, ct).ConfigureAwait(false);
+                    }
+                    progress.Report(new ChainProgressReport
+                    {
+                        StepIndex = stepNumber,
+                        TotalSteps = totalSteps,
+                        Iteration = 1,
+                        StepTotalIterations = 1,
+                        GlobalIndex = globalIndex,
+                        GlobalTotal = globalTotal,
+                        RetryCount = totalRetryCount,
+                        StepName = stepName,
+                        Item = listErrResult,
+                        AccumulatedVariables = new Dictionary<string, string>(accumulatedVariables, StringComparer.Ordinal),
+                        AccumulatedLists = CloneListsSnapshot(accumulatedLists)
+                    });
+                    finalStatus = ChainRunStatus.Failed;
+                    if (!step.ContinueOnError)
+                    {
+                        stopChain = true;
+                    }
+                    continue;
+                }
+
                 if (emptyListName is not null)
                 {
                     var emptyResult = CreateEmptyListSkippedResult(globalIndex, stepNumber, stepName, emptyListName);
@@ -907,22 +987,63 @@ public sealed class ChainRunner : IChainRunner
         IReadOnlyList<BatchAxis> rawAxes,
         HashSet<string> usedListNames,
         Dictionary<string, IReadOnlyList<string>> accumulatedLists,
-        out string? emptyListName)
+        Dictionary<string, string> scalarVariables,
+        out string? emptyListName,
+        out string? listError)
     {
         emptyListName = null;
+        listError = null;
         var resolved = new List<BatchAxis>(rawAxes.Count + usedListNames.Count);
         var includedLists = new HashSet<string>(StringComparer.Ordinal);
+
+        bool TryGetList(string listName, out IReadOnlyList<string> values, ref string? emptyOut, ref string? errOut)
+        {
+            if (VariablePathHelper.TrySplit(listName, out var rootName, out var jsonPath) && jsonPath is not null)
+            {
+                if (!scalarVariables.TryGetValue(rootName, out var rootJson))
+                {
+                    errOut ??= $"Variable « {rootName} » introuvable pour [[{listName}]].";
+                    values = [];
+                    return false;
+                }
+
+                var outcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, jsonPath);
+                if (outcome.IsSuccess && outcome.Values.Count > 0)
+                {
+                    values = outcome.Values;
+                    return true;
+                }
+
+                if (outcome.ErrorMessage?.Contains("est vide", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    emptyOut ??= listName;
+                }
+                else
+                {
+                    errOut ??= $"[[{listName}]] : {outcome.ErrorMessage ?? "échec d'extraction JSONPath."}";
+                }
+
+                values = [];
+                return false;
+            }
+
+            if (!accumulatedLists.TryGetValue(listName, out var existing) || existing.Count == 0)
+            {
+                emptyOut ??= listName;
+                values = [];
+                return false;
+            }
+
+            values = existing;
+            return true;
+        }
 
         foreach (var axis in rawAxes)
         {
             if (axis.Kind == BatchAxisKind.ExtractedList)
             {
                 includedLists.Add(axis.Name);
-                if (!accumulatedLists.TryGetValue(axis.Name, out var listValues) || listValues.Count == 0)
-                {
-                    emptyListName ??= axis.Name;
-                }
-                else
+                if (TryGetList(axis.Name, out var listValues, ref emptyListName, ref listError))
                 {
                     resolved.Add(BatchAxis.CreateList(BatchAxisKind.ExtractedList, axis.Name, listValues));
                 }
@@ -940,11 +1061,7 @@ public sealed class ChainRunner : IChainRunner
                 continue;
             }
 
-            if (!accumulatedLists.TryGetValue(listName, out var listValues) || listValues.Count == 0)
-            {
-                emptyListName ??= listName;
-            }
-            else
+            if (TryGetList(listName, out var listValues, ref emptyListName, ref listError))
             {
                 resolved.Add(BatchAxis.CreateList(BatchAxisKind.ExtractedList, listName, listValues));
             }

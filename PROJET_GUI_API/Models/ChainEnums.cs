@@ -3,7 +3,8 @@ namespace ApiTester.Models;
 public enum ExtractionKind
 {
     JsonPath,
-    Regex
+    Regex,
+    FullResponse
 }
 
 public enum ChainExtractionSource

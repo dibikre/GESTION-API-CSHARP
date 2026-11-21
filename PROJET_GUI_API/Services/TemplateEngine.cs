@@ -11,17 +11,11 @@ namespace ApiTester.Services;
 
 public sealed class TemplateEngine : ITemplateEngine
 {
-    private static readonly Regex MarkerRegex = new(
-        @"\{\{\s*(\$?[\p{L}_][\p{L}\p{N}_]*)\s*\}\}",
-        RegexOptions.Compiled);
+    private static readonly Regex MarkerRegex = VariablePathHelper.ScalarMarkerRegex;
 
-    private static readonly Regex ListMarkerRegex = new(
-        @"\[\[\s*([\p{L}_][\p{L}\p{N}_]*)\s*\]\]",
-        RegexOptions.Compiled);
+    private static readonly Regex ListMarkerRegex = VariablePathHelper.ListMarkerRegex;
 
-    private static readonly Regex AnyMarkerRegex = new(
-        @"(?:\{\{\s*(\$?[\p{L}_][\p{L}\p{N}_]*)\s*\}\}|\[\[\s*([\p{L}_][\p{L}\p{N}_]*)\s*\]\])",
-        RegexOptions.Compiled);
+    private static readonly Regex AnyMarkerRegex = VariablePathHelper.AnyMarkerRegex;
 
     public bool IsPredefinedVariable(string name) =>
         name is "$index" or "$guid" or "$timestamp";
@@ -144,12 +138,13 @@ public sealed class TemplateEngine : ITemplateEngine
 
             foreach (Match match in regex.Matches(text))
             {
-                var name = match.Groups[1].Value;
-                if (name.StartsWith('$'))
+                var rawName = match.Groups[1].Value;
+                if (rawName.StartsWith('$'))
                 {
                     continue;
                 }
 
+                var name = isList ? rawName : VariablePathHelper.ExtractRootName(rawName);
                 if (!locationsByName.TryGetValue(name, out var locations))
                 {
                     locations = [];
@@ -251,6 +246,23 @@ public sealed class TemplateEngine : ITemplateEngine
                     return true;
                 }
 
+                if (VariablePathHelper.TrySplit(name, out var listRoot, out var listJsonPath) &&
+                    listJsonPath is not null &&
+                    values.TryGetValue(listRoot, out var rootJson))
+                {
+                    var listOutcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, listJsonPath);
+                    if (listOutcome.IsSuccess && listOutcome.Values.Count > 0)
+                    {
+                        resolvedValue = listOutcome.Values[0] ?? string.Empty;
+                        error = null;
+                        return true;
+                    }
+
+                    resolvedValue = string.Empty;
+                    error = $"[[{name}]] : {listOutcome.ErrorMessage ?? "aucune valeur extraite."}";
+                    return false;
+                }
+
                 resolvedValue = string.Empty;
                 error = $"Liste inconnue ou non définie : [[{name}]].";
                 return false;
@@ -277,14 +289,36 @@ public sealed class TemplateEngine : ITemplateEngine
                     resolvedValue = timestampText;
                     error = null;
                     return true;
-                default:
-                    resolvedValue = string.Empty;
-                    error = $"Variable inconnue ou non définie : {{{{{name}}}}}.";
-                    return false;
             }
+
+            if (VariablePathHelper.TrySplit(name, out var rootName, out var jsonPath) && jsonPath is not null)
+            {
+                if (!values.TryGetValue(rootName, out var rootJson))
+                {
+                    resolvedValue = string.Empty;
+                    error = $"Variable inconnue ou non définie : {{{{{rootName}}}}} (pour {{{{{name}}}}}).";
+                    return false;
+                }
+
+                var jpOutcome = ResponseExtractor.ExtractJsonPathFromBody(rootJson, jsonPath);
+                if (!jpOutcome.IsSuccess)
+                {
+                    resolvedValue = string.Empty;
+                    error = $"{{{{{name}}}}} : {jpOutcome.ErrorMessage}";
+                    return false;
+                }
+
+                resolvedValue = jpOutcome.Value;
+                error = null;
+                return true;
+            }
+
+            resolvedValue = string.Empty;
+            error = $"Variable inconnue ou non définie : {{{{{name}}}}}.";
+            return false;
         }
 
-        if (!TrySubstituteSimple(template.Url, TryResolve, Uri.EscapeDataString, out var substitutedUrl, out var urlError))
+        if (!TrySubstituteUrl(template.Url, TryResolve, out var substitutedUrl, out var urlError))
         {
             return Fail(urlError);
         }
@@ -459,6 +493,124 @@ public sealed class TemplateEngine : ITemplateEngine
         error = null;
         return true;
     }
+
+    private static bool TrySubstituteUrl(
+        string? input,
+        ResolveDelegate resolve,
+        out string output,
+        out string? error)
+    {
+        if (string.IsNullOrEmpty(input))
+        {
+            output = string.Empty;
+            error = null;
+            return true;
+        }
+
+        var matches = AnyMarkerRegex.Matches(input);
+        if (matches.Count == 0)
+        {
+            output = input;
+            error = null;
+            return true;
+        }
+
+        var sb = new StringBuilder(input.Length + 32);
+        var lastIndex = 0;
+
+        foreach (Match match in matches)
+        {
+            sb.Append(input, lastIndex, match.Index - lastIndex);
+
+            var isList = match.Groups[2].Success;
+            var name = isList ? match.Groups[2].Value : match.Groups[1].Value;
+            if (!resolve(isList, name, out var rawValue, out error))
+            {
+                output = string.Empty;
+                return false;
+            }
+
+            sb.Append(EncodeUrlValueForContext(sb, rawValue));
+            lastIndex = match.Index + match.Length;
+        }
+
+        sb.Append(input, lastIndex, input.Length - lastIndex);
+        output = sb.ToString();
+        error = null;
+        return true;
+    }
+
+    private static string EncodeUrlValueForContext(StringBuilder prefixBuilder, string rawValue)
+    {
+        if (string.IsNullOrEmpty(rawValue))
+        {
+            return string.Empty;
+        }
+
+        var prefix = prefixBuilder.ToString();
+        if (IsInQueryValueContext(prefix))
+        {
+            return Uri.EscapeDataString(rawValue);
+        }
+
+        var trimmedPrefix = prefix.Trim();
+        var valueToEncode = trimmedPrefix.Length == 0 ? rawValue.Trim() : rawValue;
+        return EscapeUrlPreservingStructure(valueToEncode);
+    }
+
+    private static bool IsInQueryValueContext(string prefix)
+    {
+        if (prefix.Contains('#', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var queryIdx = prefix.IndexOf('?');
+        if (queryIdx < 0)
+        {
+            return false;
+        }
+
+        var queryPart = prefix[(queryIdx + 1)..];
+        var lastAmp = queryPart.LastIndexOf('&');
+        var currentSegment = lastAmp >= 0 ? queryPart[(lastAmp + 1)..] : queryPart;
+        return currentSegment.Contains('=', StringComparison.Ordinal);
+    }
+
+    private static string EscapeUrlPreservingStructure(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder(value.Length + 8);
+        foreach (var ch in value)
+        {
+            if (IsAllowedUriChar(ch))
+            {
+                sb.Append(ch);
+            }
+            else
+            {
+                var bytes = Encoding.UTF8.GetBytes(ch.ToString());
+                foreach (var b in bytes)
+                {
+                    sb.Append('%');
+                    sb.Append(b.ToString("X2", CultureInfo.InvariantCulture));
+                }
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static bool IsAllowedUriChar(char ch) =>
+        (ch >= 'A' && ch <= 'Z') ||
+        (ch >= 'a' && ch <= 'z') ||
+        (ch >= '0' && ch <= '9') ||
+        ch is '-' or '.' or '_' or '~' or ':' or '/' or '?' or '#' or '[' or ']' or '@'
+            or '!' or '$' or '&' or '\'' or '(' or ')' or '*' or '+' or ',' or ';' or '=' or '%';
 
     private static bool TrySubstituteJsonBody(
         string? input,

@@ -31,13 +31,15 @@ internal static class StepReturnParser
 
     private readonly record struct Token(TokenKind Kind, string Text, int Position);
 
-    private static readonly Regex MarkerNameRegex = new(
-        @"^(\$?[\p{L}_][\p{L}\p{N}_]*)$",
+    private static readonly Regex ScalarInnerRegex = new(
+        @"^" + VariablePathHelper.ScalarInnerPattern + @"$",
         RegexOptions.Compiled);
 
-    private static readonly Regex TemplateMarkerInsideStringRegex = new(
-        @"(?:\{\{\s*(\$?[\p{L}_][\p{L}\p{N}_]*)\s*\}\}|\[\[\s*([\p{L}_][\p{L}\p{N}_]*)\s*\]\])",
+    private static readonly Regex ListInnerRegex = new(
+        @"^" + VariablePathHelper.ListInnerPattern + @"$",
         RegexOptions.Compiled);
+
+    private static readonly Regex TemplateMarkerInsideStringRegex = VariablePathHelper.AnyMarkerRegex;
 
     public static StepReturnParseResult Parse(string? rawInput)
     {
@@ -426,34 +428,32 @@ internal static class StepReturnParser
                 continue;
             }
 
-            // Marqueur {{var}}
+            // Marqueur {{var}} ou {{var.jsonpath}}
             if (c == '{' && i + 1 < len && input[i + 1] == '{')
             {
                 var closeIdx = input.IndexOf("}}", i + 2, StringComparison.Ordinal);
                 if (closeIdx > i + 2)
                 {
                     var inner = input[(i + 2)..closeIdx].Trim();
-                    var m = MarkerNameRegex.Match(inner);
-                    if (m.Success)
+                    if (ScalarInnerRegex.IsMatch(inner))
                     {
-                        tokens.Add(new Token(TokenKind.TemplateVar, m.Groups[1].Value, i));
+                        tokens.Add(new Token(TokenKind.TemplateVar, inner, i));
                         i = closeIdx + 2;
                         continue;
                     }
                 }
             }
 
-            // Marqueur [[liste]]
+            // Marqueur [[liste]] ou [[var.jsonpath]]
             if (c == '[' && i + 1 < len && input[i + 1] == '[')
             {
                 var closeIdx = input.IndexOf("]]", i + 2, StringComparison.Ordinal);
                 if (closeIdx > i + 2)
                 {
                     var inner = input[(i + 2)..closeIdx].Trim();
-                    var m = MarkerNameRegex.Match(inner);
-                    if (m.Success && !m.Groups[1].Value.StartsWith('$'))
+                    if (ListInnerRegex.IsMatch(inner))
                     {
-                        tokens.Add(new Token(TokenKind.TemplateList, m.Groups[1].Value, i));
+                        tokens.Add(new Token(TokenKind.TemplateList, inner, i));
                         i = closeIdx + 2;
                         continue;
                     }
@@ -532,6 +532,12 @@ internal static class StepReturnParser
                 {
                     i++;
                 }
+
+                if (c != '$')
+                {
+                    ConsumeMemberPath(input, ref i);
+                }
+
                 tokens.Add(new Token(TokenKind.Identifier, input[start..i], start));
                 continue;
             }
@@ -600,6 +606,51 @@ internal static class StepReturnParser
         return false;
     }
 
+    private static void ConsumeMemberPath(string input, ref int index)
+    {
+        var len = input.Length;
+        while (index < len)
+        {
+            if (input[index] == '.')
+            {
+                var next = index + 1;
+                if (next >= len || char.IsWhiteSpace(input[next]) || IsMemberDelimiter(input[next]))
+                {
+                    break;
+                }
+
+                index = next;
+                while (index < len && !char.IsWhiteSpace(input[index]) && !IsMemberDelimiter(input[index]))
+                {
+                    index++;
+                }
+            }
+            else if (input[index] == '[')
+            {
+                var closeIdx = input.IndexOf(']', index + 1);
+                if (closeIdx < 0)
+                {
+                    break;
+                }
+
+                var inner = input[(index + 1)..closeIdx];
+                if (inner.IndexOfAny(['[', '\r', '\n', ',', '{', '}']) >= 0)
+                {
+                    break;
+                }
+
+                index = closeIdx + 1;
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+
+    private static bool IsMemberDelimiter(char ch) =>
+        ch is '.' or '[' or ']' or ',' or '}' or '{' or ')' or '(' or ';' or '+' or ':' or '"' or '\'' or '/' or '#';
+
     private static bool IsIdentifierStart(char ch) =>
         char.IsLetter(ch) || ch == '_' || ch == '$';
 
@@ -624,6 +675,12 @@ internal static class StepReturnParser
                     {
                         return;
                     }
+                    if (VariablePathHelper.TrySplit(id.Name, out var rootName, out var jsonPath) &&
+                        jsonPath is not null)
+                    {
+                        if (seenScalars.Add(rootName)) scalars.Add(rootName);
+                        return;
+                    }
                     if (id.ForceList)
                     {
                         if (seenLists.Add(id.Name)) lists.Add(id.Name);
@@ -643,15 +700,24 @@ internal static class StepReturnParser
                     {
                         if (m.Groups[2].Success)
                         {
-                            var name = m.Groups[2].Value;
-                            if (seenLists.Add(name)) lists.Add(name);
+                            var rawListName = m.Groups[2].Value;
+                            if (VariablePathHelper.TrySplit(rawListName, out var listRoot, out var listPath) &&
+                                listPath is not null)
+                            {
+                                if (seenScalars.Add(listRoot)) scalars.Add(listRoot);
+                            }
+                            else if (seenLists.Add(rawListName))
+                            {
+                                lists.Add(rawListName);
+                            }
                         }
                         else if (m.Groups[1].Success)
                         {
-                            var name = m.Groups[1].Value;
-                            if (name is not ("$index" or "$guid" or "$timestamp" or "$ip") && seenScalars.Add(name))
+                            var rawScalarName = VariablePathHelper.ExtractRootName(m.Groups[1].Value);
+                            if (rawScalarName is not ("$index" or "$guid" or "$timestamp" or "$ip") &&
+                                seenScalars.Add(rawScalarName))
                             {
-                                scalars.Add(name);
+                                scalars.Add(rawScalarName);
                             }
                         }
                     }

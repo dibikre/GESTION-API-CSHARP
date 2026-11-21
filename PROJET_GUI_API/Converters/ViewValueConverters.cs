@@ -284,6 +284,7 @@ public static class ExtractionKindConverters
         {
             ExtractionKind.JsonPath => "JSONPath",
             ExtractionKind.Regex => "Regex",
+            ExtractionKind.FullResponse => "Réponse complète",
             _ => kind.ToString()
         });
 }

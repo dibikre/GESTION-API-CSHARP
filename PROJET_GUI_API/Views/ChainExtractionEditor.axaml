@@ -19,18 +19,27 @@
                 CornerRadius="{DynamicResource ControlCornerRadius}"
                 Padding="8,4"
                 Margin="0,0,0,6">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBlock Text="Dernière réponse disponible pour test hors ligne :"
+            <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                <TextBlock Grid.Column="0"
+                           Text="Dernière réponse disponible :"
                            FontSize="{DynamicResource FontSizeCaption}"
                            Foreground="{DynamicResource TextMutedBrush}"
                            VerticalAlignment="Center" />
-                <TextBlock Text="{Binding #Root.LastResponseSummary}"
+                <TextBlock Grid.Column="1"
+                           Text="{Binding #Root.LastResponseSummary}"
                            FontFamily="{DynamicResource MonoFontFamily}"
                            FontSize="{DynamicResource FontSizeCaption}"
                            FontWeight="SemiBold"
                            Foreground="{DynamicResource AccentBrush}"
                            VerticalAlignment="Center" />
-            </StackPanel>
+                <TextBlock Grid.Column="2"
+                           Text="Suggestions et aperçu en temps réel actifs pendant la saisie"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource SuccessBrush}"
+                           TextTrimming="CharacterEllipsis"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center" />
+            </Grid>
         </Border>
 
         <!-- État vide -->
@@ -101,12 +110,32 @@
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
 
-                                        <TextBox Grid.Column="3"
-                                                 Classes="mono"
-                                                 Text="{Binding Expression}"
-                                                 PlaceholderText="{Binding ExpressionPlaceholder}"
-                                                 ToolTip.Tip="{Binding Expression, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
-                                                 AutomationProperties.Name="Expression JSONPath ou Regex" />
+                                        <Grid Grid.Column="3" ColumnDefinitions="*,Auto" ColumnSpacing="4">
+                                            <TextBox Grid.Column="0"
+                                                     Classes="mono"
+                                                     Text="{Binding Expression}"
+                                                     IsEnabled="{Binding RequiresExpression}"
+                                                     PlaceholderText="{Binding ExpressionPlaceholder}"
+                                                     ToolTip.Tip="{Binding Expression, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
+                                                     Tag="Expression"
+                                                     Loaded="OnSuggestionTextBoxLoaded"
+                                                     Unloaded="OnSuggestionTextBoxUnloaded"
+                                                     GotFocus="OnSuggestionTextBoxGotFocus"
+                                                     LostFocus="OnSuggestionTextBoxLostFocus"
+                                                     TextChanged="OnSuggestionTextBoxTextChanged"
+                                                     AutomationProperties.Name="Expression JSONPath ou Regex" />
+
+                                            <Button Grid.Column="1"
+                                                    Classes="icon"
+                                                    IsVisible="{Binding #Root.HasLastResponse}"
+                                                    IsEnabled="{Binding RequiresExpression}"
+                                                    Focusable="False"
+                                                    Click="OnToggleSuggestionsButtonClick"
+                                                    ToolTip.Tip="Suggestions depuis la dernière réponse (Ctrl+Espace)"
+                                                    AutomationProperties.Name="Afficher les suggestions en temps réel">
+                                                <Path Classes="iconStroke" Data="{StaticResource IconChevronDown}" />
+                                            </Button>
+                                        </Grid>
 
                                         <Button Grid.Column="4"
                                                 Classes="secondary"
@@ -141,6 +170,12 @@
                                                      Text="{Binding HeaderName}"
                                                      Width="168"
                                                      PlaceholderText="ex. Authorization"
+                                                     Tag="HeaderName"
+                                                     Loaded="OnSuggestionTextBoxLoaded"
+                                                     Unloaded="OnSuggestionTextBoxUnloaded"
+                                                     GotFocus="OnSuggestionTextBoxGotFocus"
+                                                     LostFocus="OnSuggestionTextBoxLostFocus"
+                                                     TextChanged="OnSuggestionTextBoxTextChanged"
                                                      AutomationProperties.Name="Nom de l'en-tête HTTP" />
                                         </StackPanel>
 
@@ -164,6 +199,7 @@
                                         </StackPanel>
 
                                         <CheckBox IsChecked="{Binding IsList}"
+                                                  IsEnabled="{Binding CanBeList}"
                                                   Content="En liste [[...]]"
                                                   Margin="0,0,12,0"
                                                   VerticalAlignment="Center"
@@ -212,6 +248,7 @@
                                                    FontFamily="{DynamicResource MonoFontFamily}"
                                                    FontSize="{DynamicResource FontSizeCaption}"
                                                    Foreground="{DynamicResource SuccessBrush}"
+                                                   MaxLines="1"
                                                    TextTrimming="CharacterEllipsis"
                                                    VerticalAlignment="Center" />
 
@@ -271,6 +308,101 @@
                 </Button>
             </StackPanel>
         </ScrollViewer>
+
+        <!-- Popup d'autocomplétion en temps réel ancré sous le champ Expression / En-tête actif -->
+        <Popup x:Name="SuggestionsPopup"
+               Placement="BottomEdgeAlignedLeft"
+               VerticalOffset="2"
+               IsLightDismissEnabled="False">
+            <Border x:Name="SuggestionsBorder"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderStrongBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    Padding="4"
+                    MinWidth="380"
+                    MaxWidth="680"
+                    MaxHeight="280"
+                    PointerEntered="OnSuggestionsBorderPointerEntered"
+                    PointerExited="OnSuggestionsBorderPointerExited">
+                <Grid RowDefinitions="Auto,*">
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="6,3,6,5">
+                        <TextBlock x:Name="SuggestionsHeaderText"
+                                   Grid.Column="0"
+                                   Text="Suggestions en temps réel"
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1"
+                                   Text="Haut/Bas · Entrée/Clic · Échap"
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   Foreground="{DynamicResource TextFaintBrush}"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+
+                    <ListBox x:Name="SuggestionsListBox"
+                             Grid.Row="1"
+                             Focusable="False"
+                             MaxHeight="236"
+                             ScrollViewer.AllowAutoHide="False"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="models:RealtimeExtractionSuggestion">
+                                <Border Background="Transparent"
+                                        Padding="6,5"
+                                        Cursor="Hand"
+                                        PointerPressed="OnSuggestionItemPointerPressed">
+                                    <Grid RowDefinitions="Auto,Auto" RowSpacing="2">
+                                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding Expression}"
+                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                            <Border Grid.Column="1"
+                                                    Background="{DynamicResource AccentSoftBrush}"
+                                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                    Padding="5,1"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding BadgeText}"
+                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource AccentBrush}" />
+                                            </Border>
+                                        </Grid>
+
+                                        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                            <TextBlock Grid.Column="0"
+                                                       IsVisible="{Binding HasPreviewValue}"
+                                                       Text="{Binding PreviewValue, StringFormat='= {0}'}"
+                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource SuccessBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1"
+                                                       IsVisible="{Binding HasDetailText}"
+                                                       Text="{Binding DetailText}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextFaintBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxWidth="210"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+        </Popup>
     </Grid>
 
 </UserControl>
