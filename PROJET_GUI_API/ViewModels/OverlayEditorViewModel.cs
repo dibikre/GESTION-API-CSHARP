@@ -117,6 +117,11 @@ public partial class OverlayEditorViewModel : ViewModelBase
         IsOpen = true;
     }
 
+    public void UpdateConditionsSelection(string? text, int selectionStart, int selectionEnd)
+    {
+        ConditionsPanel?.UpdateSourceSelection(text, selectionStart, selectionEnd);
+    }
+
     [RelayCommand]
     private void ToggleConditions()
     {

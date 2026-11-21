@@ -29,11 +29,13 @@ public static class ExtractionConditionSyntax
         {
             sb.AppendLine();
             sb.AppendLine("# Une condition par ligne (# ou // pour commenter) :");
-            sb.AppendLine("# contient \"master.m3u8\"");
-            sb.AppendLine("# !contient \"preview\" [icase]");
-            sb.AppendLine("# regex \"^https://.*/hls/(\\d+)/\"");
-            sb.AppendLine("# regex_extraire \"/hls/(\\d+)/\" groupe=1");
-            sb.AppendLine("# regex_remplacer \"http://\" -> \"https://\"");
+            sb.AppendLine("# regex_extraire \"([0-9a-fA-F]{16,})\"");
+            sb.AppendLine("# regex_extraire_tout \"([0-9a-fA-F]{16,})\"");
+            sb.AppendLine("# decouper \"/\" index=-1");
+            sb.AppendLine("# entre \"/avatars/\" -> \"-full\"");
+            sb.AppendLine("# remplacer \"-full\" -> \"\"");
+            sb.AppendLine("# contient \"master.m3u8\" [icase]");
+            sb.AppendLine("# nettoyer");
             return sb.ToString();
         }
 
@@ -209,12 +211,26 @@ public static class ExtractionConditionSyntax
             return false;
         }
 
-        if (op == ExtractionConditionOperator.NotEmpty)
+        if (op is ExtractionConditionOperator.NotEmpty
+            or ExtractionConditionOperator.ToLower
+            or ExtractionConditionOperator.ToUpper)
         {
             condition = new ChainExtractionCondition
             {
                 IsEnabled = isEnabled,
                 Operator = op
+            };
+            return true;
+        }
+
+        if (op == ExtractionConditionOperator.Trim)
+        {
+            var trimChars = idx < cleaned.Count ? cleaned[idx++].Text : string.Empty;
+            condition = new ChainExtractionCondition
+            {
+                IsEnabled = isEnabled,
+                Operator = op,
+                Value = trimChars
             };
             return true;
         }
@@ -228,8 +244,11 @@ public static class ExtractionConditionSyntax
         var value = cleaned[idx++].Text;
         var replacement = string.Empty;
         var regexGroup = 1;
+        var segmentIndex = 0;
 
-        if (op == ExtractionConditionOperator.RegexReplace)
+        if (op is ExtractionConditionOperator.RegexReplace
+            or ExtractionConditionOperator.ReplaceText
+            or ExtractionConditionOperator.Between)
         {
             if (idx < cleaned.Count && !cleaned[idx].Quoted && cleaned[idx].Text == "->")
             {
@@ -241,7 +260,8 @@ public static class ExtractionConditionSyntax
                 replacement = cleaned[idx++].Text;
             }
         }
-        else if (op == ExtractionConditionOperator.RegexExtract && idx < cleaned.Count)
+        else if (op is ExtractionConditionOperator.RegexExtract or ExtractionConditionOperator.RegexExtractAll
+                 && idx < cleaned.Count)
         {
             var grpTok = cleaned[idx].Text;
             if (grpTok.StartsWith("groupe=", StringComparison.OrdinalIgnoreCase))
@@ -259,6 +279,26 @@ public static class ExtractionConditionSyntax
                 return false;
             }
         }
+        else if (op == ExtractionConditionOperator.SplitPart && idx < cleaned.Count)
+        {
+            var idxTok = cleaned[idx].Text;
+            if (idxTok.StartsWith("index=", StringComparison.OrdinalIgnoreCase))
+            {
+                idxTok = idxTok[6..];
+            }
+            else if (idxTok.StartsWith("part=", StringComparison.OrdinalIgnoreCase))
+            {
+                idxTok = idxTok[5..];
+            }
+
+            if (!int.TryParse(idxTok, NumberStyles.Integer, CultureInfo.InvariantCulture, out segmentIndex))
+            {
+                error = $"index de découpage invalide « {cleaned[idx].Text} ».";
+                return false;
+            }
+
+            segmentIndex = Math.Clamp(segmentIndex, -99, 99);
+        }
 
         condition = new ChainExtractionCondition
         {
@@ -267,6 +307,7 @@ public static class ExtractionConditionSyntax
             Value = value,
             Replacement = replacement,
             RegexGroup = regexGroup,
+            SegmentIndex = segmentIndex,
             IgnoreCase = ignoreCase
         };
         return true;
@@ -346,7 +387,14 @@ public static class ExtractionConditionSyntax
             case "regex" or "regex_correspond" or "regex_match" or "=~": op = ExtractionConditionOperator.RegexMatch; return true;
             case "!regex" or "regex_exclut" or "regex_not_match" or "!~": op = ExtractionConditionOperator.RegexNotMatch; return true;
             case "regex_extraire" or "extract" or "regex_extract": op = ExtractionConditionOperator.RegexExtract; return true;
-            case "regex_remplacer" or "replace" or "regex_replace": op = ExtractionConditionOperator.RegexReplace; return true;
+            case "regex_extraire_tout" or "extract_all" or "regex_extract_all": op = ExtractionConditionOperator.RegexExtractAll; return true;
+            case "regex_remplacer" or "regex_replace": op = ExtractionConditionOperator.RegexReplace; return true;
+            case "remplacer" or "replace_text" or "replace": op = ExtractionConditionOperator.ReplaceText; return true;
+            case "entre" or "between": op = ExtractionConditionOperator.Between; return true;
+            case "decouper" or "split" or "split_part": op = ExtractionConditionOperator.SplitPart; return true;
+            case "nettoyer" or "trim": op = ExtractionConditionOperator.Trim; return true;
+            case "minuscules" or "lower" or "to_lower": op = ExtractionConditionOperator.ToLower; return true;
+            case "majuscules" or "upper" or "to_upper": op = ExtractionConditionOperator.ToUpper; return true;
             case "non_vide" or "not_empty": op = ExtractionConditionOperator.NotEmpty; return true;
             case "longueur>=" or "min_length": op = ExtractionConditionOperator.LengthMin; return true;
             case "longueur<=" or "max_length": op = ExtractionConditionOperator.LengthMax; return true;
@@ -372,7 +420,14 @@ public static class ExtractionConditionSyntax
             ExtractionConditionOperator.RegexMatch => "regex",
             ExtractionConditionOperator.RegexNotMatch => "!regex",
             ExtractionConditionOperator.RegexExtract => "regex_extraire",
+            ExtractionConditionOperator.RegexExtractAll => "regex_extraire_tout",
             ExtractionConditionOperator.RegexReplace => "regex_remplacer",
+            ExtractionConditionOperator.ReplaceText => "remplacer",
+            ExtractionConditionOperator.Between => "entre",
+            ExtractionConditionOperator.SplitPart => "decouper",
+            ExtractionConditionOperator.Trim => "nettoyer",
+            ExtractionConditionOperator.ToLower => "minuscules",
+            ExtractionConditionOperator.ToUpper => "majuscules",
             ExtractionConditionOperator.NotEmpty => "non_vide",
             ExtractionConditionOperator.LengthMin => "longueur >=",
             ExtractionConditionOperator.LengthMax => "longueur <=",
@@ -382,31 +437,45 @@ public static class ExtractionConditionSyntax
         };
 
         sb.Append(opWord);
-        if (cond.Operator != ExtractionConditionOperator.NotEmpty)
+        if (cond.Operator is not (
+            ExtractionConditionOperator.NotEmpty
+            or ExtractionConditionOperator.ToLower
+            or ExtractionConditionOperator.ToUpper))
         {
-            sb.Append(' ');
-            if (cond.Operator is ExtractionConditionOperator.LengthMin
-                or ExtractionConditionOperator.LengthMax
-                or ExtractionConditionOperator.GreaterThan
-                or ExtractionConditionOperator.LessThan)
+            if (cond.Operator != ExtractionConditionOperator.Trim || !string.IsNullOrEmpty(cond.Value))
             {
-                sb.Append(cond.Value.Trim());
-            }
-            else
-            {
-                sb.Append(Quote(cond.Value));
+                sb.Append(' ');
+                if (cond.Operator is ExtractionConditionOperator.LengthMin
+                    or ExtractionConditionOperator.LengthMax
+                    or ExtractionConditionOperator.GreaterThan
+                    or ExtractionConditionOperator.LessThan)
+                {
+                    sb.Append(cond.Value.Trim());
+                }
+                else
+                {
+                    sb.Append(Quote(cond.Value));
+                }
             }
         }
 
-        if (cond.Operator == ExtractionConditionOperator.RegexReplace)
+        if (cond.Operator is ExtractionConditionOperator.RegexReplace
+            or ExtractionConditionOperator.ReplaceText
+            or ExtractionConditionOperator.Between)
         {
             sb.Append(" -> ");
             sb.Append(Quote(cond.Replacement));
         }
-        else if (cond.Operator == ExtractionConditionOperator.RegexExtract && cond.RegexGroup != 1)
+        else if (cond.Operator is ExtractionConditionOperator.RegexExtract or ExtractionConditionOperator.RegexExtractAll
+                 && cond.RegexGroup != 1)
         {
             sb.Append(" groupe=");
             sb.Append(cond.RegexGroup.ToString(CultureInfo.InvariantCulture));
+        }
+        else if (cond.Operator == ExtractionConditionOperator.SplitPart)
+        {
+            sb.Append(" index=");
+            sb.Append(cond.SegmentIndex.ToString(CultureInfo.InvariantCulture));
         }
 
         if (cond.IgnoreCase && cond.SupportsIgnoreCase)

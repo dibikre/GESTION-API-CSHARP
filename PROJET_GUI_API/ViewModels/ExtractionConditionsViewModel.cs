@@ -19,6 +19,9 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
     public static IReadOnlyList<ExtractionConditionMatchMode> MatchModeOptions { get; } =
         Enum.GetValues<ExtractionConditionMatchMode>();
 
+    public static IReadOnlyList<ExtractionConditionPreset> PresetOptions =>
+        ExtractionPresetCatalog.Presets;
+
     private readonly IReadOnlyList<string> _rawItems;
     private readonly Action<IReadOnlyList<ChainExtractionCondition>, ExtractionConditionMatchMode, bool> _onApply;
     private readonly string _initialSnapshotSignature;
@@ -68,6 +71,20 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
     public ObservableCollection<ChainExtractionCondition> Conditions { get; } = [];
 
     [ObservableProperty]
+    public partial ExtractionConditionPreset? SelectedPreset { get; set; } = ExtractionPresetCatalog.Presets[0];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSelectionSuggestion))]
+    [NotifyPropertyChangedFor(nameof(SelectionSummaryText))]
+    public partial ExtractionSelectionSuggestion? SelectionSuggestion { get; private set; }
+
+    public bool HasSelectionSuggestion => SelectionSuggestion is not null;
+
+    public string SelectionSummaryText => SelectionSuggestion is null
+        ? string.Empty
+        : $"Sélection : « {TruncatePreview(SelectionSuggestion.SelectedText, 26)} » ({SelectionSuggestion.DetectedKindLabel})";
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsGuidedMode))]
     public partial bool IsManualMode { get; set; }
 
@@ -115,6 +132,11 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
     public int ActiveConditionsCount => Conditions.Count(c => c.IsEnabled) + (DeduplicateList ? 1 : 0);
 
     public bool HasActiveConditionsBadge => ActiveConditionsCount > 0;
+
+    public void UpdateSourceSelection(string? fullText, int selectionStart, int selectionEnd)
+    {
+        SelectionSuggestion = ExtractionPresetCatalog.AnalyzeSelection(fullText, selectionStart, selectionEnd);
+    }
 
     partial void OnMatchModeChanged(ExtractionConditionMatchMode value)
     {
@@ -214,22 +236,52 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
             return;
         }
 
-        _isSyncing = true;
-        try
+        SyncManualTextFromRules();
+        IsManualMode = true;
+    }
+
+    [RelayCommand]
+    private void ApplyPreset()
+    {
+        if (SelectedPreset is null)
         {
-            ManualText = ExtractionConditionSyntax.FormatManual(
-                Conditions,
-                MatchMode,
-                DeduplicateList,
-                includeExamplesWhenEmpty: true);
-            ManualError = null;
-        }
-        finally
-        {
-            _isSyncing = false;
+            return;
         }
 
-        IsManualMode = true;
+        AddOrReplaceBlankRule(SelectedPreset.CreateCondition());
+    }
+
+    [RelayCommand]
+    private void ApplySelectionType()
+    {
+        if (SelectionSuggestion is null)
+        {
+            return;
+        }
+
+        AddOrReplaceBlankRule(SelectionSuggestion.BuildTypeCondition());
+    }
+
+    [RelayCommand]
+    private void ApplySelectionContext()
+    {
+        if (SelectionSuggestion is null)
+        {
+            return;
+        }
+
+        AddOrReplaceBlankRule(SelectionSuggestion.BuildContextCondition());
+    }
+
+    [RelayCommand]
+    private void ApplySelectionContains()
+    {
+        if (SelectionSuggestion is null)
+        {
+            return;
+        }
+
+        AddOrReplaceBlankRule(SelectionSuggestion.BuildContainsCondition());
     }
 
     [RelayCommand]
@@ -357,6 +409,56 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
         return true;
     }
 
+    private void AddOrReplaceBlankRule(ChainExtractionCondition condition)
+    {
+        _isSyncing = true;
+        try
+        {
+            if (Conditions.Count == 1 &&
+                Conditions[0].RequiresValue &&
+                string.IsNullOrWhiteSpace(Conditions[0].Value) &&
+                string.IsNullOrWhiteSpace(Conditions[0].Replacement))
+            {
+                ClearTrackedConditions();
+            }
+
+            AddTrackedCondition(condition);
+            if (IsManualMode)
+            {
+                ManualText = ExtractionConditionSyntax.FormatManual(
+                    Conditions,
+                    MatchMode,
+                    DeduplicateList,
+                    includeExamplesWhenEmpty: true);
+                ManualError = null;
+            }
+        }
+        finally
+        {
+            _isSyncing = false;
+        }
+
+        RecalculatePreview();
+    }
+
+    private void SyncManualTextFromRules()
+    {
+        _isSyncing = true;
+        try
+        {
+            ManualText = ExtractionConditionSyntax.FormatManual(
+                Conditions,
+                MatchMode,
+                DeduplicateList,
+                includeExamplesWhenEmpty: true);
+            ManualError = null;
+        }
+        finally
+        {
+            _isSyncing = false;
+        }
+    }
+
     private void AddTrackedCondition(ChainExtractionCondition condition)
     {
         condition.PropertyChanged += OnConditionItemPropertyChanged;
@@ -432,6 +534,9 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
             mode.ToString(),
             dedup ? "1" : "0",
             string.Join(";", conditions.Select(c =>
-                $"{(c.IsEnabled ? '1' : '0')}:{(int)c.Operator}:{c.Value}:{c.Replacement}:{c.RegexGroup}:{(c.IgnoreCase ? '1' : '0')}")));
+                $"{(c.IsEnabled ? '1' : '0')}:{(int)c.Operator}:{c.Value}:{c.Replacement}:{c.RegexGroup}:{c.SegmentIndex}:{(c.IgnoreCase ? '1' : '0')}")));
     }
+
+    private static string TruncatePreview(string text, int maxLen) =>
+        text.Length <= maxLen ? text : string.Concat(text.AsSpan(0, maxLen), "...");
 }

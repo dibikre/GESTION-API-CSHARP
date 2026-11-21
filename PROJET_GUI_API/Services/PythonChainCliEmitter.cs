@@ -136,7 +136,7 @@ internal static class PythonChainCliEmitter
                 sb.AppendLine("                \"conditions\": [");
                 foreach (var c in ext.Conditions)
                 {
-                    sb.AppendLine($"                    {{\"op\": {EscapeString(c.Operator)}, \"value\": {EscapeString(c.Value)}, \"replacement\": {EscapeString(c.Replacement)}, \"regex_group\": {c.RegexGroup}, \"ignore_case\": {FormatBool(c.IgnoreCase)}}},");
+                    sb.AppendLine($"                    {{\"op\": {EscapeString(c.Operator)}, \"value\": {EscapeString(c.Value)}, \"replacement\": {EscapeString(c.Replacement)}, \"regex_group\": {c.RegexGroup}, \"segment_index\": {c.SegmentIndex}, \"ignore_case\": {FormatBool(c.IgnoreCase)}}},");
                 }
                 sb.AppendLine("                ],");
                 sb.AppendLine("            },");
@@ -550,6 +550,97 @@ def _apply_condition_replace(cond: dict, value: str) -> str:
     return regex.sub(_repl, value)
 
 
+def _apply_condition_replace_text(cond: dict, value: str) -> str:
+    target = cond["value"]
+    rep = cond.get("replacement", "")
+    if not target:
+        return value
+    if cond.get("ignore_case", False):
+        return re.compile(re.escape(target), re.IGNORECASE).sub(lambda _: rep, value)
+    return value.replace(target, rep)
+
+
+def _apply_condition_between(cond: dict, value: str) -> tuple[bool, str]:
+    left = cond["value"]
+    right = cond.get("replacement", "")
+    icase = cond.get("ignore_case", False)
+    hay = value.lower() if icase else value
+    start_idx = 0
+    if left:
+        left_cmp = left.lower() if icase else left
+        pos = hay.find(left_cmp)
+        if pos < 0:
+            return False, ""
+        start_idx = pos + len(left)
+    if right:
+        right_cmp = right.lower() if icase else right
+        end_pos = hay.find(right_cmp, start_idx)
+        if end_pos < 0:
+            return False, ""
+        return True, value[start_idx:end_pos]
+    return True, value[start_idx:]
+
+
+def _apply_condition_split_part(cond: dict, value: str) -> tuple[bool, str]:
+    sep = cond["value"]
+    seg_idx = int(cond.get("segment_index", 0))
+    if cond.get("ignore_case", False):
+        parts = re.split(re.escape(sep), value, flags=re.IGNORECASE)
+    else:
+        parts = value.split(sep)
+    resolved = len(parts) + seg_idx if seg_idx < 0 else seg_idx
+    if resolved < 0 or resolved >= len(parts):
+        return False, ""
+    return True, parts[resolved]
+
+
+def _apply_single_rule_batch(cond: dict, inputs: list[str]) -> list[str]:
+    op = cond["op"]
+    out: list[str] = []
+    for curr in inputs:
+        if op == "regex_extract":
+            ok_ex, val_ex = _apply_condition_extract(cond, curr)
+            if ok_ex:
+                out.append(val_ex)
+        elif op == "regex_extract_all":
+            regex = _compile_condition_regex(cond["value"], cond.get("ignore_case", False))
+            grp = int(cond.get("regex_group", 1))
+            for m in regex.finditer(curr):
+                try:
+                    captured = m.group(grp)
+                except IndexError:
+                    captured = None
+                if captured is not None:
+                    out.append(captured)
+        elif op == "regex_replace":
+            out.append(_apply_condition_replace(cond, curr))
+        elif op == "replace_text":
+            out.append(_apply_condition_replace_text(cond, curr))
+        elif op == "between":
+            ok_bt, val_bt = _apply_condition_between(cond, curr)
+            if ok_bt:
+                out.append(val_bt)
+        elif op == "split_part":
+            ok_sp, val_sp = _apply_condition_split_part(cond, curr)
+            if ok_sp:
+                out.append(val_sp)
+        elif op == "trim":
+            chars = cond.get("value", "")
+            out.append(curr.strip(chars) if chars else curr.strip())
+        elif op == "to_lower":
+            out.append(curr.lower())
+        elif op == "to_upper":
+            out.append(curr.upper())
+        elif _eval_condition_filter(cond, curr):
+            out.append(curr)
+    return out
+
+
+_TRANSFORM_OPS = {"regex_extract", "regex_extract_all", "regex_replace", "replace_text", "between", "split_part", "trim", "to_lower", "to_upper"}
+_EXTRACT_OPS = {"regex_extract", "regex_extract_all"}
+_NO_VALUE_OPS = {"not_empty", "trim", "to_lower", "to_upper"}
+
+
 def apply_extraction_conditions(raw_values: list[str], ext: dict) -> tuple[bool, list[str] | str]:
     conditions = ext.get("conditions") or []
     dedup = bool(ext.get("deduplicate"))
@@ -560,10 +651,16 @@ def apply_extraction_conditions(raw_values: list[str], ext: dict) -> tuple[bool,
     try:
         for cond in conditions:
             op = cond["op"]
-            if op != "not_empty" and not cond["value"]:
+            if op == "between":
+                if not cond["value"] and not cond.get("replacement", ""):
+                    return False, "Condition entre délimiteurs vide."
+            elif op not in _NO_VALUE_OPS and not cond["value"]:
                 return False, "Condition d'extraction vide."
-            if op in ("regex_match", "regex_not_match", "regex_extract", "regex_replace"):
-                _compile_condition_regex(cond["value"], cond.get("ignore_case", False))
+            if op in ("regex_match", "regex_not_match", "regex_extract", "regex_extract_all", "regex_replace"):
+                compiled_re = _compile_condition_regex(cond["value"], cond.get("ignore_case", False))
+                grp = int(cond.get("regex_group", 1))
+                if op in _EXTRACT_OPS and grp > compiled_re.groups:
+                    return False, f"Groupe #{grp} absent du motif Regex."
             elif op in ("length_min", "length_max"):
                 if int(cond["value"].strip()) < 0:
                     return False, f"Longueur invalide : {cond['value']}"
@@ -575,57 +672,47 @@ def apply_extraction_conditions(raw_values: list[str], ext: dict) -> tuple[bool,
     out: list[str] = []
     seen: set[str] = set()
     for raw in raw_values:
-        curr = raw
+        curr_items = [raw]
         if mode == "all":
-            ok = True
             for cond in conditions:
-                op = cond["op"]
-                if op == "regex_extract":
-                    ok, curr = _apply_condition_extract(cond, curr)
-                    if not ok:
-                        break
-                elif op == "regex_replace":
-                    curr = _apply_condition_replace(cond, curr)
-                else:
-                    if not _eval_condition_filter(cond, curr):
-                        ok = False
-                        break
-            if not ok:
-                continue
+                curr_items = _apply_single_rule_batch(cond, curr_items)
+                if not curr_items:
+                    break
         else:
-            filters = [c for c in conditions if c["op"] not in ("regex_extract", "regex_replace")]
-            extracts = [c for c in conditions if c["op"] == "regex_extract"]
-            replaces = [c for c in conditions if c["op"] == "regex_replace"]
-            if filters and not any(_eval_condition_filter(c, curr) for c in filters):
+            filters = [c for c in conditions if c["op"] not in _TRANSFORM_OPS]
+            extracts = [c for c in conditions if c["op"] in _EXTRACT_OPS]
+            transforms = [c for c in conditions if c["op"] in _TRANSFORM_OPS and c["op"] not in _EXTRACT_OPS]
+            if filters and not any(_eval_condition_filter(c, raw) for c in filters):
                 continue
             if extracts:
                 if not filters and len(extracts) > 1:
                     matched_any = False
                     for ec in extracts:
-                        ok_ex, val_ex = _apply_condition_extract(ec, curr)
-                        if ok_ex:
-                            curr = val_ex
+                        cand = _apply_single_rule_batch(ec, curr_items)
+                        if cand:
+                            curr_items = cand
                             matched_any = True
                             break
                     if not matched_any:
                         continue
                 else:
-                    ok_all = True
                     for ec in extracts:
-                        ok_ex, curr = _apply_condition_extract(ec, curr)
-                        if not ok_ex:
-                            ok_all = False
+                        curr_items = _apply_single_rule_batch(ec, curr_items)
+                        if not curr_items:
                             break
-                    if not ok_all:
+                    if not curr_items:
                         continue
-            for rc in replaces:
-                curr = _apply_condition_replace(rc, curr)
+            for tc in transforms:
+                curr_items = _apply_single_rule_batch(tc, curr_items)
+                if not curr_items:
+                    break
 
-        if dedup:
-            if curr in seen:
-                continue
-            seen.add(curr)
-        out.append(curr)
+        for val_out in curr_items:
+            if dedup:
+                if val_out in seen:
+                    continue
+                seen.add(val_out)
+            out.append(val_out)
 
     if not out and raw_values:
         return False, f"Aucun élément ne satisfait les conditions ({len(raw_values)} brut(s) filtré(s))."
@@ -659,7 +746,8 @@ def run_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]
         return True, res
     cond_ok, cond_res = apply_extraction_conditions([res], ext)
     if cond_ok and isinstance(cond_res, list) and cond_res:
-        return True, cond_res[0]
+        has_all = any(c["op"] == "regex_extract_all" for c in ext["conditions"])
+        return True, (", ".join(cond_res) if has_all and len(cond_res) > 1 else cond_res[0])
     return False, cond_res if isinstance(cond_res, str) else "La valeur extraite ne satisfait pas les conditions."
 
 

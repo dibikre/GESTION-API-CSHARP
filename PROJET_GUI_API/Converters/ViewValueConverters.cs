@@ -313,7 +313,14 @@ public static class ExtractionConditionOperatorConverters
             ExtractionConditionOperator.RegexMatch => "Regex correspond",
             ExtractionConditionOperator.RegexNotMatch => "Regex exclut",
             ExtractionConditionOperator.RegexExtract => "Regex extraire (groupe)",
+            ExtractionConditionOperator.RegexExtractAll => "Regex extraire tout (éclater)",
             ExtractionConditionOperator.RegexReplace => "Regex remplacer",
+            ExtractionConditionOperator.ReplaceText => "Remplacer texte",
+            ExtractionConditionOperator.Between => "Entre délimiteurs",
+            ExtractionConditionOperator.SplitPart => "Découper (séparateur / index)",
+            ExtractionConditionOperator.Trim => "Nettoyer début / fin",
+            ExtractionConditionOperator.ToLower => "Convertir en minuscules",
+            ExtractionConditionOperator.ToUpper => "Convertir en MAJUSCULES",
             ExtractionConditionOperator.NotEmpty => "Non vide",
             ExtractionConditionOperator.LengthMin => "Longueur >=",
             ExtractionConditionOperator.LengthMax => "Longueur <=",
@@ -356,6 +363,31 @@ public sealed class RegexGroupToDecimalConverter : IValueConverter
         }
 
         return 1;
+    }
+}
+
+public sealed class SegmentIndexToDecimalConverter : IValueConverter
+{
+    public static readonly SegmentIndexToDecimalConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int intValue)
+        {
+            return (decimal)Math.Clamp(intValue, -99, 99);
+        }
+
+        return 0m;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is decimal decValue)
+        {
+            return Math.Clamp((int)decValue, -99, 99);
+        }
+
+        return 0;
     }
 }
 

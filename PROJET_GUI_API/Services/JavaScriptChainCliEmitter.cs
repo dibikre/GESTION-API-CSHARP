@@ -126,7 +126,7 @@ internal static class JavaScriptChainCliEmitter
                 sb.AppendLine("        conditions: [");
                 foreach (var c in ext.Conditions)
                 {
-                    sb.AppendLine($"          {{ op: {EscapeString(c.Operator)}, value: {EscapeString(c.Value)}, replacement: {EscapeString(c.Replacement)}, regexGroup: {c.RegexGroup}, ignoreCase: {FormatBool(c.IgnoreCase)} }},");
+                    sb.AppendLine($"          {{ op: {EscapeString(c.Operator)}, value: {EscapeString(c.Value)}, replacement: {EscapeString(c.Replacement)}, regexGroup: {c.RegexGroup}, segmentIndex: {c.SegmentIndex}, ignoreCase: {FormatBool(c.IgnoreCase)} }},");
                 }
                 sb.AppendLine("        ],");
                 sb.AppendLine("      },");
@@ -554,6 +554,113 @@ function applyConditionReplace(cond, value) {
   return value.replace(regex, jsTpl);
 }
 
+function escapeRegExpLiteral(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function applyConditionReplaceText(cond, value) {
+  const target = cond.value || "";
+  const rep = cond.replacement || "";
+  if (!target) return value;
+  if (cond.ignoreCase) {
+    return value.replace(new RegExp(escapeRegExpLiteral(target), "gi"), () => rep);
+  }
+  return value.split(target).join(rep);
+}
+
+function applyConditionBetween(cond, value) {
+  const left = cond.value || "";
+  const right = cond.replacement || "";
+  const icase = Boolean(cond.ignoreCase);
+  const hay = icase ? value.toLowerCase() : value;
+  let startIdx = 0;
+  if (left) {
+    const leftCmp = icase ? left.toLowerCase() : left;
+    const pos = hay.indexOf(leftCmp);
+    if (pos < 0) return { ok: false, value: "" };
+    startIdx = pos + left.length;
+  }
+  if (right) {
+    const rightCmp = icase ? right.toLowerCase() : right;
+    const endPos = hay.indexOf(rightCmp, startIdx);
+    if (endPos < 0) return { ok: false, value: "" };
+    return { ok: true, value: value.slice(startIdx, endPos) };
+  }
+  return { ok: true, value: value.slice(startIdx) };
+}
+
+function applyConditionSplitPart(cond, value) {
+  const sep = cond.value || "";
+  const segIdx = Number.isInteger(cond.segmentIndex) ? cond.segmentIndex : 0;
+  const parts = cond.ignoreCase
+    ? value.split(new RegExp(escapeRegExpLiteral(sep), "i"))
+    : value.split(sep);
+  const resolved = segIdx < 0 ? parts.length + segIdx : segIdx;
+  if (resolved < 0 || resolved >= parts.length) return { ok: false, value: "" };
+  return { ok: true, value: parts[resolved] };
+}
+
+function applyConditionTrim(cond, value) {
+  const chars = cond.value || "";
+  if (!chars) return value.trim();
+  const escaped = escapeRegExpLiteral(chars);
+  return value.replace(new RegExp(`^[${escaped}]+|[${escaped}]+$`, "g"), "");
+}
+
+function applySingleRuleBatch(cond, inputs) {
+  const out = [];
+  for (const curr of inputs) {
+    switch (cond.op) {
+      case "regex_extract": {
+        const ex = applyConditionExtract(cond, curr);
+        if (ex.ok) out.push(ex.value);
+        break;
+      }
+      case "regex_extract_all": {
+        const regex = compileConditionRegex(cond.value, Boolean(cond.ignoreCase), true);
+        const grp = Number.isInteger(cond.regexGroup) ? cond.regexGroup : 1;
+        for (const m of curr.matchAll(regex)) {
+          if (grp < m.length && m[grp] !== undefined) out.push(m[grp]);
+        }
+        break;
+      }
+      case "regex_replace":
+        out.push(applyConditionReplace(cond, curr));
+        break;
+      case "replace_text":
+        out.push(applyConditionReplaceText(cond, curr));
+        break;
+      case "between": {
+        const bt = applyConditionBetween(cond, curr);
+        if (bt.ok) out.push(bt.value);
+        break;
+      }
+      case "split_part": {
+        const sp = applyConditionSplitPart(cond, curr);
+        if (sp.ok) out.push(sp.value);
+        break;
+      }
+      case "trim":
+        out.push(applyConditionTrim(cond, curr));
+        break;
+      case "to_lower":
+        out.push(curr.toLowerCase());
+        break;
+      case "to_upper":
+        out.push(curr.toUpperCase());
+        break;
+      default:
+        if (evalConditionFilter(cond, curr)) out.push(curr);
+        break;
+    }
+  }
+  return out;
+}
+
+const TRANSFORM_OPS = new Set(["regex_extract", "regex_extract_all", "regex_replace", "replace_text", "between", "split_part", "trim", "to_lower", "to_upper"]);
+const EXTRACT_OPS = new Set(["regex_extract", "regex_extract_all"]);
+const NO_VALUE_OPS = new Set(["not_empty", "trim", "to_lower", "to_upper"]);
+
 function applyExtractionConditions(rawValues, ext) {
   const conditions = Array.isArray(ext.conditions) ? ext.conditions : [];
   const dedup = Boolean(ext.deduplicate);
@@ -562,12 +669,14 @@ function applyExtractionConditions(rawValues, ext) {
   }
 
   for (const cond of conditions) {
-    if (cond.op !== "not_empty" && !cond.value) {
+    if (cond.op === "between") {
+      if (!cond.value && !cond.replacement) return { ok: false, error: "Condition entre délimiteurs vide." };
+    } else if (!NO_VALUE_OPS.has(cond.op) && !cond.value) {
       return { ok: false, error: "Condition d'extraction vide." };
     }
-    if (cond.op === "regex_match" || cond.op === "regex_not_match" || cond.op === "regex_extract" || cond.op === "regex_replace") {
+    if (cond.op === "regex_match" || cond.op === "regex_not_match" || cond.op === "regex_extract" || cond.op === "regex_extract_all" || cond.op === "regex_replace") {
       try {
-        compileConditionRegex(cond.value, Boolean(cond.ignoreCase), cond.op === "regex_replace");
+        compileConditionRegex(cond.value, Boolean(cond.ignoreCase), cond.op === "regex_replace" || cond.op === "regex_extract_all");
       } catch (err) {
         return { ok: false, error: `Condition Regex invalide : ${err instanceof Error ? err.message : String(err)}` };
       }
@@ -585,61 +694,52 @@ function applyExtractionConditions(rawValues, ext) {
   const seen = dedup ? new Set() : null;
 
   for (const raw of rawValues) {
-    let curr = raw;
+    let currItems = [raw];
     if (mode === "all") {
-      let ok = true;
       for (const cond of conditions) {
-        if (cond.op === "regex_extract") {
-          const ex = applyConditionExtract(cond, curr);
-          if (!ex.ok) { ok = false; break; }
-          curr = ex.value;
-        } else if (cond.op === "regex_replace") {
-          curr = applyConditionReplace(cond, curr);
-        } else if (!evalConditionFilter(cond, curr)) {
-          ok = false;
-          break;
-        }
+        currItems = applySingleRuleBatch(cond, currItems);
+        if (currItems.length === 0) break;
       }
-      if (!ok) continue;
     } else {
-      const filters = conditions.filter((c) => c.op !== "regex_extract" && c.op !== "regex_replace");
-      const extracts = conditions.filter((c) => c.op === "regex_extract");
-      const replaces = conditions.filter((c) => c.op === "regex_replace");
-      if (filters.length > 0 && !filters.some((c) => evalConditionFilter(c, curr))) {
+      const filters = conditions.filter((c) => !TRANSFORM_OPS.has(c.op));
+      const extracts = conditions.filter((c) => EXTRACT_OPS.has(c.op));
+      const transforms = conditions.filter((c) => TRANSFORM_OPS.has(c.op) && !EXTRACT_OPS.has(c.op));
+      if (filters.length > 0 && !filters.some((c) => evalConditionFilter(c, raw))) {
         continue;
       }
       if (extracts.length > 0) {
         if (filters.length === 0 && extracts.length > 1) {
           let matchedAny = false;
           for (const ec of extracts) {
-            const ex = applyConditionExtract(ec, curr);
-            if (ex.ok) {
-              curr = ex.value;
+            const cand = applySingleRuleBatch(ec, currItems);
+            if (cand.length > 0) {
+              currItems = cand;
               matchedAny = true;
               break;
             }
           }
           if (!matchedAny) continue;
         } else {
-          let okAll = true;
           for (const ec of extracts) {
-            const ex = applyConditionExtract(ec, curr);
-            if (!ex.ok) { okAll = false; break; }
-            curr = ex.value;
+            currItems = applySingleRuleBatch(ec, currItems);
+            if (currItems.length === 0) break;
           }
-          if (!okAll) continue;
+          if (currItems.length === 0) continue;
         }
       }
-      for (const rc of replaces) {
-        curr = applyConditionReplace(rc, curr);
+      for (const tc of transforms) {
+        currItems = applySingleRuleBatch(tc, currItems);
+        if (currItems.length === 0) break;
       }
     }
 
-    if (seen) {
-      if (seen.has(curr)) continue;
-      seen.add(curr);
+    for (const valOut of currItems) {
+      if (seen) {
+        if (seen.has(valOut)) continue;
+        seen.add(valOut);
+      }
+      out.push(valOut);
     }
-    out.push(curr);
   }
 
   if (out.length === 0 && rawValues.length > 0) {
@@ -675,9 +775,11 @@ function runExtraction(ext, respBody, respHeaders) {
     return rawOutcome;
   }
   const filtered = applyExtractionConditions([rawOutcome.value], ext);
-  return filtered.ok && filtered.values.length > 0
-    ? { ok: true, value: filtered.values[0] }
-    : { ok: false, value: filtered.error || "La valeur extraite ne satisfait pas les conditions." };
+  if (filtered.ok && filtered.values.length > 0) {
+    const hasAll = ext.conditions.some((c) => c.op === "regex_extract_all");
+    return { ok: true, value: hasAll && filtered.values.length > 1 ? filtered.values.join(", ") : filtered.values[0] };
+  }
+  return { ok: false, value: filtered.error || "La valeur extraite ne satisfait pas les conditions." };
 }
 
 function runListExtraction(ext, respBody, respHeaders) {

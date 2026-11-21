@@ -2,10 +2,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:ApiTester.ViewModels"
              xmlns:models="using:ApiTester.Models"
+             xmlns:services="using:ApiTester.Services"
              xmlns:conv="using:ApiTester.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             mc:Ignorable="d" d:DesignWidth="460" d:DesignHeight="480"
+             mc:Ignorable="d" d:DesignWidth="480" d:DesignHeight="520"
              x:Class="ApiTester.Views.ExtractionConditionsView"
              x:Name="ConditionsRoot"
              x:DataType="vm:ExtractionConditionsViewModel">
@@ -15,8 +16,8 @@
             BorderThickness="1"
             CornerRadius="{DynamicResource ControlCornerRadius}"
             Padding="10">
-        <Grid RowDefinitions="Auto,*" RowSpacing="8">
-            <!-- Barre supérieure : titre + bascule Guidé / Manuel + Tout vider -->
+        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="8">
+            <!-- Barre supérieure : titre + bascule Guidé / Manuel + Réinitialiser -->
             <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <TextBlock Text="Conditions d'affinage"
@@ -69,8 +70,94 @@
                         AutomationProperties.Name="Réinitialiser les conditions" />
             </Grid>
 
+            <!-- Barre de modèles rapides (Hex, UUID, Segment URL, IDs, etc.) -->
+            <Border Grid.Row="1"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    Padding="8,6">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+                    <TextBlock Grid.Column="0"
+                               Text="Modèle rapide"
+                               FontSize="{DynamicResource FontSizeCaption}"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               VerticalAlignment="Center" />
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{x:Static vm:ExtractionConditionsViewModel.PresetOptions}"
+                              SelectedItem="{Binding SelectedPreset}"
+                              HorizontalAlignment="Stretch"
+                              AutomationProperties.Name="Modèle d'extraction rapide">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="services:ExtractionConditionPreset">
+                                <TextBlock Text="{Binding Label}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <Button Grid.Column="2"
+                            Classes="secondary"
+                            Content="Appliquer modèle"
+                            Height="26"
+                            MinHeight="26"
+                            Padding="10,0"
+                            FontSize="{DynamicResource FontSizeCaption}"
+                            Command="{Binding ApplyPresetCommand}"
+                            ToolTip.Tip="Ajouter le modèle sélectionné aux conditions"
+                            AutomationProperties.Name="Appliquer le modèle rapide" />
+                </Grid>
+            </Border>
+
+            <!-- Assistant contextuel depuis une sélection dans la liste de gauche -->
+            <Border Grid.Row="2"
+                    IsVisible="{Binding HasSelectionSuggestion}"
+                    Background="{DynamicResource AccentSoftBrush}"
+                    BorderBrush="{DynamicResource AccentBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    Padding="8,6">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="{Binding SelectionSummaryText}"
+                               FontSize="{DynamicResource FontSizeCaption}"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource AccentBrush}"
+                               TextTrimming="CharacterEllipsis" />
+                    <WrapPanel Orientation="Horizontal">
+                        <Button Classes="primary"
+                                Content="Extraire ce type"
+                                Height="24"
+                                MinHeight="24"
+                                Padding="8,0"
+                                Margin="0,0,6,2"
+                                FontSize="{DynamicResource FontSizeCaption}"
+                                Command="{Binding ApplySelectionTypeCommand}"
+                                ToolTip.Tip="Créer une règle Regex capturant toutes les valeurs du même type (ex. Hex long, UUID, chiffres)"
+                                AutomationProperties.Name="Extraire le type détecté depuis la sélection" />
+                        <Button Classes="secondary"
+                                Content="Par contexte"
+                                Height="24"
+                                MinHeight="24"
+                                Padding="8,0"
+                                Margin="0,0,6,2"
+                                FontSize="{DynamicResource FontSizeCaption}"
+                                Command="{Binding ApplySelectionContextCommand}"
+                                ToolTip.Tip="Créer une règle Regex ancrée par les délimiteurs situés juste avant et après la sélection"
+                                AutomationProperties.Name="Extraire par contexte autour de la sélection" />
+                        <Button Classes="ghost"
+                                Content="Filtrer contient"
+                                Height="24"
+                                MinHeight="24"
+                                Padding="8,0"
+                                Margin="0,0,0,2"
+                                FontSize="{DynamicResource FontSizeCaption}"
+                                Command="{Binding ApplySelectionContainsCommand}"
+                                ToolTip.Tip="Ne garder que les lignes contenant le texte sélectionné"
+                                AutomationProperties.Name="Filtrer les lignes contenant la sélection" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
             <!-- Mode Guidé -->
-            <Grid Grid.Row="1"
+            <Grid Grid.Row="3"
                   IsVisible="{Binding IsGuidedMode}"
                   RowDefinitions="Auto,*,Auto"
                   RowSpacing="8">
@@ -107,7 +194,7 @@
                                 Spacing="8"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
-                        <TextBlock Text="Aucune condition définie. Ajoute une règle pour filtrer, exclure ou extraire via Regex."
+                        <TextBlock Text="Aucune condition définie. Sélectionne un exemple à gauche, choisis un modèle ci-dessus ou ajoute une règle manuelle."
                                    FontSize="{DynamicResource FontSizeSmall}"
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    TextWrapping="Wrap"
@@ -191,23 +278,23 @@
                                                          PlaceholderText="{Binding ValuePlaceholder}"
                                                          AutomationProperties.Name="Valeur ou motif de la condition" />
 
-                                                <Grid IsVisible="{Binding IsRegexReplace}"
+                                                <Grid IsVisible="{Binding HasReplacementRow}"
                                                       ColumnDefinitions="Auto,*"
                                                       ColumnSpacing="6">
                                                     <TextBlock Grid.Column="0"
-                                                               Text="Remplacer par"
+                                                               Text="{Binding ReplacementLabel}"
                                                                FontSize="{DynamicResource FontSizeCaption}"
                                                                Foreground="{DynamicResource TextMutedBrush}"
                                                                VerticalAlignment="Center" />
                                                     <TextBox Grid.Column="1"
                                                              Classes="mono"
                                                              Text="{Binding Replacement}"
-                                                             PlaceholderText="nouveau texte (vide pour supprimer)"
-                                                             AutomationProperties.Name="Texte de remplacement Regex" />
+                                                             PlaceholderText="{Binding ReplacementPlaceholder}"
+                                                             AutomationProperties.Name="Seconde valeur de la condition" />
                                                 </Grid>
 
                                                 <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <StackPanel IsVisible="{Binding IsRegexExtract}"
+                                                    <StackPanel IsVisible="{Binding IsRegexExtractAny}"
                                                                 Orientation="Horizontal"
                                                                 Spacing="6"
                                                                 Margin="0,0,12,0"
@@ -223,7 +310,28 @@
                                                                        FormatString="0"
                                                                        ShowButtonSpinner="False"
                                                                        Width="54"
+                                                                       ToolTip.Tip="0 = correspondance complète ; 1, 2... = groupe entre parenthèses (...)"
                                                                        AutomationProperties.Name="Index du groupe Regex de la condition" />
+                                                    </StackPanel>
+
+                                                    <StackPanel IsVisible="{Binding IsSplitPart}"
+                                                                Orientation="Horizontal"
+                                                                Spacing="6"
+                                                                Margin="0,0,12,0"
+                                                                VerticalAlignment="Center">
+                                                        <TextBlock Text="Index"
+                                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                                   VerticalAlignment="Center" />
+                                                        <NumericUpDown Value="{Binding SegmentIndex, Converter={x:Static conv:SegmentIndexToDecimalConverter.Instance}, Mode=TwoWay}"
+                                                                       Minimum="-99"
+                                                                       Maximum="99"
+                                                                       Increment="1"
+                                                                       FormatString="0"
+                                                                       ShowButtonSpinner="False"
+                                                                       Width="58"
+                                                                       ToolTip.Tip="0 = premier morceau, 1 = deuxième, -1 = dernier morceau"
+                                                                       AutomationProperties.Name="Index du segment après découpage" />
                                                     </StackPanel>
 
                                                     <CheckBox IsVisible="{Binding SupportsIgnoreCase}"
@@ -252,14 +360,14 @@
                 </Grid>
 
                 <TextBlock Grid.Row="2"
-                           Text="Les règles Regex extraire / remplacer affinent la valeur conservée pour les règles suivantes."
+                           Text="Astuce : sélectionne un morceau à gauche (ex. un hash hex) pour générer une règle automatiquement, ou enchaîne Découper / Entre délimiteurs / Regex extraire."
                            FontSize="{DynamicResource FontSizeCaption}"
                            Foreground="{DynamicResource TextFaintBrush}"
                            TextWrapping="Wrap" />
             </Grid>
 
             <!-- Mode Manuel -->
-            <Grid Grid.Row="1"
+            <Grid Grid.Row="3"
                   IsVisible="{Binding IsManualMode}"
                   RowDefinitions="*,Auto,Auto"
                   RowSpacing="6">
@@ -282,7 +390,7 @@
                            TextWrapping="Wrap" />
 
                 <TextBlock Grid.Row="2"
-                           Text="Syntaxes : mode: et|ou · unique: true|false · contient &quot;...&quot; · !contient &quot;...&quot; · commence · finit · == · != · regex &quot;...&quot; · !regex &quot;...&quot; · regex_extraire &quot;...&quot; groupe=1 · regex_remplacer &quot;...&quot; -&gt; &quot;...&quot; · non_vide · longueur &gt;= N · nombre &gt; N · [icase] · [inactif]"
+                           Text="Syntaxes : mode: et|ou · unique: true|false · regex_extraire &quot;(...)&quot; groupe=1 · regex_extraire_tout &quot;(...)&quot; · decouper &quot;/&quot; index=-1 · entre &quot;A&quot; -&gt; &quot;B&quot; · remplacer &quot;A&quot; -&gt; &quot;B&quot; · regex_remplacer · nettoyer · minuscules · majuscules · contient · !contient · regex · non_vide · longueur &gt;= N · nombre &gt; N · [icase] · [inactif]"
                            FontSize="{DynamicResource FontSizeCaption}"
                            Foreground="{DynamicResource TextFaintBrush}"
                            TextWrapping="Wrap" />

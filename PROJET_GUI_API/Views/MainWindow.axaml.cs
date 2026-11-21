@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using ApiTester.ViewModels;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
@@ -14,6 +15,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        OverlayEditorTextBox.PropertyChanged += OnOverlayEditorTextBoxPropertyChanged;
     }
 
     protected override void OnDataContextChanged(EventArgs e)
@@ -30,6 +32,24 @@ public partial class MainWindow : Window
         {
             _subscribedOverlay = vm.Overlay;
             _subscribedOverlay.PropertyChanged += OnOverlayPropertyChanged;
+        }
+    }
+
+    private void OnOverlayEditorTextBoxPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (_subscribedOverlay is not { IsOpen: true, HasConditionsSupport: true })
+        {
+            return;
+        }
+
+        if (e.Property == TextBox.SelectionStartProperty ||
+            e.Property == TextBox.SelectionEndProperty ||
+            e.Property == TextBox.TextProperty)
+        {
+            _subscribedOverlay.UpdateConditionsSelection(
+                OverlayEditorTextBox.Text,
+                OverlayEditorTextBox.SelectionStart,
+                OverlayEditorTextBox.SelectionEnd);
         }
     }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text.RegularExpressions;
 using ApiTester.Models;
 
@@ -20,13 +21,28 @@ public static class ExtractionConditionEngine
         string TextValue,
         string Replacement,
         int RegexGroup,
+        int SegmentIndex,
         bool IgnoreCase,
         Regex? CompiledRegex,
         int IntThreshold,
         double DoubleThreshold)
     {
-        public bool IsTransform => Operator is ExtractionConditionOperator.RegexExtract
-            or ExtractionConditionOperator.RegexReplace;
+        public bool IsExtractTransform => Operator is ExtractionConditionOperator.RegexExtract
+            or ExtractionConditionOperator.RegexExtractAll;
+
+        public bool IsFilterOnly => Operator is ExtractionConditionOperator.Contains
+            or ExtractionConditionOperator.NotContains
+            or ExtractionConditionOperator.StartsWith
+            or ExtractionConditionOperator.EndsWith
+            or ExtractionConditionOperator.Equals
+            or ExtractionConditionOperator.NotEquals
+            or ExtractionConditionOperator.RegexMatch
+            or ExtractionConditionOperator.RegexNotMatch
+            or ExtractionConditionOperator.NotEmpty
+            or ExtractionConditionOperator.LengthMin
+            or ExtractionConditionOperator.LengthMax
+            or ExtractionConditionOperator.GreaterThan
+            or ExtractionConditionOperator.LessThan;
     }
 
     public static ExtractionOutcome ApplyToScalar(
@@ -41,9 +57,15 @@ public static class ExtractionConditionEngine
             return ExtractionOutcome.Failure(listResult.ErrorMessage ?? "La valeur extraite ne satisfait pas les conditions.");
         }
 
-        return listResult.Values.Count > 0
-            ? ExtractionOutcome.Success(listResult.Values[0])
-            : ExtractionOutcome.Failure("La valeur extraite ne satisfait pas les conditions.");
+        if (listResult.Values.Count == 0)
+        {
+            return ExtractionOutcome.Failure("La valeur extraite ne satisfait pas les conditions.");
+        }
+
+        var hasExtractAll = conditions.Any(c => c.IsEnabled && c.Operator == ExtractionConditionOperator.RegexExtractAll);
+        return hasExtractAll && listResult.Values.Count > 1
+            ? ExtractionOutcome.Success(string.Join(", ", listResult.Values))
+            : ExtractionOutcome.Success(listResult.Values[0]);
     }
 
     public static ConditionEvaluationResult ApplyToList(
@@ -70,15 +92,13 @@ public static class ExtractionConditionEngine
         {
             foreach (var raw in rawValues)
             {
-                var item = raw ?? string.Empty;
-                if (!TryProcessItem(item, rules, matchMode, out var processed))
+                var items = ProcessItem(raw ?? string.Empty, rules, matchMode);
+                foreach (var processed in items)
                 {
-                    continue;
-                }
-
-                if (seen is null || seen.Add(processed))
-                {
-                    output.Add(processed);
+                    if (seen is null || seen.Add(processed))
+                    {
+                        output.Add(processed);
+                    }
                 }
             }
         }
@@ -122,9 +142,23 @@ public static class ExtractionConditionEngine
             }
 
             var val = c.Value ?? string.Empty;
+            var rep = c.Replacement ?? string.Empty;
             var lineNum = i + 1;
 
-            if (c.Operator != ExtractionConditionOperator.NotEmpty && string.IsNullOrEmpty(val))
+            if (c.Operator == ExtractionConditionOperator.Between)
+            {
+                if (string.IsNullOrEmpty(val) && string.IsNullOrEmpty(rep))
+                {
+                    error = $"Condition #{lineNum} : indique au moins un délimiteur gauche ou droit.";
+                    return false;
+                }
+            }
+            else if (c.Operator is not (
+                ExtractionConditionOperator.NotEmpty
+                or ExtractionConditionOperator.Trim
+                or ExtractionConditionOperator.ToLower
+                or ExtractionConditionOperator.ToUpper)
+                && string.IsNullOrEmpty(val))
             {
                 error = $"Condition #{lineNum} : valeur ou motif vide.";
                 return false;
@@ -134,6 +168,7 @@ public static class ExtractionConditionEngine
             if (c.Operator is ExtractionConditionOperator.RegexMatch
                 or ExtractionConditionOperator.RegexNotMatch
                 or ExtractionConditionOperator.RegexExtract
+                or ExtractionConditionOperator.RegexExtractAll
                 or ExtractionConditionOperator.RegexReplace)
             {
                 var options = RegexOptions.CultureInvariant;
@@ -150,6 +185,16 @@ public static class ExtractionConditionEngine
                 {
                     error = $"Condition #{lineNum} : Regex invalide ({ex.Message}).";
                     return false;
+                }
+
+                if (c.Operator is ExtractionConditionOperator.RegexExtract or ExtractionConditionOperator.RegexExtractAll)
+                {
+                    var grp = Math.Max(0, c.RegexGroup);
+                    if (grp > 0 && !regex.GetGroupNumbers().Contains(grp))
+                    {
+                        error = $"Condition #{lineNum} : Groupe #{grp} absent du motif Regex — entoure la partie à capturer avec (...) ou mets Groupe à 0.";
+                        return false;
+                    }
                 }
             }
 
@@ -177,8 +222,9 @@ public static class ExtractionConditionEngine
             compiled.Add(new CompiledRule(
                 c.Operator,
                 val,
-                c.Replacement ?? string.Empty,
+                rep,
                 Math.Max(0, c.RegexGroup),
+                Math.Clamp(c.SegmentIndex, -99, 99),
                 c.IgnoreCase,
                 regex,
                 intThreshold,
@@ -188,130 +234,240 @@ public static class ExtractionConditionEngine
         return true;
     }
 
-    private static bool TryProcessItem(
+    private static List<string> ProcessItem(
         string initial,
         List<CompiledRule> rules,
-        ExtractionConditionMatchMode matchMode,
-        out string result)
+        ExtractionConditionMatchMode matchMode)
     {
-        var current = initial;
         if (rules.Count == 0)
         {
-            result = current;
-            return true;
+            return [initial];
         }
+
+        var currentItems = new List<string> { initial };
 
         if (matchMode == ExtractionConditionMatchMode.All)
         {
             foreach (var rule in rules)
             {
-                if (!TryApplySingleRuleAllMode(rule, ref current))
+                currentItems = ApplySingleRuleBatch(rule, currentItems);
+                if (currentItems.Count == 0)
                 {
-                    result = string.Empty;
-                    return false;
+                    return currentItems;
                 }
             }
 
-            result = current;
-            return true;
+            return currentItems;
         }
 
-        var hasFilter = false;
-        var filterPassed = false;
+        var filterRules = new List<CompiledRule>();
         var extractRules = new List<CompiledRule>();
-        var replaceRules = new List<CompiledRule>();
+        var transformRules = new List<CompiledRule>();
 
         foreach (var rule in rules)
         {
-            if (!rule.IsTransform)
+            if (rule.IsFilterOnly)
             {
-                hasFilter = true;
-                if (!filterPassed && EvaluateFilter(rule, current))
-                {
-                    filterPassed = true;
-                }
+                filterRules.Add(rule);
             }
-            else if (rule.Operator == ExtractionConditionOperator.RegexExtract)
+            else if (rule.IsExtractTransform)
             {
                 extractRules.Add(rule);
             }
             else
             {
-                replaceRules.Add(rule);
+                transformRules.Add(rule);
             }
         }
 
-        if (hasFilter && !filterPassed)
+        if (filterRules.Count > 0 && !filterRules.Any(r => EvaluateFilter(r, initial)))
         {
-            result = string.Empty;
-            return false;
+            return [];
         }
 
         if (extractRules.Count > 0)
         {
-            if (!hasFilter && extractRules.Count > 1)
+            if (filterRules.Count == 0 && extractRules.Count > 1)
             {
-                var anyExtracted = false;
+                var matched = false;
                 foreach (var extRule in extractRules)
                 {
-                    if (TryExtractRegexGroup(extRule, current, out var extracted))
+                    var candidate = ApplySingleRuleBatch(extRule, currentItems);
+                    if (candidate.Count > 0)
                     {
-                        current = extracted;
-                        anyExtracted = true;
+                        currentItems = candidate;
+                        matched = true;
                         break;
                     }
                 }
 
-                if (!anyExtracted)
+                if (!matched)
                 {
-                    result = string.Empty;
-                    return false;
+                    return [];
                 }
             }
             else
             {
                 foreach (var extRule in extractRules)
                 {
-                    if (!TryExtractRegexGroup(extRule, current, out var extracted))
+                    currentItems = ApplySingleRuleBatch(extRule, currentItems);
+                    if (currentItems.Count == 0)
                     {
-                        result = string.Empty;
-                        return false;
+                        return [];
                     }
-
-                    current = extracted;
                 }
             }
         }
 
-        foreach (var repRule in replaceRules)
+        foreach (var trRule in transformRules)
         {
-            current = repRule.CompiledRegex!.Replace(current, repRule.Replacement);
+            currentItems = ApplySingleRuleBatch(trRule, currentItems);
+            if (currentItems.Count == 0)
+            {
+                return [];
+            }
         }
 
-        result = current;
+        return currentItems;
+    }
+
+    private static List<string> ApplySingleRuleBatch(CompiledRule rule, List<string> inputs)
+    {
+        var next = new List<string>(inputs.Count);
+
+        foreach (var current in inputs)
+        {
+            switch (rule.Operator)
+            {
+                case ExtractionConditionOperator.RegexExtract:
+                    if (TryExtractRegexGroup(rule, current, out var extracted))
+                    {
+                        next.Add(extracted);
+                    }
+                    break;
+
+                case ExtractionConditionOperator.RegexExtractAll:
+                    foreach (Match match in rule.CompiledRegex!.Matches(current))
+                    {
+                        if (match.Success && rule.RegexGroup < match.Groups.Count)
+                        {
+                            var grp = match.Groups[rule.RegexGroup];
+                            if (grp.Success)
+                            {
+                                next.Add(grp.Value);
+                            }
+                        }
+                    }
+                    break;
+
+                case ExtractionConditionOperator.RegexReplace:
+                    next.Add(rule.CompiledRegex!.Replace(current, rule.Replacement));
+                    break;
+
+                case ExtractionConditionOperator.ReplaceText:
+                    next.Add(current.Replace(
+                        rule.TextValue,
+                        rule.Replacement,
+                        rule.IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+                    break;
+
+                case ExtractionConditionOperator.Between:
+                    if (TryExtractBetween(current, rule.TextValue, rule.Replacement, rule.IgnoreCase, out var sliced))
+                    {
+                        next.Add(sliced);
+                    }
+                    break;
+
+                case ExtractionConditionOperator.SplitPart:
+                    if (TrySplitPart(current, rule.TextValue, rule.SegmentIndex, rule.IgnoreCase, out var part))
+                    {
+                        next.Add(part);
+                    }
+                    break;
+
+                case ExtractionConditionOperator.Trim:
+                    next.Add(string.IsNullOrEmpty(rule.TextValue)
+                        ? current.Trim()
+                        : current.Trim(rule.TextValue.ToCharArray()));
+                    break;
+
+                case ExtractionConditionOperator.ToLower:
+                    next.Add(current.ToLowerInvariant());
+                    break;
+
+                case ExtractionConditionOperator.ToUpper:
+                    next.Add(current.ToUpperInvariant());
+                    break;
+
+                default:
+                    if (EvaluateFilter(rule, current))
+                    {
+                        next.Add(current);
+                    }
+                    break;
+            }
+        }
+
+        return next;
+    }
+
+    private static bool TryExtractBetween(
+        string input,
+        string leftDelimiter,
+        string rightDelimiter,
+        bool ignoreCase,
+        out string result)
+    {
+        var cmp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var startIdx = 0;
+
+        if (!string.IsNullOrEmpty(leftDelimiter))
+        {
+            var foundLeft = input.IndexOf(leftDelimiter, cmp);
+            if (foundLeft < 0)
+            {
+                result = string.Empty;
+                return false;
+            }
+            startIdx = foundLeft + leftDelimiter.Length;
+        }
+
+        if (!string.IsNullOrEmpty(rightDelimiter))
+        {
+            var foundRight = input.IndexOf(rightDelimiter, startIdx, cmp);
+            if (foundRight < 0)
+            {
+                result = string.Empty;
+                return false;
+            }
+            result = input[startIdx..foundRight];
+            return true;
+        }
+
+        result = input[startIdx..];
         return true;
     }
 
-    private static bool TryApplySingleRuleAllMode(CompiledRule rule, ref string current)
+    private static bool TrySplitPart(
+        string input,
+        string separator,
+        int segmentIndex,
+        bool ignoreCase,
+        out string part)
     {
-        switch (rule.Operator)
+        var parts = ignoreCase
+            ? Regex.Split(input, Regex.Escape(separator), RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, RegexTimeout)
+            : input.Split(separator, StringSplitOptions.None);
+
+        var resolved = segmentIndex < 0 ? parts.Length + segmentIndex : segmentIndex;
+        if (resolved < 0 || resolved >= parts.Length)
         {
-            case ExtractionConditionOperator.RegexExtract:
-                if (!TryExtractRegexGroup(rule, current, out var extracted))
-                {
-                    return false;
-                }
-
-                current = extracted;
-                return true;
-
-            case ExtractionConditionOperator.RegexReplace:
-                current = rule.CompiledRegex!.Replace(current, rule.Replacement);
-                return true;
-
-            default:
-                return EvaluateFilter(rule, current);
+            part = string.Empty;
+            return false;
         }
+
+        part = parts[resolved];
+        return true;
     }
 
     private static bool TryExtractRegexGroup(CompiledRule rule, string input, out string extracted)

@@ -33,6 +33,7 @@ internal sealed record CliExtractionConditionSpec(
     string Value,
     string Replacement,
     int RegexGroup,
+    int SegmentIndex,
     bool IgnoreCase);
 
 internal sealed record CliExtractionSpec(
@@ -442,6 +443,7 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                     cond.Value ?? string.Empty,
                     cond.Replacement ?? string.Empty,
                     Math.Max(0, cond.RegexGroup),
+                    Math.Clamp(cond.SegmentIndex, -99, 99),
                     cond.IgnoreCase));
             }
 
@@ -474,7 +476,14 @@ public sealed class ChainCliGenerator : IChainCliGenerator
         ExtractionConditionOperator.RegexMatch => "regex_match",
         ExtractionConditionOperator.RegexNotMatch => "regex_not_match",
         ExtractionConditionOperator.RegexExtract => "regex_extract",
+        ExtractionConditionOperator.RegexExtractAll => "regex_extract_all",
         ExtractionConditionOperator.RegexReplace => "regex_replace",
+        ExtractionConditionOperator.ReplaceText => "replace_text",
+        ExtractionConditionOperator.Between => "between",
+        ExtractionConditionOperator.SplitPart => "split_part",
+        ExtractionConditionOperator.Trim => "trim",
+        ExtractionConditionOperator.ToLower => "to_lower",
+        ExtractionConditionOperator.ToUpper => "to_upper",
         ExtractionConditionOperator.NotEmpty => "not_empty",
         ExtractionConditionOperator.LengthMin => "length_min",
         ExtractionConditionOperator.LengthMax => "length_max",

@@ -129,7 +129,7 @@ internal static class PhpChainCliEmitter
                 sb.AppendLine("                'conditions' => [");
                 foreach (var c in ext.Conditions)
                 {
-                    sb.AppendLine($"                    ['op' => {EscapeString(c.Operator)}, 'value' => {EscapeString(c.Value)}, 'replacement' => {EscapeString(c.Replacement)}, 'regexGroup' => {c.RegexGroup}, 'ignoreCase' => {FormatBool(c.IgnoreCase)}],");
+                    sb.AppendLine($"                    ['op' => {EscapeString(c.Operator)}, 'value' => {EscapeString(c.Value)}, 'replacement' => {EscapeString(c.Replacement)}, 'regexGroup' => {c.RegexGroup}, 'segmentIndex' => {c.SegmentIndex}, 'ignoreCase' => {FormatBool(c.IgnoreCase)}],");
                 }
                 sb.AppendLine("                ],");
                 sb.AppendLine("            ],");
@@ -624,6 +624,91 @@ function applyConditionReplace(array $cond, string $value): string {
     return (string)@preg_replace($regex, $phpTpl, $value);
 }
 
+function applyConditionReplaceText(array $cond, string $value): string {
+    $target = (string)($cond['value'] ?? '');
+    $rep = (string)($cond['replacement'] ?? '');
+    if ($target === '') return $value;
+    return !empty($cond['ignoreCase'])
+        ? str_ireplace($target, $rep, $value)
+        : str_replace($target, $rep, $value);
+}
+
+function applyConditionBetween(array $cond, string $value): array {
+    $left = (string)($cond['value'] ?? '');
+    $right = (string)($cond['replacement'] ?? '');
+    $icase = !empty($cond['ignoreCase']);
+    $startIdx = 0;
+    if ($left !== '') {
+        $pos = $icase ? mb_stripos($value, $left, 0, 'UTF-8') : mb_strpos($value, $left, 0, 'UTF-8');
+        if ($pos === false) return [false, ''];
+        $startIdx = $pos + mb_strlen($left, 'UTF-8');
+    }
+    if ($right !== '') {
+        $endPos = $icase ? mb_stripos($value, $right, $startIdx, 'UTF-8') : mb_strpos($value, $right, $startIdx, 'UTF-8');
+        if ($endPos === false) return [false, ''];
+        return [true, mb_substr($value, $startIdx, $endPos - $startIdx, 'UTF-8')];
+    }
+    return [true, mb_substr($value, $startIdx, null, 'UTF-8')];
+}
+
+function applyConditionSplitPart(array $cond, string $value): array {
+    $sep = (string)($cond['value'] ?? '');
+    $segIdx = (int)($cond['segmentIndex'] ?? 0);
+    if (!empty($cond['ignoreCase'])) {
+        $parts = @preg_split(buildConditionRegex(preg_quote($sep, '/'), true), $value);
+        if (!is_array($parts)) $parts = [$value];
+    } else {
+        $parts = $sep === '' ? [$value] : explode($sep, $value);
+    }
+    $resolved = $segIdx < 0 ? count($parts) + $segIdx : $segIdx;
+    if ($resolved < 0 || $resolved >= count($parts)) {
+        return [false, ''];
+    }
+    return [true, (string)$parts[$resolved]];
+}
+
+function applySingleRuleBatch(array $cond, array $inputs): array {
+    $op = $cond['op'];
+    $out = [];
+    foreach ($inputs as $curr) {
+        if ($op === 'regex_extract') {
+            [$okEx, $valEx] = applyConditionExtract($cond, $curr);
+            if ($okEx) $out[] = $valEx;
+        } elseif ($op === 'regex_extract_all') {
+            $regex = buildConditionRegex((string)$cond['value'], !empty($cond['ignoreCase']));
+            $grp = max(0, (int)($cond['regexGroup'] ?? 1));
+            $cnt = @preg_match_all($regex, $curr, $allMatches, PREG_SET_ORDER);
+            if ($cnt !== false && $cnt > 0) {
+                foreach ($allMatches as $m) {
+                    if (array_key_exists($grp, $m)) {
+                        $out[] = (string)$m[$grp];
+                    }
+                }
+            }
+        } elseif ($op === 'regex_replace') {
+            $out[] = applyConditionReplace($cond, $curr);
+        } elseif ($op === 'replace_text') {
+            $out[] = applyConditionReplaceText($cond, $curr);
+        } elseif ($op === 'between') {
+            [$okBt, $valBt] = applyConditionBetween($cond, $curr);
+            if ($okBt) $out[] = $valBt;
+        } elseif ($op === 'split_part') {
+            [$okSp, $valSp] = applyConditionSplitPart($cond, $curr);
+            if ($okSp) $out[] = $valSp;
+        } elseif ($op === 'trim') {
+            $chars = (string)($cond['value'] ?? '');
+            $out[] = $chars === '' ? trim($curr) : trim($curr, $chars);
+        } elseif ($op === 'to_lower') {
+            $out[] = mb_strtolower($curr, 'UTF-8');
+        } elseif ($op === 'to_upper') {
+            $out[] = mb_strtoupper($curr, 'UTF-8');
+        } elseif (evalConditionFilter($cond, $curr)) {
+            $out[] = $curr;
+        }
+    }
+    return $out;
+}
+
 function applyExtractionConditions(array $rawValues, array $ext): array {
     $conditions = $ext['conditions'] ?? [];
     $dedup = !empty($ext['deduplicate']);
@@ -631,14 +716,23 @@ function applyExtractionConditions(array $rawValues, array $ext): array {
         return [true, $rawValues];
     }
 
+    $transformOps = ['regex_extract', 'regex_extract_all', 'regex_replace', 'replace_text', 'between', 'split_part', 'trim', 'to_lower', 'to_upper'];
+    $extractOps = ['regex_extract', 'regex_extract_all'];
+    $noValOps = ['not_empty', 'trim', 'to_lower', 'to_upper'];
+
     try {
         foreach ($conditions as $cond) {
             $op = $cond['op'];
             $val = (string)($cond['value'] ?? '');
-            if ($op !== 'not_empty' && $val === '') {
+            $rep = (string)($cond['replacement'] ?? '');
+            if ($op === 'between') {
+                if ($val === '' && $rep === '') {
+                    return [false, 'Condition entre délimiteurs vide.'];
+                }
+            } elseif (!in_array($op, $noValOps, true) && $val === '') {
                 return [false, "Condition d'extraction vide."];
             }
-            if (in_array($op, ['regex_match', 'regex_not_match', 'regex_extract', 'regex_replace'], true)) {
+            if (in_array($op, ['regex_match', 'regex_not_match', 'regex_extract', 'regex_extract_all', 'regex_replace'], true)) {
                 buildConditionRegex($val, !empty($cond['ignoreCase']));
             } elseif (in_array($op, ['length_min', 'length_max'], true)) {
                 $trimmed = trim($val);
@@ -661,38 +755,23 @@ function applyExtractionConditions(array $rawValues, array $ext): array {
     $seen = [];
 
     foreach ($rawValues as $raw) {
-        $curr = (string)$raw;
+        $currItems = [(string)$raw];
         if ($mode === 'all') {
-            $ok = true;
             foreach ($conditions as $cond) {
-                $op = $cond['op'];
-                if ($op === 'regex_extract') {
-                    [$okEx, $curr] = applyConditionExtract($cond, $curr);
-                    if (!$okEx) {
-                        $ok = false;
-                        break;
-                    }
-                } elseif ($op === 'regex_replace') {
-                    $curr = applyConditionReplace($cond, $curr);
-                } else {
-                    if (!evalConditionFilter($cond, $curr)) {
-                        $ok = false;
-                        break;
-                    }
+                $currItems = applySingleRuleBatch($cond, $currItems);
+                if (count($currItems) === 0) {
+                    break;
                 }
             }
-            if (!$ok) {
-                continue;
-            }
         } else {
-            $filters = array_values(array_filter($conditions, static fn(array $c): bool => !in_array($c['op'], ['regex_extract', 'regex_replace'], true)));
-            $extracts = array_values(array_filter($conditions, static fn(array $c): bool => $c['op'] === 'regex_extract'));
-            $replaces = array_values(array_filter($conditions, static fn(array $c): bool => $c['op'] === 'regex_replace'));
+            $filters = array_values(array_filter($conditions, static fn(array $c): bool => !in_array($c['op'], $transformOps, true)));
+            $extracts = array_values(array_filter($conditions, static fn(array $c): bool => in_array($c['op'], $extractOps, true)));
+            $transforms = array_values(array_filter($conditions, static fn(array $c): bool => in_array($c['op'], $transformOps, true) && !in_array($c['op'], $extractOps, true)));
 
             if (count($filters) > 0) {
                 $passed = false;
                 foreach ($filters as $fc) {
-                    if (evalConditionFilter($fc, $curr)) {
+                    if (evalConditionFilter($fc, (string)$raw)) {
                         $passed = true;
                         break;
                     }
@@ -706,9 +785,9 @@ function applyExtractionConditions(array $rawValues, array $ext): array {
                 if (count($filters) === 0 && count($extracts) > 1) {
                     $matchedAny = false;
                     foreach ($extracts as $ec) {
-                        [$okEx, $valEx] = applyConditionExtract($ec, $curr);
-                        if ($okEx) {
-                            $curr = $valEx;
+                        $cand = applySingleRuleBatch($ec, $currItems);
+                        if (count($cand) > 0) {
+                            $currItems = $cand;
                             $matchedAny = true;
                             break;
                         }
@@ -717,32 +796,35 @@ function applyExtractionConditions(array $rawValues, array $ext): array {
                         continue;
                     }
                 } else {
-                    $okAll = true;
                     foreach ($extracts as $ec) {
-                        [$okEx, $curr] = applyConditionExtract($ec, $curr);
-                        if (!$okEx) {
-                            $okAll = false;
+                        $currItems = applySingleRuleBatch($ec, $currItems);
+                        if (count($currItems) === 0) {
                             break;
                         }
                     }
-                    if (!$okAll) {
+                    if (count($currItems) === 0) {
                         continue;
                     }
                 }
             }
 
-            foreach ($replaces as $rc) {
-                $curr = applyConditionReplace($rc, $curr);
+            foreach ($transforms as $tc) {
+                $currItems = applySingleRuleBatch($tc, $currItems);
+                if (count($currItems) === 0) {
+                    break;
+                }
             }
         }
 
-        if ($dedup) {
-            if (array_key_exists($curr, $seen)) {
-                continue;
+        foreach ($currItems as $valOut) {
+            if ($dedup) {
+                if (array_key_exists($valOut, $seen)) {
+                    continue;
+                }
+                $seen[$valOut] = true;
             }
-            $seen[$curr] = true;
+            $out[] = $valOut;
         }
-        $out[] = $curr;
     }
 
     if (count($out) === 0 && count($rawValues) > 0) {
@@ -781,7 +863,14 @@ function runExtraction(array $ext, string $respBody, array $respHeaders): array 
     }
     [$cOk, $cRes] = applyExtractionConditions([(string)$rawOutcome[1]], $ext);
     if ($cOk && is_array($cRes) && count($cRes) > 0) {
-        return [true, (string)$cRes[0]];
+        $hasAll = false;
+        foreach ($ext['conditions'] as $c) {
+            if (($c['op'] ?? '') === 'regex_extract_all') {
+                $hasAll = true;
+                break;
+            }
+        }
+        return [true, ($hasAll && count($cRes) > 1) ? implode(', ', $cRes) : (string)$cRes[0]];
     }
     return [false, is_string($cRes) ? $cRes : 'La valeur extraite ne satisfait pas les conditions.'];
 }
