@@ -38,7 +38,8 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
         IReadOnlyDictionary<string, IReadOnlyList<string>>? accumulatedLists,
         int globalIndex,
         string? requestGuid = null,
-        long? requestTimestamp = null)
+        long? requestTimestamp = null,
+        string? resolvedIp = null)
     {
         ArgumentNullException.ThrowIfNull(scalarVariables);
 
@@ -60,6 +61,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
             indexText,
             guidText,
             timestampText,
+            resolvedIp,
             out var jsonNode,
             out var evalError))
         {
@@ -77,6 +79,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
         string indexText,
         string guidText,
         string timestampText,
+        string? resolvedIp,
         out JsonNode? result,
         out string? error)
     {
@@ -113,6 +116,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                     indexText,
                     guidText,
                     timestampText,
+                    resolvedIp,
                     out var interpolated,
                     out error))
                 {
@@ -133,6 +137,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                     indexText,
                     guidText,
                     timestampText,
+                    resolvedIp,
                     out result,
                     out error);
 
@@ -149,6 +154,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                         indexText,
                         guidText,
                         timestampText,
+                        resolvedIp,
                         out var itemNode,
                         out error))
                     {
@@ -177,6 +183,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                         indexText,
                         guidText,
                         timestampText,
+                        resolvedIp,
                         out var valNode,
                         out error))
                     {
@@ -205,6 +212,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                         indexText,
                         guidText,
                         timestampText,
+                        resolvedIp,
                         out var partNode,
                         out error))
                     {
@@ -235,6 +243,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
         string indexText,
         string guidText,
         string timestampText,
+        string? resolvedIp,
         out JsonNode? result,
         out string? error)
     {
@@ -250,6 +259,10 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                 return true;
             case "$timestamp":
                 result = JsonValue.Create(timestampText);
+                error = null;
+                return true;
+            case "$ip":
+                result = JsonValue.Create(resolvedIp ?? IpResolutionHelper.ResolveIpSync());
                 error = null;
                 return true;
         }
@@ -284,6 +297,13 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                 return true;
             }
 
+            if (id.Name == "ip")
+            {
+                result = JsonValue.Create(resolvedIp ?? IpResolutionHelper.ResolveIpSync());
+                error = null;
+                return true;
+            }
+
             result = null;
             error = $"Variable inconnue ou non définie : {{{{{id.Name}}}}}.";
             return false;
@@ -310,6 +330,13 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
             return true;
         }
 
+        if (id.Name == "ip")
+        {
+            result = JsonValue.Create(resolvedIp ?? IpResolutionHelper.ResolveIpSync());
+            error = null;
+            return true;
+        }
+
         result = null;
         error = $"Variable ou liste inconnue : « {id.Name} ». Utilise une variable extraite, une variable de l'étape ou entoure le texte de guillemets.";
         return false;
@@ -323,6 +350,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
         string indexText,
         string guidText,
         string timestampText,
+        string? resolvedIp,
         out string output,
         out string? error)
     {
@@ -351,6 +379,7 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                 indexText,
                 guidText,
                 timestampText,
+                resolvedIp,
                 out var resolvedNode,
                 out error))
             {

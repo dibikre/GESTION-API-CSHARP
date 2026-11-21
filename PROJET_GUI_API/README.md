@@ -198,13 +198,14 @@ Permet d'enchaîner plusieurs requêtes HTTP où les valeurs extraites d'une ét
 - **Expression de retour d'étape (`Retour` / `StepReturnEvaluator`)** :
   - Chaque étape comporte un onglet `Retour` permettant de construire la valeur produite par l'étape, soit après son appel HTTP et ses extractions, soit en tant qu'**étape de retour pur** (badge `RET` dans la liste de gauche lorsque l'URL est laissée vide : aucun appel HTTP n'est envoyé et la valeur calculée devient directement le résultat de l'étape).
   - Syntaxes prises en charge par `StepReturnParser` :
-    - Variable simple ou liste extraite : `return nom_variable`, `nom_variable`, `{{nom_variable}}`, `[[ma_liste]]`, ou variables prédéfinies `$index`, `$guid`, `$timestamp`.
+    - Variable simple ou liste extraite : `return nom_variable`, `nom_variable`, `{{nom_variable}}`, `[[ma_liste]]`, ou variables prédéfinies `$index`, `$guid`, `$timestamp`, `ip`, `$ip`.
+    - Résolution d'adresse IP (`return ip`, `return { ip }`, `return "{{ip}}"` ou `$ip`) : interroge l'adresse IP publique (`api.ipify.org`, repli `icanhazip.com`) avec cache temporaire puis repli automatique sur l'IP locale de la machine en mode hors ligne. Si une variable ou extraction utilisateur s'appelle `ip`, elle reste prioritaire sur `ip` tandis que `$ip` force toujours l'adresse IP de la machine.
     - Retour multiple séparé par des virgules : `return a, b, c` (sérialisé en tableau JSON `[...]`).
     - Objet JSON personnalisé : `return { jeton: token, avatars: ma_liste, id }` (clés avec ou sans guillemets, raccourci `{ id }` équivalent à `{ id: id }`, imbrication illimitée d'objets et de tableaux).
     - Tableau personnalisé : `return [token, "texte libre", { cle: valeur }, [[liste]]]`.
     - Chaînes interpolées et concaténation : `return "Bearer {{token}}"` ou `return "Bearer " + token`.
     - Le mot-clé `return` en tête, le `;` final et les commentaires `//`, `#`, `/* ... */` sont optionnels.
-  - Bouton `Tester` dans l'onglet `Retour` : évalue l'expression hors ligne à partir des dernières variables accumulées, des extractions déjà testées et des variables locales de l'étape, avec affichage immédiat de l'aperçu et des erreurs de syntaxe ou de variables manquantes.
+  - Bouton `Tester` dans l'onglet `Retour` : évalue l'expression hors ligne (avec résolution IP si l'expression utilise `ip` / `$ip`) à partir des dernières variables accumulées, des extractions déjà testées et des variables locales de l'étape, avec affichage immédiat de l'aperçu et des erreurs de syntaxe ou de variables manquantes.
   - Boutons `Copier` et `Voir` disponibles aussi bien sous le champ `Retour` que dans le bandeau `Retour : ...` au-dessus de la réponse lorsqu'un résultat est sélectionné.
 - **Itérations et boucles sur listes extraites** :
   - Si une étape utilise une ou plusieurs listes `[[...]]` dans son URL, ses paramètres, ses en-têtes ou son corps, chaque liste devient automatiquement un axe d'itération (`BatchAxisKind.ExtractedList`), combinable ou parallélisable avec les paramètres et variables locales de l'étape. Note : citer `[[ma_liste]]` ou `ma_liste` dans l'onglet `Retour` sans l'utiliser dans les champs HTTP retourne la liste complète en JSON sans déclencher de boucle.
@@ -371,6 +372,7 @@ PROJET_GUI_API/
 │   ├── ExtractionSuggester.cs         Détection de format, construction d'arbre JSON/XML/HTML et suggestion Regex
 │   ├── FolderPickerService.cs         Sélection et ouverture de dossiers système
 │   ├── HttpService.cs                 Exécution HTTP asynchrone et chronométrage
+│   ├── IpResolutionHelper.cs          Résolution IP publique (cache) avec repli IP locale et boucle locale
 │   ├── JavaScriptChainCliEmitter.cs   Générateur de script CLI Node.js autonome
 │   ├── NumberCodec.cs                 Conversion et formatage BigInteger en bases 2, 8, 10 et 16
 │   ├── OverlayEditorService.cs        Bus d'ouverture de l'éditeur overlay

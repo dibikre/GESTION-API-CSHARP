@@ -637,7 +637,7 @@
                                              AcceptsReturn="True"
                                              TextWrapping="Wrap"
                                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                             PlaceholderText="Exemples :&#x0A;return nom_variable&#x0A;return var1, var2&#x0A;return { token: token, ids: [[ids]], label: &quot;Bearer {{token}}&quot; }"
+                                             PlaceholderText="Exemples :&#x0A;return nom_variable&#x0A;return ip&#x0A;return { ip, token: token, ids: [[ids]], label: &quot;Bearer {{token}}&quot; }"
                                              AutomationProperties.Name="Expression de retour de l'étape" />
 
                                     <TextBlock Grid.Row="2"
@@ -688,7 +688,7 @@
                                     </Border>
 
                                     <TextBlock Grid.Row="4"
-                                               Text="Syntaxes : return var · return a, b · { cle: val, shorthand } · [a, b, liste] · &quot;texte {{var}}&quot; · &quot;a&quot; + var"
+                                               Text="Syntaxes : return var · return ip · return a, b · { cle: val, shorthand } · [a, b, liste] · &quot;texte {{var}}&quot; · &quot;a&quot; + var"
                                                FontSize="{DynamicResource FontSizeCaption}"
                                                Foreground="{DynamicResource TextFaintBrush}"
                                                TextWrapping="Wrap" />

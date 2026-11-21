@@ -620,7 +620,7 @@ internal static class StepReturnParser
             switch (node)
             {
                 case IdentifierReturnNode id:
-                    if (id.Name is "$index" or "$guid" or "$timestamp")
+                    if (id.Name is "$index" or "$guid" or "$timestamp" or "$ip")
                     {
                         return;
                     }
@@ -649,7 +649,7 @@ internal static class StepReturnParser
                         else if (m.Groups[1].Success)
                         {
                             var name = m.Groups[1].Value;
-                            if (name is not ("$index" or "$guid" or "$timestamp") && seenScalars.Add(name))
+                            if (name is not ("$index" or "$guid" or "$timestamp" or "$ip") && seenScalars.Add(name))
                             {
                                 scalars.Add(name);
                             }

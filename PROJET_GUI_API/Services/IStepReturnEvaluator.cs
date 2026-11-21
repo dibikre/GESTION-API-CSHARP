@@ -14,5 +14,6 @@ public interface IStepReturnEvaluator
         IReadOnlyDictionary<string, IReadOnlyList<string>>? accumulatedLists,
         int globalIndex,
         string? requestGuid = null,
-        long? requestTimestamp = null);
+        long? requestTimestamp = null,
+        string? resolvedIp = null);
 }

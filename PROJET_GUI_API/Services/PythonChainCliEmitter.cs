@@ -18,9 +18,11 @@ internal static class PythonChainCliEmitter
         sb.AppendLine();
         sb.AppendLine("import argparse");
         sb.AppendLine("import gzip");
+        sb.AppendLine("import ipaddress");
         sb.AppendLine("import itertools");
         sb.AppendLine("import json");
         sb.AppendLine("import re");
+        sb.AppendLine("import socket");
         sb.AppendLine("import sys");
         sb.AppendLine("import time");
         sb.AppendLine("import urllib.error");
@@ -512,6 +514,52 @@ def send_http(method: str, url: str, headers: list[tuple[str, str]], body_bytes:
         return 0, [], "", str(exc)
 
 
+_CACHED_IP: str | None = None
+
+
+def resolve_current_ip() -> str:
+    global _CACHED_IP
+    if _CACHED_IP is not None:
+        return _CACHED_IP
+
+    for endpoint in ("https://api.ipify.org", "https://icanhazip.com"):
+        try:
+            req = urllib.request.Request(endpoint, headers={"User-Agent": "ApiTester-CLI/1.0"})
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                candidate = resp.read().decode("utf-8", errors="replace").strip()
+                ipaddress.ip_address(candidate)
+                _CACHED_IP = candidate
+                return _CACHED_IP
+        except Exception:
+            pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(0.5)
+            sock.connect(("8.8.8.8", 80))
+            local_ip = sock.getsockname()[0]
+            if local_ip:
+                ipaddress.ip_address(local_ip)
+                _CACHED_IP = local_ip
+                return _CACHED_IP
+    except OSError:
+        pass
+    except ValueError:
+        pass
+
+    try:
+        host_ip = socket.gethostbyname(socket.gethostname())
+        if host_ip:
+            ipaddress.ip_address(host_ip)
+            _CACHED_IP = host_ip
+            return _CACHED_IP
+    except (OSError, ValueError):
+        pass
+
+    _CACHED_IP = "127.0.0.1"
+    return _CACHED_IP
+
+
 def resolve_return_identifier(name: str, force_scalar: bool, force_list: bool, scalars: dict[str, str], list_vars: dict[str, str], accumulated_lists: dict[str, list[str]], global_index: int, req_guid: str, req_ts: str):
     if name == "$index":
         return str(global_index)
@@ -519,6 +567,8 @@ def resolve_return_identifier(name: str, force_scalar: bool, force_list: bool, s
         return req_guid
     if name == "$timestamp":
         return req_ts
+    if name == "$ip":
+        return resolve_current_ip()
     if force_list:
         if name in list_vars:
             return list_vars[name]
@@ -528,6 +578,8 @@ def resolve_return_identifier(name: str, force_scalar: bool, force_list: bool, s
     if force_scalar:
         if name in scalars:
             return scalars[name]
+        if name == "ip":
+            return resolve_current_ip()
         raise KeyError(f"Variable inconnue ou non définie : {{{{{name}}}}}")
     if name in list_vars:
         return list_vars[name]
@@ -535,6 +587,8 @@ def resolve_return_identifier(name: str, force_scalar: bool, force_list: bool, s
         return scalars[name]
     if name in accumulated_lists:
         return list(accumulated_lists[name])
+    if name == "ip":
+        return resolve_current_ip()
     raise KeyError(f"Variable ou liste inconnue : {name}")
 
 

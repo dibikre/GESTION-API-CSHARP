@@ -658,10 +658,69 @@ function sendHttp(string $method, string $url, array $headers, ?string $body, in
     return [$status, $respHeaders, is_string($respBody) ? $respBody : '', null];
 }
 
+function resolveCurrentIp(): string {
+    static $cachedIp = null;
+    if ($cachedIp !== null) {
+        return $cachedIp;
+    }
+
+    foreach (['https://api.ipify.org', 'https://icanhazip.com'] as $endpoint) {
+        $ch = curl_init($endpoint);
+        if ($ch === false) {
+            continue;
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => 2,
+            CURLOPT_TIMEOUT => 3,
+            CURLOPT_USERAGENT => 'ApiTester-CLI/1.0',
+        ]);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        if (is_string($body) && $code >= 200 && $code < 300) {
+            $candidate = trim($body);
+            if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+                $cachedIp = $candidate;
+                return $cachedIp;
+            }
+        }
+    }
+
+    $sock = @stream_socket_client('udp://8.8.8.8:80', $errNo, $errStr, 1.0);
+    if ($sock !== false) {
+        $peer = @stream_socket_get_name($sock, false);
+        @fclose($sock);
+        if (is_string($peer) && $peer !== '') {
+            $pos = strrpos($peer, ':');
+            $localIp = $pos !== false ? substr($peer, 0, $pos) : $peer;
+            $localIp = trim($localIp, '[]');
+            if (filter_var($localIp, FILTER_VALIDATE_IP) !== false) {
+                $cachedIp = $localIp;
+                return $cachedIp;
+            }
+        }
+    }
+
+    $host = @gethostname();
+    if (is_string($host) && $host !== '') {
+        $hostIp = @gethostbyname($host);
+        if (is_string($hostIp) && filter_var($hostIp, FILTER_VALIDATE_IP) !== false) {
+            $cachedIp = $hostIp;
+            return $cachedIp;
+        }
+    }
+
+    $cachedIp = '127.0.0.1';
+    return $cachedIp;
+}
+
 function resolveReturnIdentifier(string $name, bool $forceScalar, bool $forceList, array $scalars, array $listVars, array $accumulatedLists, int $globalIndex, string $reqGuid, string $reqTs): mixed {
     if ($name === '$index') return (string)$globalIndex;
     if ($name === '$guid') return $reqGuid;
     if ($name === '$timestamp') return $reqTs;
+    if ($name === '$ip') return resolveCurrentIp();
 
     if ($forceList) {
         if (array_key_exists($name, $listVars)) {
@@ -677,6 +736,9 @@ function resolveReturnIdentifier(string $name, bool $forceScalar, bool $forceLis
         if (array_key_exists($name, $scalars)) {
             return $scalars[$name];
         }
+        if ($name === 'ip') {
+            return resolveCurrentIp();
+        }
         throw new RuntimeException("Variable inconnue ou non définie : {{" . $name . "}}");
     }
 
@@ -688,6 +750,9 @@ function resolveReturnIdentifier(string $name, bool $forceScalar, bool $forceLis
     }
     if (array_key_exists($name, $accumulatedLists)) {
         return array_values($accumulatedLists[$name]);
+    }
+    if ($name === 'ip') {
+        return resolveCurrentIp();
     }
     throw new RuntimeException("Variable ou liste inconnue : " . $name);
 }

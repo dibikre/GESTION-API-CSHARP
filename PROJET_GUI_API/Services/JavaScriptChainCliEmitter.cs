@@ -19,6 +19,8 @@ internal static class JavaScriptChainCliEmitter
         sb.AppendLine("\"use strict\";");
         sb.AppendLine();
         sb.AppendLine("const { randomUUID } = require(\"node:crypto\");");
+        sb.AppendLine("const os = require(\"node:os\");");
+        sb.AppendLine("const net = require(\"node:net\");");
         sb.AppendLine("const MARKER_RE = /(?:\\{\\{\\s*(\\$?(?!\\d)[\\p{L}\\p{N}_]+)\\s*\\}\\}|\\[\\[\\s*((?!\\d)[\\p{L}\\p{N}_]+)\\s*\\]\\])/gu;");
         sb.AppendLine();
 
@@ -531,10 +533,69 @@ function runListExtraction(ext, respBody, respHeaders) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+let cachedIp = null;
+
+function returnNodeUsesIp(node) {
+  if (!node) return false;
+  switch (node.type) {
+    case "id":
+      return node.name === "ip" || node.name === "$ip";
+    case "str":
+      if (!node.interpolate) return false;
+      return /\{\{\s*\$?ip\s*\}\}/.test(node.value);
+    case "arr":
+      return node.items.some(returnNodeUsesIp);
+    case "obj":
+      return node.entries.some(([, v]) => returnNodeUsesIp(v));
+    case "concat":
+      return node.parts.some(returnNodeUsesIp);
+    default:
+      return false;
+  }
+}
+
+async function resolveCurrentIp() {
+  if (cachedIp !== null) return cachedIp;
+
+  for (const endpoint of ["https://api.ipify.org", "https://icanhazip.com"]) {
+    try {
+      const resp = await fetch(endpoint, { signal: AbortSignal.timeout(2500) });
+      if (resp.ok) {
+        const candidate = (await resp.text()).trim();
+        if (net.isIP(candidate) !== 0) {
+          cachedIp = candidate;
+          return cachedIp;
+        }
+      }
+    } catch {
+      // Essayer le fournisseur suivant
+    }
+  }
+
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const infos of Object.values(ifaces)) {
+      if (!infos) continue;
+      for (const info of infos) {
+        if (info && info.family === "IPv4" && !info.internal && info.address) {
+          cachedIp = info.address;
+          return cachedIp;
+        }
+      }
+    }
+  } catch {
+    // Repli sur loopback
+  }
+
+  cachedIp = "127.0.0.1";
+  return cachedIp;
+}
+
 function resolveReturnIdentifier(name, forceScalar, forceList, scalars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs) {
   if (name === "$index") return String(globalIndex);
   if (name === "$guid") return reqGuid;
   if (name === "$timestamp") return reqTs;
+  if (name === "$ip") return cachedIp ?? "127.0.0.1";
 
   if (forceList) {
     if (Object.prototype.hasOwnProperty.call(listVars, name)) return listVars[name];
@@ -543,11 +604,13 @@ function resolveReturnIdentifier(name, forceScalar, forceList, scalars, listVars
   }
   if (forceScalar) {
     if (Object.prototype.hasOwnProperty.call(scalars, name)) return scalars[name];
+    if (name === "ip") return cachedIp ?? "127.0.0.1";
     throw new Error(`Variable inconnue ou non définie : {{${name}}}`);
   }
   if (Object.prototype.hasOwnProperty.call(listVars, name)) return listVars[name];
   if (Object.prototype.hasOwnProperty.call(scalars, name)) return scalars[name];
   if (Object.prototype.hasOwnProperty.call(accumulatedLists, name)) return [...accumulatedLists[name]];
+  if (name === "ip") return cachedIp ?? "127.0.0.1";
   throw new Error(`Variable ou liste inconnue : ${name}`);
 }
 
@@ -667,6 +730,9 @@ async function main() {
       }
 
       if (step.isReturnOnly) {
+        if (cachedIp === null && returnNodeUsesIp(step.returnNode)) {
+          await resolveCurrentIp();
+        }
         try {
           const retVal = evalReturnNode(
             step.returnNode,
@@ -791,6 +857,9 @@ async function main() {
       let formattedRet = null;
       let returnErr = null;
       if (!stepFailed && step.returnNode !== null) {
+        if (cachedIp === null && returnNodeUsesIp(step.returnNode)) {
+          await resolveCurrentIp();
+        }
         const returnVars = { ...mergedVars, ...localExtracted };
         try {
           const retVal = evalReturnNode(

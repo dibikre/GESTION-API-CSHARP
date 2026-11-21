@@ -259,6 +259,7 @@ public sealed class ChainRunner : IChainRunner
         var finalStatus = ChainRunStatus.Success;
         var stopChain = false;
         string? finalReturnValue = null;
+        string? cachedRunIp = null;
 
         Log.Information("Démarrage de la chaîne : {TotalSteps} étapes, {GlobalTotal} requêtes prévues (base).",
             totalSteps, globalTotal);
@@ -432,12 +433,18 @@ public sealed class ChainRunner : IChainRunner
 
                     if (step.IsReturnOnlyStep)
                     {
+                        if (cachedRunIp is null && IpResolutionHelper.ReturnExpressionMayUseIp(step.ReturnExpression))
+                        {
+                            cachedRunIp = await IpResolutionHelper.ResolveIpAsync(ct).ConfigureAwait(false);
+                        }
+
                         var returnEval = _stepReturnEvaluator.Evaluate(
                             step.ReturnExpression,
                             mergedVars,
                             iterStep.ListDictionary,
                             accumulatedLists,
-                            globalIndex);
+                            globalIndex,
+                            resolvedIp: cachedRunIp);
 
                         var bodyText = returnEval.IsSuccess
                             ? returnEval.FormattedValue
@@ -680,12 +687,18 @@ public sealed class ChainRunner : IChainRunner
                                 returnVars[kvp.Key] = kvp.Value;
                             }
 
+                            if (cachedRunIp is null && IpResolutionHelper.ReturnExpressionMayUseIp(step.ReturnExpression))
+                            {
+                                cachedRunIp = await IpResolutionHelper.ResolveIpAsync(ct).ConfigureAwait(false);
+                            }
+
                             var returnEval = _stepReturnEvaluator.Evaluate(
                                 step.ReturnExpression,
                                 returnVars,
                                 iterStep.ListDictionary,
                                 accumulatedLists,
-                                globalIndex);
+                                globalIndex,
+                                resolvedIp: cachedRunIp);
 
                             if (returnEval.IsSuccess)
                             {
@@ -848,6 +861,11 @@ public sealed class ChainRunner : IChainRunner
         {
             if (!availableScalars.Contains(scalar))
             {
+                if (scalar == "ip" && !availableLists.Contains("ip"))
+                {
+                    continue;
+                }
+
                 return availableLists.Contains(scalar)
                     ? $"retour : « {scalar} » est une liste ; utilise {scalar} ou [[{scalar}]] au lieu de {{{{{scalar}}}}}."
                     : $"retour : variable inconnue {{{{{scalar}}}}}.";
@@ -866,7 +884,9 @@ public sealed class ChainRunner : IChainRunner
 
         foreach (var identifier in parse.Dependencies.AmbiguousIdentifiers)
         {
-            if (!availableScalars.Contains(identifier) && !availableLists.Contains(identifier))
+            if (!availableScalars.Contains(identifier) &&
+                !availableLists.Contains(identifier) &&
+                identifier != "ip")
             {
                 return $"retour : variable ou liste inconnue « {identifier} » (extrais-la d'abord ou entoure le texte de guillemets \"...\").";
             }

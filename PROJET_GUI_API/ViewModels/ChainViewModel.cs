@@ -494,7 +494,7 @@ public partial class ChainViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void TestStepReturn()
+    private async Task TestStepReturnAsync()
     {
         if (SelectedStep is null)
         {
@@ -576,12 +576,19 @@ public partial class ChainViewModel : ViewModelBase
             }
         }
 
+        string? resolvedIp = null;
+        if (IpResolutionHelper.ReturnExpressionMayUseIp(step.ReturnExpression))
+        {
+            resolvedIp = await IpResolutionHelper.ResolveIpAsync();
+        }
+
         var eval = _stepReturnEvaluator.Evaluate(
             step.ReturnExpression,
             mergedScalars,
             activeListItems,
             mergedLists,
-            globalIndex: 1);
+            globalIndex: 1,
+            resolvedIp: resolvedIp);
 
         if (eval.IsSuccess)
         {
