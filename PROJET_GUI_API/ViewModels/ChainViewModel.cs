@@ -1413,12 +1413,11 @@ public partial class ChainViewModel : ViewModelBase
         {
             try
             {
-                var axis = BatchAxis.FromVariable(variable);
-                var count = (int)Math.Min(axis.ValueCount, 10);
+                var count = (int)Math.Min(variable.ValueCount, 10);
                 var preview = new List<string>(count);
                 for (var i = 0; i < count; i++)
                 {
-                    preview.Add(axis.GetValue(i));
+                    preview.Add(variable.GetValue(i));
                 }
                 return preview;
             }
@@ -2508,7 +2507,7 @@ public partial class ChainViewModel : ViewModelBase
         var bareScalarVars = _templateEngine.GetBareScalarVariables(template);
         var extractedByName = extracted.ToDictionary(v => v.Name, StringComparer.Ordinal);
 
-        string ResolveAutoUsedIn(TemplateVariableInfo info)
+        string ResolveAutoUsedIn(ExtractedVariable info)
         {
             if (availableScalars.Contains(info.Name))
             {
