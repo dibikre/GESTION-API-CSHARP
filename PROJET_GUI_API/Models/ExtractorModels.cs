@@ -15,6 +15,7 @@ public enum ResponseFormat
 
 public enum ExtractorValueKind
 {
+    Auto,
     Digits,
     NonWhitespace,
     UntilEndOfLine,
@@ -48,11 +49,23 @@ public sealed partial class ExtractorNode : ObservableObject
 
     public string? JsonPath { get; init; }
 
+    public string? HtmlPath { get; init; }
+
+    public string? CssSelector { get; init; }
+
     public string? AnchorName { get; init; }
 
     public string? ElementTagName { get; init; }
 
     public string? AttributeName { get; init; }
+
+    public string? IdAttribute { get; init; }
+
+    public string? NameAttribute { get; init; }
+
+    public string? PropertyAttribute { get; init; }
+
+    public string? RelAttribute { get; init; }
 
     public JsonValueKind? JsonKind { get; init; }
 
@@ -84,7 +97,8 @@ public sealed record ExtractionSuggestion(
     string? Regex,
     int OccurrenceCount,
     string? OccurrenceWarning,
-    string? InfoMessage);
+    string? InfoMessage,
+    string? HtmlPath = null);
 
 public sealed record RealtimeExtractionSuggestion(
     string Expression,

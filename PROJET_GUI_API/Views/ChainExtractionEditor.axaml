@@ -10,6 +10,15 @@
              x:Name="Root"
              x:DataType="x:Object">
 
+    <UserControl.Styles>
+        <Style Selector="ListBox#SuggestionsListBox ListBoxItem">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        </Style>
+    </UserControl.Styles>
+
     <Grid RowDefinitions="Auto,*">
         <Border Grid.Row="0"
                 IsVisible="{Binding #Root.HasLastResponse}"

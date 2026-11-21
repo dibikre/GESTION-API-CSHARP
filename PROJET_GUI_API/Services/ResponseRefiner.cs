@@ -309,8 +309,14 @@ public sealed class ResponseRefiner : IResponseRefiner
         }
         catch (XmlException)
         {
-            return ResponseRefinementResult.Failure(
-                "Le corps de la réponse n'est pas un XML valide pour XPath (essaie le mode Regex).");
+            var htmlDoc = HtmlDocumentParser.ToXDocument(raw);
+            if (htmlDoc is null)
+            {
+                return ResponseRefinementResult.Failure(
+                    "Le corps de la réponse n'est pas un XML/HTML valide pour XPath (essaie le mode Regex).");
+            }
+
+            document = htmlDoc;
         }
 
         object evaluated;

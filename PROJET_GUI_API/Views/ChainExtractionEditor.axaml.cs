@@ -45,8 +45,11 @@ public partial class ChainExtractionEditor : UserControl
 
     private readonly ObservableCollection<RealtimeExtractionSuggestion> _suggestions = [];
     private TextBox? _activeTextBox;
+    private TextBox? _suppressNextGotFocusForBox;
     private ChainExtraction? _activeExtraction;
+    private bool _isAttachedToVisualTree;
     private bool _isPointerInsidePopup;
+    private bool _isApplyingSuggestion;
     private bool _suppressSuggestionsUpdate;
 
     public ChainExtractionEditor()
@@ -126,10 +129,20 @@ public partial class ChainExtractionEditor : UserControl
         }
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _isAttachedToVisualTree = true;
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
+        _isAttachedToVisualTree = false;
+        _isApplyingSuggestion = false;
+        _suppressNextGotFocusForBox = null;
         CloseSuggestionsPopup();
+        SuggestionsPopup.PlacementTarget = null;
         SetActiveExtraction(null);
         _activeTextBox = null;
     }
@@ -148,6 +161,15 @@ public partial class ChainExtractionEditor : UserControl
         if (sender is TextBox tb)
         {
             tb.RemoveHandler(InputElement.KeyDownEvent, OnSuggestionInputTunnelKeyDown);
+            if (ReferenceEquals(_suppressNextGotFocusForBox, tb))
+            {
+                _suppressNextGotFocusForBox = null;
+            }
+            if (ReferenceEquals(SuggestionsPopup.PlacementTarget, tb))
+            {
+                CloseSuggestionsPopup();
+                SuggestionsPopup.PlacementTarget = null;
+            }
             if (ReferenceEquals(_activeTextBox, tb))
             {
                 CloseSuggestionsPopup();
@@ -167,7 +189,13 @@ public partial class ChainExtractionEditor : UserControl
         _activeTextBox = tb;
         SetActiveExtraction(extraction);
 
-        if (!_suppressSuggestionsUpdate && CanSuggestFor(tb, extraction))
+        var suppressOpen = _suppressSuggestionsUpdate || ReferenceEquals(_suppressNextGotFocusForBox, tb);
+        if (ReferenceEquals(_suppressNextGotFocusForBox, tb))
+        {
+            _suppressNextGotFocusForBox = null;
+        }
+
+        if (!suppressOpen && CanSuggestFor(tb, extraction))
         {
             RefreshSuggestionsFor(tb, openIfAny: true);
         }
@@ -182,7 +210,9 @@ public partial class ChainExtractionEditor : UserControl
 
         Dispatcher.UIThread.Post(() =>
         {
-            if (!_isPointerInsidePopup && (!tb.IsFocused || !ReferenceEquals(_activeTextBox, tb)))
+            if (!_isPointerInsidePopup &&
+                !_isApplyingSuggestion &&
+                (!tb.IsFocused || !ReferenceEquals(_activeTextBox, tb)))
             {
                 if (ReferenceEquals(_activeTextBox, tb))
                 {
@@ -231,14 +261,21 @@ public partial class ChainExtractionEditor : UserControl
 
         if (SuggestionsPopup.IsOpen && ReferenceEquals(_activeTextBox, tb))
         {
+            _suppressNextGotFocusForBox = tb;
             CloseSuggestionsPopup();
             tb.Focus();
+            ClearSuppressNextGotFocusAsync(tb);
             return;
         }
 
         _activeTextBox = tb;
         SetActiveExtraction(extraction);
+        _suppressNextGotFocusForBox = tb;
         tb.Focus();
+        if (ReferenceEquals(_suppressNextGotFocusForBox, tb))
+        {
+            _suppressNextGotFocusForBox = null;
+        }
         RefreshSuggestionsFor(tb, openIfAny: true);
     }
 
@@ -322,8 +359,8 @@ public partial class ChainExtractionEditor : UserControl
             case Key.Tab:
                 if (SuggestionsListBox.SelectedItem is RealtimeExtractionSuggestion selected)
                 {
-                    ApplySuggestion(selected);
                     e.Handled = true;
+                    ApplySuggestion(selected);
                 }
                 else if (e.Key == Key.Tab)
                 {
@@ -335,11 +372,32 @@ public partial class ChainExtractionEditor : UserControl
 
     private void OnSuggestionItemPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is Control { DataContext: RealtimeExtractionSuggestion suggestion })
+        if (sender is not Control { DataContext: RealtimeExtractionSuggestion suggestion } control)
         {
-            ApplySuggestion(suggestion);
-            e.Handled = true;
+            return;
         }
+
+        if (!e.GetCurrentPoint(control).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _isApplyingSuggestion = true;
+
+        // Ne jamais fermer/rouvrir PopupRoot de manière synchrone pendant PointerPressed :
+        // laisser le routage du pointeur se terminer avant d'appliquer la suggestion.
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                ApplySuggestion(suggestion);
+            }
+            finally
+            {
+                _isApplyingSuggestion = false;
+            }
+        }, DispatcherPriority.Normal);
     }
 
     private void OnSuggestionsBorderPointerEntered(object? sender, PointerEventArgs e)
@@ -411,7 +469,13 @@ public partial class ChainExtractionEditor : UserControl
 
     private void RefreshSuggestionsFor(TextBox tb, bool openIfAny)
     {
-        if (tb.DataContext is not ChainExtraction extraction || LastResponse is null)
+        if (!_isAttachedToVisualTree ||
+            tb.DataContext is not ChainExtraction extraction ||
+            LastResponse is null ||
+            !HasLastResponse ||
+            !tb.IsVisible ||
+            !tb.IsEnabled ||
+            TopLevel.GetTopLevel(tb) is null)
         {
             CloseSuggestionsPopup();
             return;
@@ -453,15 +517,22 @@ public partial class ChainExtractionEditor : UserControl
 
         var targetWidth = tb.Bounds.Width > 0 ? Math.Clamp(tb.Bounds.Width, 420, 680) : 480;
         SuggestionsBorder.Width = targetWidth;
-        SuggestionsPopup.PlacementTarget = tb;
+        if (!ReferenceEquals(SuggestionsPopup.PlacementTarget, tb))
+        {
+            SuggestionsPopup.PlacementTarget = tb;
+        }
         SuggestionsListBox.SelectedIndex = -1;
-        SuggestionsPopup.IsOpen = true;
+        if (!SuggestionsPopup.IsOpen)
+        {
+            SuggestionsPopup.IsOpen = true;
+        }
     }
 
     private void ApplySuggestion(RealtimeExtractionSuggestion suggestion)
     {
         if (_activeExtraction is null)
         {
+            CloseSuggestionsPopup();
             return;
         }
 
@@ -470,8 +541,11 @@ public partial class ChainExtractionEditor : UserControl
         var isHeaderName = targetBox is not null && IsHeaderNameBox(targetBox);
 
         _suppressSuggestionsUpdate = true;
+        _suppressNextGotFocusForBox = targetBox;
         try
         {
+            CloseSuggestionsPopup();
+
             if (isHeaderName)
             {
                 extraction.HeaderName = suggestion.Expression;
@@ -499,24 +573,45 @@ public partial class ChainExtractionEditor : UserControl
             {
                 extraction.VariableName = EnsureUniqueVariableName(suggestion.SuggestedVariableName, extraction);
             }
+
+            if (targetBox is not null &&
+                _isAttachedToVisualTree &&
+                targetBox.IsVisible &&
+                targetBox.IsEnabled &&
+                TopLevel.GetTopLevel(targetBox) is not null)
+            {
+                targetBox.Focus();
+                var textLength = targetBox.Text?.Length ?? 0;
+                targetBox.CaretIndex = textLength;
+            }
         }
         finally
         {
             _suppressSuggestionsUpdate = false;
-        }
-
-        CloseSuggestionsPopup();
-
-        if (targetBox is not null)
-        {
-            targetBox.Focus();
-            targetBox.CaretIndex = targetBox.Text?.Length ?? 0;
+            ClearSuppressNextGotFocusAsync(targetBox);
         }
 
         if (TestCommand?.CanExecute(extraction) == true)
         {
             TestCommand.Execute(extraction);
         }
+    }
+
+    private void ClearSuppressNextGotFocusAsync(TextBox? targetBox)
+    {
+        if (targetBox is null)
+        {
+            _suppressNextGotFocusForBox = null;
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (ReferenceEquals(_suppressNextGotFocusForBox, targetBox))
+            {
+                _suppressNextGotFocusForBox = null;
+            }
+        }, DispatcherPriority.Background);
     }
 
     private string EnsureUniqueVariableName(string baseName, ChainExtraction current)
@@ -555,7 +650,11 @@ public partial class ChainExtractionEditor : UserControl
     private void CloseSuggestionsPopup()
     {
         _isPointerInsidePopup = false;
-        SuggestionsPopup.IsOpen = false;
+        SuggestionsListBox.SelectedIndex = -1;
+        if (SuggestionsPopup.IsOpen)
+        {
+            SuggestionsPopup.IsOpen = false;
+        }
     }
 
     private static bool IsHeaderNameBox(TextBox tb) =>

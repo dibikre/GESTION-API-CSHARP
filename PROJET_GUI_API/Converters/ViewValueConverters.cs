@@ -472,6 +472,7 @@ public static class ExtractorValueKindConverters
     public static readonly IValueConverter ToLabel =
         new FuncValueConverter<ExtractorValueKind, string>(kind => kind switch
         {
+            ExtractorValueKind.Auto => "Automatique (intelligent)",
             ExtractorValueKind.Digits => "Chiffres (\\d+)",
             ExtractorValueKind.NonWhitespace => "Non-espaces (\\S+)",
             ExtractorValueKind.UntilEndOfLine => "Jusqu'à fin de ligne",

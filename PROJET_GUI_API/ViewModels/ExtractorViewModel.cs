@@ -96,13 +96,24 @@ public partial class ExtractorViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsJsonResult))]
     public partial bool HasLoaded { get; set; }
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsJsonResult))]
-    public partial bool IsTreeMode { get; set; }
+    public bool IsTreeMode
+    {
+        get => _isTreeMode;
+        set
+        {
+            if (SetProperty(ref _isTreeMode, value))
+            {
+                OnPropertyChanged(nameof(IsJsonResult));
+            }
+        }
+    }
+    private bool _isTreeMode;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsJsonResult))]
     public partial bool IsManualMode { get; set; }
+
+    public bool HasTreeNodes => TreeNodes.Count > 0;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasAnalysisMessage))]
@@ -135,11 +146,17 @@ public partial class ExtractorViewModel : ViewModelBase
     public partial int SelectionEnd { get; set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSelectionPreview))]
+    public partial string? SelectionPreviewText { get; set; }
+
+    public bool HasSelectionPreview => !string.IsNullOrWhiteSpace(SelectionPreviewText);
+
+    [ObservableProperty]
     public partial int ContextLength { get; set; } = 15;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsCustomValueKind))]
-    public partial ExtractorValueKind ValueKind { get; set; } = ExtractorValueKind.NonWhitespace;
+    public partial ExtractorValueKind ValueKind { get; set; } = ExtractorValueKind.Auto;
 
     public bool IsCustomValueKind => ValueKind == ExtractorValueKind.Custom;
 
@@ -163,6 +180,20 @@ public partial class ExtractorViewModel : ViewModelBase
     public bool HasSuggestedJsonPath => !string.IsNullOrWhiteSpace(SuggestedJsonPath);
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSuggestedHtmlPath))]
+    [NotifyPropertyChangedFor(nameof(HasAnySuggestion))]
+    [NotifyPropertyChangedFor(nameof(ShowNoJsonPathNote))]
+    [NotifyPropertyChangedFor(nameof(HtmlPathSectionTitle))]
+    [NotifyCanExecuteChangedFor(nameof(CopyHtmlPathCommand))]
+    public partial string? SuggestedHtmlPath { get; set; }
+
+    public bool HasSuggestedHtmlPath => !string.IsNullOrWhiteSpace(SuggestedHtmlPath);
+
+    public string HtmlPathSectionTitle => DetectedFormat == ResponseFormat.Xml
+        ? "Chemin XPath"
+        : "Chemin HTMLPath (XPath)";
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSuggestedRegex))]
     [NotifyPropertyChangedFor(nameof(HasAnySuggestion))]
     [NotifyPropertyChangedFor(nameof(ShowNoJsonPathNote))]
@@ -172,13 +203,14 @@ public partial class ExtractorViewModel : ViewModelBase
 
     public bool HasSuggestedRegex => !string.IsNullOrWhiteSpace(SuggestedRegex);
 
-    public bool HasAnySuggestion => HasSuggestedJsonPath || HasSuggestedRegex;
+    public bool HasAnySuggestion => HasSuggestedJsonPath || HasSuggestedHtmlPath || HasSuggestedRegex;
 
     public bool IsJsonResult => HasLoaded && DetectedFormat == ResponseFormat.Json && IsTreeMode;
 
     public bool ShowNoJsonPathNote =>
         HasAnySuggestion &&
         !IsJsonResult &&
+        !HasSuggestedHtmlPath &&
         DetectedFormat is ResponseFormat.Xml or ResponseFormat.Html;
 
     [ObservableProperty]
@@ -243,6 +275,9 @@ public partial class ExtractorViewModel : ViewModelBase
     partial void OnInputTextChanged(string value)
     {
         _hasCapturedSelection = false;
+        SelectionStart = 0;
+        SelectionEnd = 0;
+        SelectionPreviewText = null;
     }
 
     partial void OnFormatChanged(ResponseFormat value)
@@ -323,6 +358,7 @@ public partial class ExtractorViewModel : ViewModelBase
         _hasCapturedSelection = false;
         SelectionStart = 0;
         SelectionEnd = 0;
+        SelectionPreviewText = null;
         SelectedNode = null;
 
         var sourceText = InputText ?? string.Empty;
@@ -337,6 +373,8 @@ public partial class ExtractorViewModel : ViewModelBase
         {
             IsTreeMode = false;
             IsManualMode = true;
+            OnPropertyChanged(nameof(HasTreeNodes));
+            OnPropertyChanged(nameof(IsJsonResult));
             UpdateTreeExpandState();
             return;
         }
@@ -348,7 +386,35 @@ public partial class ExtractorViewModel : ViewModelBase
 
         IsTreeMode = true;
         IsManualMode = false;
+        OnPropertyChanged(nameof(HasTreeNodes));
+        OnPropertyChanged(nameof(IsJsonResult));
         UpdateTreeExpandState();
+    }
+
+    [RelayCommand]
+    private void ShowTreeView()
+    {
+        if (!HasTreeNodes)
+        {
+            return;
+        }
+
+        IsTreeMode = true;
+        IsManualMode = false;
+        OnPropertyChanged(nameof(IsJsonResult));
+    }
+
+    [RelayCommand]
+    private void ShowManualView()
+    {
+        if (!HasLoaded)
+        {
+            return;
+        }
+
+        IsTreeMode = false;
+        IsManualMode = true;
+        OnPropertyChanged(nameof(IsJsonResult));
     }
 
     [RelayCommand(CanExecute = nameof(HasExpandableNodes))]
@@ -408,6 +474,24 @@ public partial class ExtractorViewModel : ViewModelBase
         ApplySuggestionAndTest(suggestion);
     }
 
+    public void UpdateTextSelection(int start, int end, string? selectedTextFromControl)
+    {
+        var (resolvedStart, resolvedLength, preview) = ResolveSelectionInInputText(start, end, selectedTextFromControl);
+        SelectionStart = resolvedStart;
+        SelectionEnd = resolvedStart + resolvedLength;
+        SelectionPreviewText = preview;
+    }
+
+    public void UseSelectionFromView(int start, int end, string? selectedTextFromControl)
+    {
+        if (start != end || !string.IsNullOrEmpty(selectedTextFromControl))
+        {
+            UpdateTextSelection(start, end, selectedTextFromControl);
+        }
+
+        UseSelection();
+    }
+
     [RelayCommand]
     private void UseSelection()
     {
@@ -457,6 +541,20 @@ public partial class ExtractorViewModel : ViewModelBase
         }
     }
 
+    [RelayCommand(CanExecute = nameof(HasSuggestedHtmlPath))]
+    private async Task CopyHtmlPathAsync()
+    {
+        if (string.IsNullOrWhiteSpace(SuggestedHtmlPath) || _clipboardService is null)
+        {
+            return;
+        }
+
+        if (await _clipboardService.SetTextAsync(SuggestedHtmlPath))
+        {
+            CopyFeedbackText = "Chemin HTMLPath copié dans le presse-papiers.";
+        }
+    }
+
     [RelayCommand(CanExecute = nameof(HasSuggestedRegex))]
     private async Task CopyRegexAsync()
     {
@@ -473,13 +571,13 @@ public partial class ExtractorViewModel : ViewModelBase
 
     private bool CanExecuteSendToChain()
     {
-        return IsChainAvailable && HasAnySuggestion;
+        return IsChainAvailable && (HasSuggestedJsonPath || HasSuggestedRegex);
     }
 
     [RelayCommand(CanExecute = nameof(CanExecuteSendToChain))]
     private void SendToChain()
     {
-        if (_chainViewModel is null || _chainViewModel.Steps.Count == 0 || !HasAnySuggestion)
+        if (_chainViewModel is null || _chainViewModel.Steps.Count == 0 || (!HasSuggestedJsonPath && !HasSuggestedRegex))
         {
             return;
         }
@@ -509,7 +607,7 @@ public partial class ExtractorViewModel : ViewModelBase
 
     private void RefreshManualSelectionIfActive()
     {
-        if (!_hasCapturedSelection || !IsManualMode)
+        if (!_hasCapturedSelection)
         {
             return;
         }
@@ -535,12 +633,13 @@ public partial class ExtractorViewModel : ViewModelBase
         }
 
         SuggestedJsonPath = jsonPath;
+        SuggestedHtmlPath = suggestion.HtmlPath;
         SuggestedRegex = suggestion.Regex;
         OccurrenceCount = suggestion.OccurrenceCount;
         OccurrenceWarningText = ExtractAsList ? null : suggestion.OccurrenceWarning;
         InfoMessage = suggestion.InfoMessage;
 
-        if (!HasSuggestedJsonPath && !HasSuggestedRegex)
+        if (!HasSuggestedJsonPath && !HasSuggestedHtmlPath && !HasSuggestedRegex)
         {
             TestStatus = LiveTestStatus.Error;
             TestStatusBadgeText = "Aucune correspondance";
@@ -661,6 +760,23 @@ public partial class ExtractorViewModel : ViewModelBase
 
         // Mode Regex principal (XML / HTML / Texte)
         RegexTestResultText = null;
+        if (!HasSuggestedRegex)
+        {
+            if (HasSuggestedHtmlPath)
+            {
+                TestStatus = LiveTestStatus.Success;
+                TestStatusBadgeText = "HTMLPath";
+                TestResultText = $"Chemin généré : {SuggestedHtmlPath}";
+            }
+            else
+            {
+                TestStatus = LiveTestStatus.None;
+                TestStatusBadgeText = string.Empty;
+                TestResultText = null;
+            }
+            return;
+        }
+
         if (ExtractAsList)
         {
             var regexListOutcome = _responseExtractor.ExtractList(tempResponse, new ChainExtraction
@@ -730,6 +846,7 @@ public partial class ExtractorViewModel : ViewModelBase
     private void ResetSuggestions()
     {
         SuggestedJsonPath = null;
+        SuggestedHtmlPath = null;
         SuggestedRegex = null;
         OccurrenceCount = 0;
         OccurrenceWarningText = null;
@@ -739,6 +856,88 @@ public partial class ExtractorViewModel : ViewModelBase
         TestStatusBadgeText = string.Empty;
         RegexTestResultText = null;
         CopyFeedbackText = null;
+    }
+
+    private (int Start, int Length, string? Preview) ResolveSelectionInInputText(
+        int rawStart,
+        int rawEnd,
+        string? controlSelectedText)
+    {
+        var input = InputText ?? string.Empty;
+        if (string.IsNullOrEmpty(input))
+        {
+            return (0, 0, null);
+        }
+
+        var minPos = Math.Clamp(Math.Min(rawStart, rawEnd), 0, input.Length);
+        var maxPos = Math.Clamp(Math.Max(rawStart, rawEnd), 0, input.Length);
+        var rawLength = maxPos - minPos;
+
+        if (!string.IsNullOrEmpty(controlSelectedText))
+        {
+            if (minPos + controlSelectedText.Length <= input.Length &&
+                string.Equals(input.Substring(minPos, controlSelectedText.Length), controlSelectedText, StringComparison.Ordinal))
+            {
+                return (minPos, controlSelectedText.Length, FormatSelectionPreview(controlSelectedText));
+            }
+
+            var candidates = new List<string> { controlSelectedText };
+            if (controlSelectedText.Contains('\n') && !controlSelectedText.Contains("\r\n", StringComparison.Ordinal))
+            {
+                candidates.Add(controlSelectedText.Replace("\n", "\r\n", StringComparison.Ordinal));
+            }
+
+            foreach (var candidate in candidates)
+            {
+                var bestIdx = -1;
+                var bestDist = int.MaxValue;
+                var searchStart = Math.Max(0, minPos - 256);
+                var idx = input.IndexOf(candidate, searchStart, StringComparison.Ordinal);
+                while (idx >= 0)
+                {
+                    var dist = Math.Abs(idx - minPos);
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        bestIdx = idx;
+                    }
+
+                    if (idx > minPos + 4096)
+                    {
+                        break;
+                    }
+
+                    idx = input.IndexOf(candidate, idx + 1, StringComparison.Ordinal);
+                }
+
+                if (bestIdx < 0 && searchStart > 0)
+                {
+                    bestIdx = input.IndexOf(candidate, StringComparison.Ordinal);
+                }
+
+                if (bestIdx >= 0)
+                {
+                    return (bestIdx, candidate.Length, FormatSelectionPreview(candidate));
+                }
+            }
+        }
+
+        if (rawLength <= 0)
+        {
+            return (minPos, 0, null);
+        }
+
+        var slice = input.Substring(minPos, rawLength);
+        return (minPos, rawLength, FormatSelectionPreview(slice));
+    }
+
+    private static string FormatSelectionPreview(string selected)
+    {
+        var clean = selected.Replace("\r\n", " ", StringComparison.Ordinal)
+                            .Replace('\n', ' ')
+                            .Replace('\r', ' ');
+        var shortText = clean.Length <= 24 ? clean : $"{clean[..23]}…";
+        return $"Sélection : « {shortText} » ({selected.Length} car.)";
     }
 
     private void OnChainStepsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

@@ -11,6 +11,7 @@ using ApiTester.Models;
 using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Serilog;
 
 namespace ApiTester.ViewModels;
 
@@ -872,6 +873,7 @@ public partial class ChainViewModel : ViewModelBase
     [RelayCommand]
     private void TestExtraction(ChainExtraction? extraction)
     {
+        CancelPendingLiveExtractionTest();
         EvaluateExtraction(extraction, allowEmptyVariablePreview: false);
     }
 
@@ -983,27 +985,52 @@ public partial class ChainViewModel : ViewModelBase
         }
 
         var cts = new CancellationTokenSource();
+        var token = cts.Token;
         _liveExtractionTestCts = cts;
         var expectedStep = SelectedStep;
 
         try
         {
-            await Task.Delay(95, cts.Token);
+            await Task.Delay(95, token);
+
+            if (token.IsCancellationRequested ||
+                !ReferenceEquals(_liveExtractionTestCts, cts) ||
+                !ReferenceEquals(SelectedStep, expectedStep) ||
+                expectedStep.LastResponse is null ||
+                !expectedStep.Extractions.Contains(extraction))
+            {
+                return;
+            }
+
+            EvaluateExtraction(extraction, allowEmptyVariablePreview: true);
         }
         catch (OperationCanceledException)
         {
-            return;
+            // Annulé par une saisie ultérieure ou un test explicite.
         }
-
-        if (cts.IsCancellationRequested ||
-            !ReferenceEquals(SelectedStep, expectedStep) ||
-            expectedStep.LastResponse is null ||
-            !expectedStep.Extractions.Contains(extraction))
+        catch (ObjectDisposedException)
         {
-            return;
+            // CancellationTokenSource déjà libéré.
         }
-
-        EvaluateExtraction(extraction, allowEmptyVariablePreview: true);
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Erreur lors de l'évaluation en temps réel de l'extraction ({ErrorType}).", ex.GetType().Name);
+        }
+        finally
+        {
+            if (ReferenceEquals(_liveExtractionTestCts, cts))
+            {
+                _liveExtractionTestCts = null;
+                try
+                {
+                    cts.Dispose();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Ignorer si déjà libéré.
+                }
+            }
+        }
     }
 
     private void CancelPendingLiveExtractionTest()

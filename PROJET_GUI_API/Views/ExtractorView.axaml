@@ -160,7 +160,8 @@
                 </Grid>
 
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
-                    <TextBox Grid.Column="0"
+                    <TextBox x:Name="InputResponseTextBox"
+                             Grid.Column="0"
                              Classes="mono"
                              Text="{Binding InputText}"
                              AcceptsReturn="True"
@@ -224,7 +225,7 @@
                       RowDefinitions="Auto,*"
                       RowSpacing="6">
                     <Grid Grid.Row="0"
-                          ColumnDefinitions="Auto,*"
+                          ColumnDefinitions="Auto,*,Auto"
                           ColumnSpacing="10">
                         <Button Grid.Column="0"
                                 Classes="secondary"
@@ -253,6 +254,14 @@
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    VerticalAlignment="Center"
                                    TextWrapping="Wrap" />
+
+                        <Button Grid.Column="2"
+                                Classes="secondary"
+                                Content="Sélection dans le code"
+                                Command="{Binding ShowManualViewCommand}"
+                                ToolTip.Tip="Basculer sur le code source complet pour sélectionner un passage manuellement"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Basculer vers la sélection dans le code" />
                     </Grid>
 
                     <Border Grid.Row="1"
@@ -271,27 +280,45 @@
                     </Border>
                 </Grid>
 
-                <!-- Mode Sélection Manuelle (Text / HTML irrégulier / JSON invalide) -->
+                <!-- Mode Sélection Manuelle (Text / HTML / XML / JSON) -->
                 <Grid IsVisible="{Binding IsManualMode}"
-                      RowDefinitions="*,Auto"
+                      RowDefinitions="Auto,*,Auto"
                       RowSpacing="8">
-                    <TextBox Grid.Row="0"
+                    <Grid Grid.Row="0"
+                          IsVisible="{Binding HasTreeNodes}"
+                          ColumnDefinitions="*,Auto"
+                          ColumnSpacing="10">
+                        <TextBlock Grid.Column="0"
+                                   Text="Sélectionne un passage dans le code ci-dessous pour générer le Regex et le HTMLPath :"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+                        <Button Grid.Column="1"
+                                Classes="secondary"
+                                Content="Vue arbre"
+                                Command="{Binding ShowTreeViewCommand}"
+                                ToolTip.Tip="Revenir à l'arbre structuré"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="Revenir à l'arbre structuré" />
+                    </Grid>
+
+                    <TextBox x:Name="ManualSelectionTextBox"
+                             Grid.Row="1"
                              Classes="mono"
                              Text="{Binding InputText, Mode=OneWay}"
                              IsReadOnly="True"
                              AcceptsReturn="True"
                              TextWrapping="Wrap"
-                             SelectionStart="{Binding SelectionStart, Mode=TwoWay}"
-                             SelectionEnd="{Binding SelectionEnd, Mode=TwoWay}"
                              ScrollViewer.AllowAutoHide="False"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              AutomationProperties.Name="Texte analysé pour sélection manuelle" />
 
-                    <WrapPanel Grid.Row="1" Orientation="Horizontal">
-                        <Button Classes="primary"
+                    <WrapPanel Grid.Row="2" Orientation="Horizontal">
+                        <Button x:Name="UseSelectionButton"
+                                Classes="primary"
                                 Content="Utiliser la sélection"
-                                Command="{Binding UseSelectionCommand}"
                                 Margin="0,0,12,4"
                                 VerticalAlignment="Center"
                                 AutomationProperties.Name="Utiliser le passage sélectionné" />
@@ -317,7 +344,7 @@
                                        VerticalAlignment="Center" />
                             <ComboBox ItemsSource="{x:Static vm:ExtractorViewModel.ValueKinds}"
                                       SelectedItem="{Binding ValueKind}"
-                                      MinWidth="170"
+                                      MinWidth="195"
                                       AutomationProperties.Name="Type de valeur capturée">
                                 <ComboBox.ItemTemplate>
                                     <DataTemplate x:DataType="models:ExtractorValueKind">
@@ -338,9 +365,17 @@
 
                         <CheckBox IsChecked="{Binding UseTrailingAnchor}"
                                   Content="Ancre de fin"
-                                  Margin="0,0,0,4"
+                                  Margin="0,0,12,4"
                                   VerticalAlignment="Center"
                                   AutomationProperties.Name="Ajouter une ancre après la sélection" />
+
+                        <TextBlock IsVisible="{Binding HasSelectionPreview}"
+                                   Text="{Binding SelectionPreviewText}"
+                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   Foreground="{DynamicResource AccentBrush}"
+                                   Margin="0,0,0,4"
+                                   VerticalAlignment="Center" />
                     </WrapPanel>
                 </Grid>
             </Panel>
@@ -393,7 +428,42 @@
                     </Grid>
                 </StackPanel>
 
-                <!-- Mention pas de JSONPath pour XML / HTML -->
+                <!-- Bloc HTMLPath / XPath (HTML / XML) -->
+                <StackPanel IsVisible="{Binding HasSuggestedHtmlPath}" Spacing="4">
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding HtmlPathSectionTitle}"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1"
+                                   Text="Chemin structurel du nœud HTML/XML (utilisable dans le filtre XPath)."
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                        <TextBox Grid.Column="0"
+                                 Classes="mono"
+                                 Text="{Binding SuggestedHtmlPath, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 AutomationProperties.Name="Chemin HTMLPath proposé" />
+                        <Button Grid.Column="1"
+                                Classes="secondary"
+                                Command="{Binding CopyHtmlPathCommand}"
+                                AutomationProperties.Name="Copier le chemin HTMLPath">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <Path Classes="iconStroke" Data="{StaticResource IconCopy}" />
+                                <TextBlock Text="Copier" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+
+                <!-- Mention pas de JSONPath pour XML / HTML sans HTMLPath -->
                 <TextBlock IsVisible="{Binding ShowNoJsonPathNote}"
                            Text="Aucun chemin JSONPath : ce format n'en a pas."
                            FontSize="{DynamicResource FontSizeCaption}"
