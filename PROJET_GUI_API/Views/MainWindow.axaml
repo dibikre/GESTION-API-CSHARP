@@ -165,10 +165,11 @@
                                           Margin="4,0"
                                           IsVisible="{Binding Overlay.IsConditionsOpen}" />
 
-                            <views:ExtractionConditionsView x:Name="OverlayConditionsPanel"
-                                                            Grid.Column="2"
-                                                            DataContext="{Binding Overlay.ConditionsPanel}"
-                                                            IsVisible="{Binding Overlay.IsConditionsOpen}" />
+                            <Panel Grid.Column="2"
+                                   IsVisible="{Binding Overlay.IsConditionsOpen}">
+                                <views:ExtractionConditionsView x:Name="OverlayConditionsPanel"
+                                                                DataContext="{Binding Overlay.ConditionsPanel}" />
+                            </Panel>
                         </Grid>
 
                         <!-- Pied : Annuler / Enregistrer, Appliquer conditions, ou Fermer -->
