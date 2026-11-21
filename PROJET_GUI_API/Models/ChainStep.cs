@@ -30,6 +30,7 @@ public partial class ChainStep : ObservableObject
     public partial HttpMethodType Method { get; set; } = HttpMethodType.Get;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsReturnOnlyStep))]
     public partial string Url { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -39,6 +40,21 @@ public partial class ChainStep : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsFormBody))]
     [NotifyPropertyChangedFor(nameof(IsBodyNotNone))]
     public partial BodyType BodyType { get; set; } = BodyType.None;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasReturnExpression))]
+    [NotifyPropertyChangedFor(nameof(IsReturnOnlyStep))]
+    [NotifyPropertyChangedFor(nameof(StepMetaSummaryText))]
+    public partial string ReturnExpression { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasReturnError))]
+    public partial string? ReturnError { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasLastReturnValue))]
+    [NotifyPropertyChangedFor(nameof(LastReturnPreviewText))]
+    public partial string LastReturnValue { get; set; } = string.Empty;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsOrderIgnored))]
@@ -105,6 +121,16 @@ public partial class ChainStep : ObservableObject
 
     public bool IsFormBody => BodyType == BodyType.FormUrlEncoded;
     public bool IsBodyNotNone => BodyType != BodyType.None && BodyType != BodyType.FormUrlEncoded;
+    public bool HasReturnExpression => !string.IsNullOrWhiteSpace(ReturnExpression);
+    public bool HasReturnError => !string.IsNullOrWhiteSpace(ReturnError);
+    public bool HasLastReturnValue => !string.IsNullOrWhiteSpace(LastReturnValue);
+    public string LastReturnPreviewText => HasLastReturnValue
+        ? Services.BatchExecutionHelper.TruncateForDisplay(LastReturnValue)
+        : string.Empty;
+    public bool IsReturnOnlyStep => string.IsNullOrWhiteSpace(Url) && HasReturnExpression;
+    public string StepMetaSummaryText => HasReturnExpression
+        ? $"{Extractions.Count} extr. · return"
+        : $"{Extractions.Count} extr.";
     public bool HasWarnings => Warnings.Count > 0;
     public string WarningsSummaryText => Warnings.Count <= 1
         ? $"{Warnings.Count} avertissement"
@@ -131,6 +157,7 @@ public partial class ChainStep : ObservableObject
         OnPropertyChanged(nameof(HasMultipleAxes));
         OnPropertyChanged(nameof(IsOrderIgnored));
         OnPropertyChanged(nameof(ShowOrderPanel));
+        OnPropertyChanged(nameof(StepMetaSummaryText));
     }
 
     public RequestModel BuildTemplateRequest()
@@ -177,6 +204,7 @@ public partial class ChainStep : ObservableObject
             Url = Url,
             Body = Body,
             BodyType = BodyType,
+            ReturnExpression = ReturnExpression,
             SelectedMode = SelectedMode,
             DelayAfterMs = Math.Max(0, DelayAfterMs),
             ContinueOnError = ContinueOnError,

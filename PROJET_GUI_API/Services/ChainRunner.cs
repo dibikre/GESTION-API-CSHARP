@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ApiTester.Models;
@@ -16,17 +17,20 @@ public sealed class ChainRunner : IChainRunner
     private readonly ITemplateEngine _templateEngine;
     private readonly IResponseExtractor _responseExtractor;
     private readonly IRateLimitDetector _rateLimitDetector;
+    private readonly IStepReturnEvaluator _stepReturnEvaluator;
 
     public ChainRunner(
         IHttpService httpService,
         ITemplateEngine templateEngine,
         IResponseExtractor responseExtractor,
-        IRateLimitDetector? rateLimitDetector = null)
+        IRateLimitDetector? rateLimitDetector = null,
+        IStepReturnEvaluator? stepReturnEvaluator = null)
     {
         _httpService = httpService ?? throw new ArgumentNullException(nameof(httpService));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
         _responseExtractor = responseExtractor ?? throw new ArgumentNullException(nameof(responseExtractor));
         _rateLimitDetector = rateLimitDetector ?? new RateLimitDetector();
+        _stepReturnEvaluator = stepReturnEvaluator ?? new StepReturnEvaluator();
     }
 
     public ChainPlanResult BuildPlan(IReadOnlyList<ChainStep> steps)
@@ -52,13 +56,13 @@ public sealed class ChainRunner : IChainRunner
             var stepNumber = i + 1;
             var stepLabel = string.IsNullOrWhiteSpace(step.Name) ? $"Étape {stepNumber}" : step.Name.Trim();
 
-            if (!step.HasParsed && string.IsNullOrWhiteSpace(step.Url))
+            if (!step.HasParsed && string.IsNullOrWhiteSpace(step.Url) && !step.HasReturnExpression)
             {
-                result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : analyse une commande curl ou saisis une URL.";
+                result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : analyse une commande curl, saisis une URL ou définis un retour.";
                 return result;
             }
 
-            if (string.IsNullOrWhiteSpace(step.Url))
+            if (string.IsNullOrWhiteSpace(step.Url) && !step.HasReturnExpression)
             {
                 result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : l'URL est vide.";
                 return result;
@@ -191,6 +195,29 @@ public sealed class ChainRunner : IChainRunner
                     availableFromPreviousSteps.Add(name);
                 }
             }
+
+            if (step.HasReturnExpression)
+            {
+                if (step.IsReturnOnlyStep && step.Extractions.Count > 0)
+                {
+                    result.Warnings.Add(
+                        $"Étape {stepNumber} ({stepLabel}) : aucune URL configurée, les extractions HTTP sont ignorées pour cette étape de retour.");
+                }
+
+                var returnScalars = new HashSet<string>(availableFromPreviousSteps, StringComparer.Ordinal);
+                returnScalars.UnionWith(configuredVarNames);
+
+                var returnError = ValidateStepReturn(
+                    _stepReturnEvaluator,
+                    step.ReturnExpression,
+                    returnScalars,
+                    availableListsFromPreviousSteps);
+                if (!string.IsNullOrEmpty(returnError))
+                {
+                    result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : {returnError}";
+                    return result;
+                }
+            }
         }
 
         result.TotalRequests = (int)totalRequests;
@@ -231,6 +258,7 @@ public sealed class ChainRunner : IChainRunner
         var allResults = new List<ChainStepResult>(globalTotal);
         var finalStatus = ChainRunStatus.Success;
         var stopChain = false;
+        string? finalReturnValue = null;
 
         Log.Information("Démarrage de la chaîne : {TotalSteps} étapes, {GlobalTotal} requêtes prévues (base).",
             totalSteps, globalTotal);
@@ -402,7 +430,76 @@ public sealed class ChainRunner : IChainRunner
                     var nextRequestAdaptationWait = TimeSpan.Zero;
                     var usedSpecificWaitAfterExhaustion = false;
 
-                    if (!applyResult.IsSuccess || applyResult.Request is null)
+                    if (step.IsReturnOnlyStep)
+                    {
+                        var returnEval = _stepReturnEvaluator.Evaluate(
+                            step.ReturnExpression,
+                            mergedVars,
+                            iterStep.ListDictionary,
+                            accumulatedLists,
+                            globalIndex);
+
+                        var bodyText = returnEval.IsSuccess
+                            ? returnEval.FormattedValue
+                            : (returnEval.ErrorMessage ?? "Erreur lors de l'évaluation du retour.");
+                        var byteSize = Encoding.UTF8.GetByteCount(bodyText);
+
+                        if (returnEval.IsSuccess)
+                        {
+                            finalReturnValue = returnEval.FormattedValue;
+                            Log.Information(
+                                "Étape {StepNumber} ({StepName}) [{Iteration}/{TotalIterations}] : retour évalué ({Bytes} octets).",
+                                stepNumber, stepName, iterIndex, stepIterationsCount, byteSize);
+                        }
+                        else
+                        {
+                            Log.Warning(
+                                "Étape {StepNumber} ({StepName}) [{Iteration}/{TotalIterations}] : échec d'évaluation du retour ({Reason}).",
+                                stepNumber, stepName, iterIndex, stepIterationsCount, returnEval.ErrorMessage);
+                        }
+
+                        stepResult = new ChainStepResult
+                        {
+                            Index = globalIndex,
+                            StepIndex = stepNumber,
+                            StepName = stepName,
+                            Iteration = iterIndex,
+                            TotalIterationsForStep = stepIterationsCount,
+                            RequestSummary = $"RETURN {BatchExecutionHelper.TruncateForDisplay(step.ReturnExpression.Trim())}",
+                            RequestUrl = string.Empty,
+                            StatusCode = returnEval.IsSuccess ? 200 : 0,
+                            StatusCategory = returnEval.IsSuccess ? StatusCategory.Success : StatusCategory.NetworkError,
+                            DurationMs = 0,
+                            SizeBytes = byteSize,
+                            SizeText = BatchExecutionHelper.FormatSize(byteSize),
+                            ContentType = returnEval.IsSuccess && returnEval.IsJson
+                                ? "application/json; charset=utf-8"
+                                : "text/plain; charset=utf-8",
+                            Response = new ResponseModel
+                            {
+                                StatusCode = returnEval.IsSuccess ? 200 : 0,
+                                ReasonPhrase = returnEval.IsSuccess ? "Retour" : "Erreur",
+                                IsSuccess = returnEval.IsSuccess,
+                                DurationMs = 0,
+                                SizeBytes = byteSize,
+                                ContentType = returnEval.IsSuccess && returnEval.IsJson
+                                    ? "application/json; charset=utf-8"
+                                    : "text/plain; charset=utf-8",
+                                Body = bodyText,
+                                ErrorMessage = returnEval.IsSuccess ? null : returnEval.ErrorMessage
+                            },
+                            ReturnValue = returnEval.IsSuccess ? returnEval.FormattedValue : null,
+                            IsReturnOnly = true,
+                            Status = returnEval.IsSuccess ? ChainStepStatus.Success : ChainStepStatus.Failed,
+                            ErrorMessage = returnEval.IsSuccess ? null : returnEval.ErrorMessage,
+                            VaryingParams = iterStep.VaryingItems,
+                            VariableValues = iterStep.VariableItems,
+                            OrderedAxisValues = iterStep.OrderedAxisItems,
+                            QueryParams = iterStep.QueryItems,
+                            TimestampUtc = DateTimeOffset.UtcNow
+                        };
+                    }
+                    else if (!applyResult.IsSuccess || applyResult.Request is null)
                     {
                         var maskedUrl = BatchExecutionHelper.BuildMaskedUrlWithTemplate(
                             _templateEngine,
@@ -574,6 +671,34 @@ public sealed class ChainRunner : IChainRunner
                         }
 
                         var iterationFailed = httpFailed || requiredExtractionFailed;
+                        string? stepReturnValue = null;
+                        if (!iterationFailed && step.HasReturnExpression)
+                        {
+                            var returnVars = new Dictionary<string, string>(mergedVars, StringComparer.Ordinal);
+                            foreach (var kvp in extractedThisIteration)
+                            {
+                                returnVars[kvp.Key] = kvp.Value;
+                            }
+
+                            var returnEval = _stepReturnEvaluator.Evaluate(
+                                step.ReturnExpression,
+                                returnVars,
+                                iterStep.ListDictionary,
+                                accumulatedLists,
+                                globalIndex);
+
+                            if (returnEval.IsSuccess)
+                            {
+                                stepReturnValue = returnEval.FormattedValue;
+                                finalReturnValue = stepReturnValue;
+                            }
+                            else
+                            {
+                                iterationFailed = true;
+                                extractionErrors.Add($"Retour : {returnEval.ErrorMessage}");
+                            }
+                        }
+
                         var combinedError = CombineErrorMessages(execResult.ItemErrorMessage, extractionErrors);
 
                         stepResult = new ChainStepResult
@@ -595,6 +720,7 @@ public sealed class ChainRunner : IChainRunner
                             ExtractedValues = extractedThisIteration,
                             ExtractedLists = extractedListsThisIteration,
                             ExtractionErrors = extractionErrors,
+                            ReturnValue = stepReturnValue,
                             Status = iterationFailed ? ChainStepStatus.Failed : ChainStepStatus.Success,
                             ErrorMessage = combinedError,
                             VaryingParams = iterStep.VaryingItems,
@@ -701,8 +827,52 @@ public sealed class ChainRunner : IChainRunner
             FinalStatus = finalStatus,
             AllVariables = accumulatedVariables,
             AllLists = accumulatedLists,
+            FinalReturnValue = finalReturnValue,
             TotalDurationMs = stopwatch.ElapsedMilliseconds
         };
+    }
+
+    internal static string? ValidateStepReturn(
+        IStepReturnEvaluator evaluator,
+        string returnExpression,
+        IReadOnlySet<string> availableScalars,
+        IReadOnlySet<string> availableLists)
+    {
+        var parse = evaluator.Parse(returnExpression);
+        if (!parse.IsSuccess)
+        {
+            return $"retour invalide : {parse.ErrorMessage}";
+        }
+
+        foreach (var scalar in parse.Dependencies.RequiredScalars)
+        {
+            if (!availableScalars.Contains(scalar))
+            {
+                return availableLists.Contains(scalar)
+                    ? $"retour : « {scalar} » est une liste ; utilise {scalar} ou [[{scalar}]] au lieu de {{{{{scalar}}}}}."
+                    : $"retour : variable inconnue {{{{{scalar}}}}}.";
+            }
+        }
+
+        foreach (var list in parse.Dependencies.RequiredLists)
+        {
+            if (!availableLists.Contains(list))
+            {
+                return availableScalars.Contains(list)
+                    ? $"retour : [[{list}]] est une variable simple ; utilise {list} ou {{{{{list}}}}}."
+                    : $"retour : liste inconnue [[{list}]].";
+            }
+        }
+
+        foreach (var identifier in parse.Dependencies.AmbiguousIdentifiers)
+        {
+            if (!availableScalars.Contains(identifier) && !availableLists.Contains(identifier))
+            {
+                return $"retour : variable ou liste inconnue « {identifier} » (extrais-la d'abord ou entoure le texte de guillemets \"...\").";
+            }
+        }
+
+        return null;
     }
 
     private static List<BatchAxis> ResolveRuntimeAxes(

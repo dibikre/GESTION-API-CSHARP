@@ -48,6 +48,8 @@ public sealed class ChainStepResult
     public IReadOnlyList<KeyValueItem> VariableValues { get; set; } = [];
     public IReadOnlyList<KeyValueItem> OrderedAxisValues { get; set; } = [];
     public IReadOnlyList<KeyValueItem> QueryParams { get; set; } = [];
+    public string? ReturnValue { get; set; }
+    public bool IsReturnOnly { get; set; }
     public bool WasRateLimited { get; set; }
     public int RetryAttempts { get; set; }
     public long FinalWaitMs { get; set; }
@@ -59,12 +61,17 @@ public sealed class ChainStepResult
     public bool IsSuccessStatus => Status == ChainStepStatus.Success;
     public bool IsFailedStatus => Status == ChainStepStatus.Failed;
     public bool IsSkippedStatus => Status == ChainStepStatus.Skipped;
+    public bool HasReturnValue => !string.IsNullOrEmpty(ReturnValue);
+    public string ReturnPreviewText => HasReturnValue
+        ? $"Retour : {BatchExecutionHelper.TruncateForDisplay(ReturnValue!)}"
+        : string.Empty;
 
     public string StatusBadgeText => Status switch
     {
         ChainStepStatus.Skipped => "Ignorée",
         ChainStepStatus.Failed when StatusCode > 0 => $"{StatusCode} (échec)",
         ChainStepStatus.Failed => "Échec",
+        _ when IsReturnOnly => "Retour",
         _ when StatusCode > 0 => $"{StatusCode}",
         _ => "OK"
     };
@@ -152,5 +159,6 @@ public sealed class ChainRunResult
     public ChainRunStatus FinalStatus { get; init; } = ChainRunStatus.Success;
     public IReadOnlyDictionary<string, string> AllVariables { get; init; } = new Dictionary<string, string>();
     public IReadOnlyDictionary<string, IReadOnlyList<string>> AllLists { get; init; } = new Dictionary<string, IReadOnlyList<string>>();
+    public string? FinalReturnValue { get; init; }
     public long TotalDurationMs { get; init; }
 }

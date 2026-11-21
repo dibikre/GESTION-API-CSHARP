@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using ApiTester.Models;
 
 namespace ApiTester.Services;
 
@@ -48,6 +49,9 @@ internal static class PhpChainCliEmitter
             sb.AppendLine($"        'mode' => {EscapeString(step.Mode)},");
             sb.AppendLine($"        'bodyType' => {EscapeString(step.BodyType)},");
             sb.AppendLine($"        'body' => {EscapeString(step.Body)},");
+            sb.AppendLine($"        'isReturnOnly' => {FormatBool(step.IsReturnOnly)},");
+            sb.AppendLine($"        'returnNode' => {FormatReturnNode(step.ReturnNode)},");
+            sb.AppendLine($"        'returnError' => {(step.ReturnError is null ? "null" : EscapeString(step.ReturnError))},");
 
             sb.AppendLine("        'headers' => [");
             foreach (var h in step.Headers)
@@ -654,6 +658,128 @@ function sendHttp(string $method, string $url, array $headers, ?string $body, in
     return [$status, $respHeaders, is_string($respBody) ? $respBody : '', null];
 }
 
+function resolveReturnIdentifier(string $name, bool $forceScalar, bool $forceList, array $scalars, array $listVars, array $accumulatedLists, int $globalIndex, string $reqGuid, string $reqTs): mixed {
+    if ($name === '$index') return (string)$globalIndex;
+    if ($name === '$guid') return $reqGuid;
+    if ($name === '$timestamp') return $reqTs;
+
+    if ($forceList) {
+        if (array_key_exists($name, $listVars)) {
+            return $listVars[$name];
+        }
+        if (array_key_exists($name, $accumulatedLists)) {
+            return array_values($accumulatedLists[$name]);
+        }
+        throw new RuntimeException("Liste inconnue ou non définie : [[" . $name . "]]");
+    }
+
+    if ($forceScalar) {
+        if (array_key_exists($name, $scalars)) {
+            return $scalars[$name];
+        }
+        throw new RuntimeException("Variable inconnue ou non définie : {{" . $name . "}}");
+    }
+
+    if (array_key_exists($name, $listVars)) {
+        return $listVars[$name];
+    }
+    if (array_key_exists($name, $scalars)) {
+        return $scalars[$name];
+    }
+    if (array_key_exists($name, $accumulatedLists)) {
+        return array_values($accumulatedLists[$name]);
+    }
+    throw new RuntimeException("Variable ou liste inconnue : " . $name);
+}
+
+function inlineReturnStr(mixed $val): string {
+    if ($val === null) return '';
+    if (is_bool($val)) return $val ? 'true' : 'false';
+    if (is_string($val)) return $val;
+    if (is_int($val) || is_float($val)) return (string)$val;
+    return (string)json_encode($val, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+}
+
+function evalReturnNode(array $node, array $scalars, array $listVars, array $accumulatedLists, int $globalIndex, string $reqGuid, string $reqTs): mixed {
+    $kind = $node['type'];
+    if ($kind === 'null') return null;
+    if ($kind === 'bool') return (bool)$node['value'];
+    if ($kind === 'num') {
+        $raw = (string)$node['raw'];
+        return str_contains($raw, '.') ? (float)$raw : (int)$raw;
+    }
+    if ($kind === 'str') {
+        $text = (string)$node['value'];
+        if (empty($node['interpolate'])) {
+            return $text;
+        }
+        return (string)preg_replace_callback(
+            MARKER_RE,
+            static function (array $match) use ($scalars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs): string {
+                $listName = (isset($match[2]) && $match[2] !== '') ? $match[2] : null;
+                if ($listName !== null) {
+                    $v = resolveReturnIdentifier($listName, false, true, $scalars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
+                } else {
+                    $v = resolveReturnIdentifier((string)($match[1] ?? ''), true, false, $scalars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
+                }
+                return inlineReturnStr($v);
+            },
+            $text
+        );
+    }
+    if ($kind === 'id') {
+        return resolveReturnIdentifier(
+            (string)$node['name'],
+            !empty($node['forceScalar']),
+            !empty($node['forceList']),
+            $scalars,
+            $listVars,
+            $accumulatedLists,
+            $globalIndex,
+            $reqGuid,
+            $reqTs
+        );
+    }
+    if ($kind === 'arr') {
+        $out = [];
+        foreach ($node['items'] as $item) {
+            $out[] = evalReturnNode($item, $scalars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
+        }
+        return $out;
+    }
+    if ($kind === 'obj') {
+        $assoc = [];
+        foreach ($node['entries'] as [$k, $vNode]) {
+            $assoc[(string)$k] = evalReturnNode($vNode, $scalars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
+        }
+        return (object)$assoc;
+    }
+    if ($kind === 'concat') {
+        $sb = '';
+        foreach ($node['parts'] as $part) {
+            $sb .= inlineReturnStr(evalReturnNode($part, $scalars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs));
+        }
+        return $sb;
+    }
+    throw new RuntimeException("Nœud de retour inconnu : {$kind}");
+}
+
+function formatReturnOutput(mixed $val): string {
+    if ($val === null) return 'null';
+    if (is_string($val)) return $val;
+    if (is_bool($val)) return $val ? 'true' : 'false';
+    if (is_int($val) || is_float($val)) return (string)json_encode($val, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return (string)json_encode($val, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+}
+
+function printReturnOutput(string $formatted): void {
+    if (str_contains($formatted, "\n")) {
+        echo "  -> Retour :\n" . $formatted . "\n";
+    } else {
+        echo "  -> Retour : " . $formatted . "\n";
+    }
+}
+
 $verbose = in_array('--verbose', $argv, true) || in_array('-v', $argv, true);
 $accumulatedVars = [];
 $accumulatedLists = [];
@@ -662,7 +788,12 @@ $hasAnyFailure = false;
 $stepCount = count($steps);
 
 foreach ($steps as $stepIdx => $step) {
-    if ($step['url'] === '') {
+    if ($step['returnError'] !== null) {
+        fwrite(STDERR, "[ERREUR] Étape {$step['rank']} ({$step['name']}) : {$step['returnError']}\n");
+        exit(1);
+    }
+
+    if ($step['url'] === '' && empty($step['isReturnOnly'])) {
         fwrite(STDERR, "[ERREUR] Étape {$step['rank']} ({$step['name']}) : URL vide.\n");
         exit(1);
     }
@@ -689,6 +820,36 @@ foreach ($steps as $stepIdx => $step) {
             } elseif ($axis['kind'] === 'list') {
                 $listVars[$axis['name']] = $axisValues[$aIdx];
             }
+        }
+
+        if (!empty($step['isReturnOnly'])) {
+            try {
+                $retVal = evalReturnNode(
+                    $step['returnNode'],
+                    $mergedVars,
+                    $listVars,
+                    $accumulatedLists,
+                    $globalIndex,
+                    $reqGuid,
+                    $reqTs
+                );
+                $formattedRet = formatReturnOutput($retVal);
+                echo "[OK] Étape {$step['rank']} ({$step['name']}) [{$iterIdx}/{$iterCount}] RETURN\n";
+                printReturnOutput($formattedRet);
+            } catch (Throwable $e) {
+                fwrite(STDERR, "[ÉCHEC] Étape {$step['rank']} ({$step['name']}) [{$iterIdx}/{$iterCount}] RETURN : {$e->getMessage()}\n");
+                $hasAnyFailure = true;
+                if (!$step['continueOnError']) {
+                    exit(1);
+                }
+                continue;
+            }
+
+            $hasMoreRet = ($iterIdx < $iterCount) || ($stepIdx + 1 < $stepCount);
+            if ($hasMoreRet && $step['delayAfterMs'] > 0) {
+                usleep($step['delayAfterMs'] * 1000);
+            }
+            continue;
         }
 
         try {
@@ -735,6 +896,7 @@ foreach ($steps as $stepIdx => $step) {
 
         $httpFailed = $netErr !== null || $status >= 400;
         $extractionFailed = false;
+        $localExtracted = [];
 
         foreach ($step['extractions'] as $ext) {
             if (!empty($ext['isList'])) {
@@ -758,11 +920,13 @@ foreach ($steps as $stepIdx => $step) {
             [$ok, $valueOrErr] = runExtraction($ext, $respBody, $respHeaders);
             if ($ok) {
                 $accumulatedVars[$ext['variable']] = $valueOrErr;
+                $localExtracted[$ext['variable']] = $valueOrErr;
                 if ($verbose) {
                     echo "  -> {$ext['variable']} = {$valueOrErr}\n";
                 }
             } else {
                 $accumulatedVars[$ext['variable']] = $ext['defaultValue'];
+                $localExtracted[$ext['variable']] = $ext['defaultValue'];
                 if ($ext['required']) {
                     $extractionFailed = true;
                     fwrite(STDERR, "  [EXTRACTION] {$ext['variable']} : {$valueOrErr}\n");
@@ -771,9 +935,36 @@ foreach ($steps as $stepIdx => $step) {
         }
 
         $stepFailed = $httpFailed || $extractionFailed;
+        $formattedRet = null;
+        $returnErr = null;
+        if (!$stepFailed && $step['returnNode'] !== null) {
+            $returnVars = array_merge($mergedVars, $localExtracted);
+            try {
+                $retVal = evalReturnNode(
+                    $step['returnNode'],
+                    $returnVars,
+                    $listVars,
+                    $accumulatedLists,
+                    $globalIndex,
+                    $reqGuid,
+                    $reqTs
+                );
+                $formattedRet = formatReturnOutput($retVal);
+            } catch (Throwable $e) {
+                $stepFailed = true;
+                $returnErr = $e->getMessage();
+            }
+        }
+
         $statusLabel = $stepFailed ? 'ÉCHEC' : 'OK';
         $codeLabel = $netErr !== null ? $netErr : "HTTP {$status}";
         echo "[{$statusLabel}] Étape {$step['rank']} ({$step['name']}) [{$iterIdx}/{$iterCount}] {$step['method']} {$finalUrl} -> {$codeLabel} ({$elapsedMs} ms)\n";
+
+        if ($returnErr !== null) {
+            fwrite(STDERR, "  [RETOUR] {$returnErr}\n");
+        } elseif ($formattedRet !== null) {
+            printReturnOutput($formattedRet);
+        }
 
         if ($verbose && $respBody !== '') {
             echo substr($respBody, 0, 1000) . "\n";
@@ -795,6 +986,67 @@ foreach ($steps as $stepIdx => $step) {
 
 exit($hasAnyFailure ? 1 : 0);
 """);
+    }
+
+    private static string FormatReturnNode(StepReturnNode? node)
+    {
+        if (node is null)
+        {
+            return "null";
+        }
+
+        switch (node)
+        {
+            case NullReturnNode:
+                return "['type' => 'null']";
+            case BooleanReturnNode b:
+                return $"['type' => 'bool', 'value' => {FormatBool(b.Value)}]";
+            case NumberReturnNode n:
+                return $"['type' => 'num', 'raw' => {EscapeString(n.RawText)}]";
+            case StringLiteralReturnNode s:
+                return $"['type' => 'str', 'value' => {EscapeString(s.Value)}, 'interpolate' => {FormatBool(s.HasTemplateMarkers)}]";
+            case IdentifierReturnNode id:
+                return $"['type' => 'id', 'name' => {EscapeString(id.Name)}, 'forceScalar' => {FormatBool(id.ForceScalar)}, 'forceList' => {FormatBool(id.ForceList)}]";
+            case ArrayReturnNode arr:
+            {
+                var sb = new StringBuilder("['type' => 'arr', 'items' => [");
+                for (var i = 0; i < arr.Items.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(FormatReturnNode(arr.Items[i]));
+                }
+                sb.Append("]]");
+                return sb.ToString();
+            }
+            case ObjectReturnNode obj:
+            {
+                var sb = new StringBuilder("['type' => 'obj', 'entries' => [");
+                for (var i = 0; i < obj.Entries.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append('[');
+                    sb.Append(EscapeString(obj.Entries[i].Key));
+                    sb.Append(", ");
+                    sb.Append(FormatReturnNode(obj.Entries[i].Value));
+                    sb.Append(']');
+                }
+                sb.Append("]]");
+                return sb.ToString();
+            }
+            case ConcatReturnNode concat:
+            {
+                var sb = new StringBuilder("['type' => 'concat', 'parts' => [");
+                for (var i = 0; i < concat.Parts.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(FormatReturnNode(concat.Parts[i]));
+                }
+                sb.Append("]]");
+                return sb.ToString();
+            }
+            default:
+                return "null";
+        }
     }
 
     private static string FormatBool(bool value) => value ? "true" : "false";

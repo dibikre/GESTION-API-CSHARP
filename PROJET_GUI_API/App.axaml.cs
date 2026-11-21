@@ -69,6 +69,7 @@ public partial class App : Application
         services.AddSingleton<ICookieEditorService, CookieEditorService>();
         services.AddSingleton<IBatchRunner, BatchRunner>();
         services.AddSingleton<IChainRunner, ChainRunner>();
+        services.AddSingleton<IStepReturnEvaluator, StepReturnEvaluator>();
         services.AddSingleton<IChainCliGenerator, ChainCliGenerator>();
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
         services.AddSingleton<IBatchResultWriter, BatchResultWriter>();

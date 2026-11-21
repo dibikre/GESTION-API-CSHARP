@@ -24,8 +24,12 @@ public partial class ChainViewModel : ViewModelBase
     private readonly IBatchResultWriter _batchResultWriter;
     private readonly IOverlayEditorService? _overlayEditor;
     private readonly ICookieEditorService? _cookieEditor;
+    private readonly IClipboardService? _clipboardService;
     private readonly IChainCliGenerator _chainCliGenerator;
+    private readonly IStepReturnEvaluator _stepReturnEvaluator;
     private readonly RateLimitPolicy _sharedRateLimitPolicy;
+    private Dictionary<string, string> _lastAccumulatedVariables = new(StringComparer.Ordinal);
+    private Dictionary<string, IReadOnlyList<string>> _lastAccumulatedLists = new(StringComparer.Ordinal);
     private bool _isBulkUpdating;
 
     public ChainViewModel(
@@ -38,7 +42,9 @@ public partial class ChainViewModel : ViewModelBase
         BatchViewModel? batchViewModel = null,
         IOverlayEditorService? overlayEditor = null,
         IChainCliGenerator? chainCliGenerator = null,
-        ICookieEditorService? cookieEditor = null)
+        ICookieEditorService? cookieEditor = null,
+        IStepReturnEvaluator? stepReturnEvaluator = null,
+        IClipboardService? clipboardService = null)
     {
         _curlParser = curlParser ?? throw new ArgumentNullException(nameof(curlParser));
         _templateEngine = templateEngine ?? throw new ArgumentNullException(nameof(templateEngine));
@@ -48,7 +54,9 @@ public partial class ChainViewModel : ViewModelBase
         _batchResultWriter = batchResultWriter ?? throw new ArgumentNullException(nameof(batchResultWriter));
         _overlayEditor = overlayEditor;
         _cookieEditor = cookieEditor;
+        _clipboardService = clipboardService;
         _chainCliGenerator = chainCliGenerator ?? new ChainCliGenerator();
+        _stepReturnEvaluator = stepReturnEvaluator ?? new StepReturnEvaluator();
         _sharedRateLimitPolicy = batchViewModel?.RateLimitPolicy ?? new RateLimitPolicy();
         SelectedResponse = new ResponseViewModel(overlayEditor);
 
@@ -209,7 +217,17 @@ public partial class ChainViewModel : ViewModelBase
     public bool HasResults => Results.Count > 0;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSelectedReturnValue))]
+    [NotifyPropertyChangedFor(nameof(SelectedReturnPreviewText))]
+    [NotifyCanExecuteChangedFor(nameof(CopySelectedReturnCommand))]
+    [NotifyCanExecuteChangedFor(nameof(InspectSelectedReturnCommand))]
     public partial ChainStepResult? SelectedResult { get; set; }
+
+    public bool HasSelectedReturnValue => SelectedResult?.HasReturnValue == true;
+
+    public string SelectedReturnPreviewText => SelectedResult is { HasReturnValue: true, ReturnValue: { } ret }
+        ? BatchExecutionHelper.TruncateForDisplay(ret)
+        : string.Empty;
 
     public ResponseViewModel SelectedResponse { get; }
 
@@ -453,6 +471,185 @@ public partial class ChainViewModel : ViewModelBase
             variable.ListText,
             IsReadOnly: false,
             OnSave: text => variable.ListText = text));
+    }
+
+    [RelayCommand]
+    private void EnlargeStepReturn()
+    {
+        if (SelectedStep is null)
+        {
+            return;
+        }
+
+        var step = SelectedStep;
+        var title = string.IsNullOrWhiteSpace(step.Name)
+            ? "Expression de retour"
+            : $"Expression de retour — {step.Name.Trim()}";
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            title,
+            step.ReturnExpression,
+            IsReadOnly: false,
+            OnSave: text => step.ReturnExpression = text));
+    }
+
+    [RelayCommand]
+    private void TestStepReturn()
+    {
+        if (SelectedStep is null)
+        {
+            return;
+        }
+
+        var step = SelectedStep;
+        if (!step.HasReturnExpression)
+        {
+            step.LastReturnValue = string.Empty;
+            step.ReturnError = "Saisis une expression de retour à tester (ex. return ma_variable).";
+            return;
+        }
+
+        var mergedScalars = new Dictionary<string, string>(_lastAccumulatedVariables, StringComparer.Ordinal);
+        var mergedLists = _lastAccumulatedLists.ToDictionary(
+            k => k.Key,
+            v => v.Value,
+            StringComparer.Ordinal);
+
+        foreach (var candidate in Steps)
+        {
+            foreach (var v in candidate.Variables)
+            {
+                if (!v.IsUsed || !v.IsConfigured || v.HasError || string.IsNullOrWhiteSpace(v.Name))
+                {
+                    continue;
+                }
+
+                if (v.Mode == VariableMode.Fixed)
+                {
+                    mergedScalars[v.Name] = v.FixedValue ?? string.Empty;
+                }
+                else
+                {
+                    var axis = candidate.Axes.FirstOrDefault(a =>
+                        a.Kind == BatchAxisKind.Variable &&
+                        string.Equals(a.Name, v.Name, StringComparison.Ordinal));
+                    if (axis is not null && axis.ValueCount > 0)
+                    {
+                        mergedScalars[v.Name] = axis.GetValue(0);
+                    }
+                }
+            }
+
+            foreach (var ext in candidate.Extractions)
+            {
+                if (string.IsNullOrWhiteSpace(ext.VariableName))
+                {
+                    continue;
+                }
+
+                var varName = ext.VariableName.Trim();
+                if (ext.IsList)
+                {
+                    if (ext.LastExtractedList is { Count: > 0 } testedList)
+                    {
+                        mergedLists[varName] = testedList;
+                    }
+                }
+                else if (ext.LastExtractedValue is not null)
+                {
+                    mergedScalars[varName] = ext.LastExtractedValue;
+                }
+            }
+
+            if (ReferenceEquals(candidate, step))
+            {
+                break;
+            }
+        }
+
+        var activeListItems = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var listMarker in _templateEngine.ExtractListVariables(step.BuildTemplateRequest()))
+        {
+            if (mergedLists.TryGetValue(listMarker.Name, out var listVals) && listVals.Count > 0)
+            {
+                activeListItems[listMarker.Name] = listVals[0];
+            }
+        }
+
+        var eval = _stepReturnEvaluator.Evaluate(
+            step.ReturnExpression,
+            mergedScalars,
+            activeListItems,
+            mergedLists,
+            globalIndex: 1);
+
+        if (eval.IsSuccess)
+        {
+            step.ReturnError = null;
+            step.LastReturnValue = eval.FormattedValue;
+        }
+        else
+        {
+            step.ReturnError = eval.ErrorMessage;
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyStepReturnAsync()
+    {
+        if (SelectedStep is not { HasLastReturnValue: true } step || _clipboardService is null)
+        {
+            return;
+        }
+
+        await _clipboardService.SetTextAsync(step.LastReturnValue);
+    }
+
+    [RelayCommand]
+    private void InspectStepReturn()
+    {
+        if (SelectedStep is not { HasLastReturnValue: true } step)
+        {
+            return;
+        }
+
+        var title = string.IsNullOrWhiteSpace(step.Name)
+            ? "Valeur retournée"
+            : $"Valeur retournée — {step.Name.Trim()}";
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            title,
+            step.LastReturnValue,
+            IsReadOnly: true,
+            OnSave: null));
+    }
+
+    private bool CanActOnSelectedReturn() => SelectedResult?.HasReturnValue == true;
+
+    [RelayCommand(CanExecute = nameof(CanActOnSelectedReturn))]
+    private async Task CopySelectedReturnAsync()
+    {
+        if (SelectedResult?.ReturnValue is null || _clipboardService is null)
+        {
+            return;
+        }
+
+        await _clipboardService.SetTextAsync(SelectedResult.ReturnValue);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanActOnSelectedReturn))]
+    private void InspectSelectedReturn()
+    {
+        if (SelectedResult is not { HasReturnValue: true, ReturnValue: { } value })
+        {
+            return;
+        }
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            $"Valeur retournée — {SelectedResult.StepIterationLabel}",
+            value,
+            IsReadOnly: true,
+            OnSave: null));
     }
 
     [RelayCommand]
@@ -791,6 +988,12 @@ public partial class ChainViewModel : ViewModelBase
 
         Results.Clear();
         AccumulatedVariables.Clear();
+        _lastAccumulatedVariables.Clear();
+        _lastAccumulatedLists.Clear();
+        foreach (var step in Steps)
+        {
+            step.LastReturnValue = string.Empty;
+        }
         SelectedResult = null;
         SelectedResponse.Clear();
         SuccessCount = 0;
@@ -875,16 +1078,38 @@ public partial class ChainViewModel : ViewModelBase
                         break;
                 }
 
-                if (report.Item.Response is not null &&
-                    report.Item.StepIndex >= 1 &&
+                if (report.Item.StepIndex >= 1 &&
                     report.Item.StepIndex <= stepByRank.Count)
                 {
                     var liveStep = stepByRank[report.Item.StepIndex - 1];
-                    liveStep.LastResponse = report.Item.Response;
-                    liveStep.LastResponseSummary = report.Item.StatusCode > 0
-                        ? $"HTTP {report.Item.StatusCode} ({report.Item.DurationMs} ms)"
-                        : "Erreur réseau";
+                    if (report.Item.Response is not null && !report.Item.IsReturnOnly)
+                    {
+                        liveStep.LastResponse = report.Item.Response;
+                        liveStep.LastResponseSummary = report.Item.StatusCode > 0
+                            ? $"HTTP {report.Item.StatusCode} ({report.Item.DurationMs} ms)"
+                            : "Erreur réseau";
+                    }
+
+                    if (!string.IsNullOrEmpty(report.Item.ReturnValue))
+                    {
+                        liveStep.LastReturnValue = report.Item.ReturnValue;
+                    }
                 }
+            }
+
+            if (report.AccumulatedVariables is not null)
+            {
+                _lastAccumulatedVariables = new Dictionary<string, string>(
+                    report.AccumulatedVariables,
+                    StringComparer.Ordinal);
+            }
+
+            if (report.AccumulatedLists is not null)
+            {
+                _lastAccumulatedLists = report.AccumulatedLists.ToDictionary(
+                    k => k.Key,
+                    v => (IReadOnlyList<string>)v.Value.ToList(),
+                    StringComparer.Ordinal);
             }
 
             if (report.AccumulatedVariables is not null || report.AccumulatedLists is not null)
@@ -904,6 +1129,11 @@ public partial class ChainViewModel : ViewModelBase
         try
         {
             var runResult = await _chainRunner.RunAsync(snapshots, runOptions, progress, onResultAsync, ct);
+            _lastAccumulatedVariables = new Dictionary<string, string>(runResult.AllVariables, StringComparer.Ordinal);
+            _lastAccumulatedLists = runResult.AllLists.ToDictionary(
+                k => k.Key,
+                v => (IReadOnlyList<string>)v.Value.ToList(),
+                StringComparer.Ordinal);
             UpdateAccumulatedVariablesDisplay(runResult.AllVariables, runResult.AllLists);
             FinalStatusText = runResult.FinalStatus switch
             {
@@ -1004,6 +1234,7 @@ public partial class ChainViewModel : ViewModelBase
         if (e.PropertyName is nameof(ChainStep.Url)
             or nameof(ChainStep.Body)
             or nameof(ChainStep.BodyType)
+            or nameof(ChainStep.ReturnExpression)
             or nameof(ChainStep.SelectedMode)
             or nameof(ChainStep.Name)
             or nameof(ChainStep.HasParsed))
@@ -1187,6 +1418,28 @@ public partial class ChainViewModel : ViewModelBase
                 {
                     extractedScalarsSoFar.Add(name);
                 }
+            }
+
+            if (step.HasReturnExpression)
+            {
+                var returnScalars = new HashSet<string>(extractedScalarsSoFar, StringComparer.Ordinal);
+                foreach (var v in step.Variables)
+                {
+                    if (v.IsUsed && v.IsConfigured && !v.HasError && !string.IsNullOrWhiteSpace(v.Name))
+                    {
+                        returnScalars.Add(v.Name);
+                    }
+                }
+
+                step.ReturnError = ChainRunner.ValidateStepReturn(
+                    _stepReturnEvaluator,
+                    step.ReturnExpression,
+                    returnScalars,
+                    extractedListsSoFar);
+            }
+            else
+            {
+                step.ReturnError = null;
             }
         }
 

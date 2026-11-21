@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using ApiTester.Models;
 
 namespace ApiTester.Services;
 
@@ -43,6 +44,9 @@ internal static class JavaScriptChainCliEmitter
             sb.AppendLine($"    mode: {EscapeString(step.Mode)},");
             sb.AppendLine($"    bodyType: {EscapeString(step.BodyType)},");
             sb.AppendLine($"    body: {EscapeString(step.Body)},");
+            sb.AppendLine($"    isReturnOnly: {FormatBool(step.IsReturnOnly)},");
+            sb.AppendLine($"    returnNode: {FormatReturnNode(step.ReturnNode)},");
+            sb.AppendLine($"    returnError: {(step.ReturnError is null ? "null" : EscapeString(step.ReturnError))},");
 
             sb.AppendLine("    headers: [");
             foreach (var h in step.Headers)
@@ -527,6 +531,101 @@ function runListExtraction(ext, respBody, respHeaders) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function resolveReturnIdentifier(name, forceScalar, forceList, scalars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs) {
+  if (name === "$index") return String(globalIndex);
+  if (name === "$guid") return reqGuid;
+  if (name === "$timestamp") return reqTs;
+
+  if (forceList) {
+    if (Object.prototype.hasOwnProperty.call(listVars, name)) return listVars[name];
+    if (Object.prototype.hasOwnProperty.call(accumulatedLists, name)) return [...accumulatedLists[name]];
+    throw new Error(`Liste inconnue ou non définie : [[${name}]]`);
+  }
+  if (forceScalar) {
+    if (Object.prototype.hasOwnProperty.call(scalars, name)) return scalars[name];
+    throw new Error(`Variable inconnue ou non définie : {{${name}}}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(listVars, name)) return listVars[name];
+  if (Object.prototype.hasOwnProperty.call(scalars, name)) return scalars[name];
+  if (Object.prototype.hasOwnProperty.call(accumulatedLists, name)) return [...accumulatedLists[name]];
+  throw new Error(`Variable ou liste inconnue : ${name}`);
+}
+
+function inlineReturnStr(val) {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "boolean") return val ? "true" : "false";
+  if (typeof val === "object") return JSON.stringify(val);
+  return String(val);
+}
+
+function evalReturnNode(node, scalars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs) {
+  switch (node.type) {
+    case "null":
+      return null;
+    case "bool":
+      return node.value;
+    case "num": {
+      const parsed = Number(node.raw);
+      return Number.isFinite(parsed) ? parsed : node.raw;
+    }
+    case "str": {
+      if (!node.interpolate) return node.value;
+      return node.value.replace(MARKER_RE, (_, scalarName, listName) => {
+        const resolved = listName !== undefined && listName !== null
+          ? resolveReturnIdentifier(listName, false, true, scalars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs)
+          : resolveReturnIdentifier(scalarName, true, false, scalars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs);
+        return inlineReturnStr(resolved);
+      });
+    }
+    case "id":
+      return resolveReturnIdentifier(
+        node.name,
+        Boolean(node.forceScalar),
+        Boolean(node.forceList),
+        scalars,
+        listVars,
+        accumulatedLists,
+        globalIndex,
+        reqGuid,
+        reqTs
+      );
+    case "arr":
+      return node.items.map((item) =>
+        evalReturnNode(item, scalars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs)
+      );
+    case "obj": {
+      const obj = {};
+      for (const [k, vNode] of node.entries) {
+        obj[k] = evalReturnNode(vNode, scalars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs);
+      }
+      return obj;
+    }
+    case "concat":
+      return node.parts
+        .map((p) => inlineReturnStr(evalReturnNode(p, scalars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs)))
+        .join("");
+    default:
+      throw new Error(`Nœud de retour inconnu : ${node.type}`);
+  }
+}
+
+function formatReturnOutput(val) {
+  if (val === null) return "null";
+  if (typeof val === "string") return val;
+  if (typeof val === "boolean" || typeof val === "number") return JSON.stringify(val);
+  return JSON.stringify(val, null, 2);
+}
+
+function printReturnOutput(formatted) {
+  if (formatted.includes("\n")) {
+    console.log("  -> Retour :");
+    console.log(formatted);
+  } else {
+    console.log(`  -> Retour : ${formatted}`);
+  }
+}
+
 async function main() {
   const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
   const accumulatedVars = {};
@@ -536,7 +635,11 @@ async function main() {
 
   for (let stepIdx = 0; stepIdx < STEPS.length; stepIdx++) {
     const step = STEPS[stepIdx];
-    if (!step.url) {
+    if (step.returnError) {
+      console.error(`[ERREUR] Étape ${step.rank} (${step.name}) : ${step.returnError}`);
+      process.exit(1);
+    }
+    if (!step.url && !step.isReturnOnly) {
       console.error(`[ERREUR] Étape ${step.rank} (${step.name}) : URL vide.`);
       process.exit(1);
     }
@@ -561,6 +664,34 @@ async function main() {
         } else if (step.axes[aIdx].kind === "list") {
           listVars[step.axes[aIdx].name] = axisValues[aIdx];
         }
+      }
+
+      if (step.isReturnOnly) {
+        try {
+          const retVal = evalReturnNode(
+            step.returnNode,
+            mergedVars,
+            listVars,
+            accumulatedLists,
+            globalIndex,
+            reqGuid,
+            reqTs
+          );
+          const formattedRet = formatReturnOutput(retVal);
+          console.log(`[OK] Étape ${step.rank} (${step.name}) [${iterIdx + 1}/${iterations.length}] RETURN`);
+          printReturnOutput(formattedRet);
+        } catch (err) {
+          console.error(`[ÉCHEC] Étape ${step.rank} (${step.name}) [${iterIdx + 1}/${iterations.length}] RETURN : ${err instanceof Error ? err.message : String(err)}`);
+          hasAnyFailure = true;
+          if (!step.continueOnError) process.exit(1);
+          continue;
+        }
+
+        const hasMoreRet = iterIdx + 1 < iterations.length || stepIdx + 1 < STEPS.length;
+        if (hasMoreRet && step.delayAfterMs > 0) {
+          await sleep(step.delayAfterMs);
+        }
+        continue;
       }
 
       let finalUrl;
@@ -623,6 +754,7 @@ async function main() {
 
       const httpFailed = netErr !== null || status >= 400;
       let extractionFailed = false;
+      const localExtracted = {};
 
       for (const ext of step.extractions) {
         if (ext.isList) {
@@ -643,9 +775,11 @@ async function main() {
         const res = runExtraction(ext, respBody, respHeaders);
         if (res.ok) {
           accumulatedVars[ext.variable] = res.value;
+          localExtracted[ext.variable] = res.value;
           if (verbose) console.log(`  -> ${ext.variable} = ${res.value}`);
         } else {
           accumulatedVars[ext.variable] = ext.defaultValue;
+          localExtracted[ext.variable] = ext.defaultValue;
           if (ext.required) {
             extractionFailed = true;
             console.error(`  [EXTRACTION] ${ext.variable} : ${res.value}`);
@@ -653,10 +787,37 @@ async function main() {
         }
       }
 
-      const stepFailed = httpFailed || extractionFailed;
+      let stepFailed = httpFailed || extractionFailed;
+      let formattedRet = null;
+      let returnErr = null;
+      if (!stepFailed && step.returnNode !== null) {
+        const returnVars = { ...mergedVars, ...localExtracted };
+        try {
+          const retVal = evalReturnNode(
+            step.returnNode,
+            returnVars,
+            listVars,
+            accumulatedLists,
+            globalIndex,
+            reqGuid,
+            reqTs
+          );
+          formattedRet = formatReturnOutput(retVal);
+        } catch (err) {
+          stepFailed = true;
+          returnErr = err instanceof Error ? err.message : String(err);
+        }
+      }
+
       const statusLabel = stepFailed ? "ÉCHEC" : "OK";
       const codeLabel = netErr !== null ? netErr : `HTTP ${status}`;
       console.log(`[${statusLabel}] Étape ${step.rank} (${step.name}) [${iterIdx + 1}/${iterations.length}] ${step.method} ${finalUrl} -> ${codeLabel} (${elapsedMs} ms)`);
+
+      if (returnErr !== null) {
+        console.error(`  [RETOUR] ${returnErr}`);
+      } else if (formattedRet !== null) {
+        printReturnOutput(formattedRet);
+      }
 
       if (verbose && respBody) {
         console.log(respBody.slice(0, 1000));
@@ -682,6 +843,67 @@ main().catch((err) => {
   process.exit(1);
 });
 """);
+    }
+
+    private static string FormatReturnNode(StepReturnNode? node)
+    {
+        if (node is null)
+        {
+            return "null";
+        }
+
+        switch (node)
+        {
+            case NullReturnNode:
+                return "{ type: \"null\" }";
+            case BooleanReturnNode b:
+                return $"{{ type: \"bool\", value: {FormatBool(b.Value)} }}";
+            case NumberReturnNode n:
+                return $"{{ type: \"num\", raw: {EscapeString(n.RawText)} }}";
+            case StringLiteralReturnNode s:
+                return $"{{ type: \"str\", value: {EscapeString(s.Value)}, interpolate: {FormatBool(s.HasTemplateMarkers)} }}";
+            case IdentifierReturnNode id:
+                return $"{{ type: \"id\", name: {EscapeString(id.Name)}, forceScalar: {FormatBool(id.ForceScalar)}, forceList: {FormatBool(id.ForceList)} }}";
+            case ArrayReturnNode arr:
+            {
+                var sb = new StringBuilder("{ type: \"arr\", items: [");
+                for (var i = 0; i < arr.Items.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(FormatReturnNode(arr.Items[i]));
+                }
+                sb.Append("] }");
+                return sb.ToString();
+            }
+            case ObjectReturnNode obj:
+            {
+                var sb = new StringBuilder("{ type: \"obj\", entries: [");
+                for (var i = 0; i < obj.Entries.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append('[');
+                    sb.Append(EscapeString(obj.Entries[i].Key));
+                    sb.Append(", ");
+                    sb.Append(FormatReturnNode(obj.Entries[i].Value));
+                    sb.Append(']');
+                }
+                sb.Append("] }");
+                return sb.ToString();
+            }
+            case ConcatReturnNode concat:
+            {
+                var sb = new StringBuilder("{ type: \"concat\", parts: [");
+                for (var i = 0; i < concat.Parts.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(FormatReturnNode(concat.Parts[i]));
+                }
+                sb.Append("] }");
+                return sb.ToString();
+            }
+            default:
+                return "null";
+        }
     }
 
     private static string FormatBool(bool value) => value ? "true" : "false";

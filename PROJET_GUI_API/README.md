@@ -17,6 +17,7 @@ ApiTester regroupe dans une même fenêtre quatre outils complémentaires : l'en
    - [Onglet Chaîne](#onglet-chaîne)
    - [Onglet Extracteur](#onglet-extracteur)
    - [Éditeur superposé (Overlay)](#éditeur-superposé-overlay)
+   - [Éditeur de cookies en popup](#éditeur-de-cookies-en-popup)
 5. [Syntaxe des variables, listes et JSONPath](#syntaxe-des-variables-listes-et-jsonpath)
 6. [Journalisation, sécurité et limites](#journalisation-sécurité-et-limites)
 7. [Structure complète des fichiers](#structure-complète-des-fichiers)
@@ -84,7 +85,7 @@ Principes techniques retenus :
   - Décompression automatique activée pour `GZip`, `Deflate` et `Brotli`.
   - Timeout global sur `HttpClient` fixé à `Timeout.InfiniteTimeSpan`, le délai d'expiration réel étant appliqué par requête via un `CancellationTokenSource` lié au jeton d'annulation utilisateur.
 - **Séparation Services / ViewModels / Modèles** :
-  - Tous les moteurs métier (`HttpService`, `CurlParser`, `TemplateEngine`, `RateLimitDetector`, `ResponseExtractor`, `ResponseRefiner`, `ExtractionSuggester`, `BatchRunner`, `ChainRunner`, `ChainCliGenerator`, `BatchResultWriter`) implémentent une interface dédiée et sont enregistrés en singletons dans `App.axaml.cs`.
+  - Tous les moteurs métier (`HttpService`, `CurlParser`, `TemplateEngine`, `RateLimitDetector`, `ResponseExtractor`, `ResponseRefiner`, `ExtractionSuggester`, `BatchRunner`, `ChainRunner`, `StepReturnEvaluator`, `ChainCliGenerator`, `BatchResultWriter`, `CookieEditorService`) implémentent une interface dédiée et sont enregistrés en singletons dans `App.axaml.cs`.
   - Les opérations longues (requêtes, lots, chaînes, écriture sur disque) s'exécutent de manière asynchrone hors du thread UI et remontent l'avancement via `IProgress<T>`.
 - **Thème et ressources visuelles** :
   - `Styles/Tokens.axaml` définit les palettes `Dark` et `Light`, les tailles de police (`Inter` pour l'interface, `Cascadia Mono` / `Consolas` en monospace), et les rayons de bordure.
@@ -95,7 +96,7 @@ Principes techniques retenus :
     - Ouverture d'un modèle issu de `Lot (curl)` dans l'onglet `Requête`.
     - Envoi d'un corps de réponse depuis `Requête`, `Lot (curl)` ou `Chaîne` directement vers `Extracteur`.
     - Envoi d'une extraction construite dans `Extracteur` vers une étape donnée de `Chaîne`.
-    - Ouverture de l'éditeur overlay via `IOverlayEditorService`.
+    - Ouverture de l'éditeur overlay via `IOverlayEditorService` et du popup cookies via `ICookieEditorService`.
 
 ---
 
@@ -118,7 +119,7 @@ Permet d'envoyer une requête HTTP unitaire et d'inspecter ou filtrer sa répons
   - Un bandeau sous les pastilles de statut indique le résumé du filtre (nombre de valeurs ou d'éléments), permet de basculer à tout moment entre l'affichage affiné et la réponse brute (`Voir brut` / `Voir affiné`), ou d'effacer le filtre.
 - **Configuration de la requête (`RequestView`)** :
   - `Paramètres d'URL` : éditeur clé/valeur activable ou désactivable par ligne.
-  - `En-têtes` : éditeur clé/valeur (l'en-tête `Content-Length` est ignoré car géré par .NET).
+  - `En-têtes` : éditeur clé/valeur (l'en-tête `Content-Length` est ignoré car géré par .NET). Lorsqu'un en-tête porte le nom `Cookie` (insensible à la casse), un bouton `Éditer cookies` apparaît sur la ligne pour ouvrir le popup dédié (également disponible dans `Lot (curl)` et `Chaîne`).
   - `Corps` :
     - `Aucun` (`None`).
     - `JSON` (`application/json`, bouton d'agrandissement vers l'overlay).
@@ -185,7 +186,8 @@ Permet d'enchaîner plusieurs requêtes HTTP où les valeurs extraites d'une ét
 
 - **Gestion des étapes** :
   - Ajout, suppression, duplication et réordonnancement haut/bas des étapes.
-  - Chaque étape dispose de son propre parseur `curl`, méthode, URL, paramètres, en-têtes, corps, variables locales `{{...}}`, ordre des axes, délai post-étape (`DelayAfterMs`, 500 ms par défaut), option `Continuer la chaîne si cette étape échoue`, et choix d'appliquer ou non la politique globale de rate limit.
+  - À la création d'une étape, l'éditeur affiche d'abord un grand champ `curl` occupant toute la zone disponible avec un bouton `Agrandir` et deux actions : `Analyser` (parse la commande `curl` et bascule vers l'interface complète) et `Basculer en manuel` (ouvre directement les onglets de configuration sans commande `curl` préalable).
+  - Chaque étape dispose de son propre parseur `curl`, méthode, URL (optionnelle si une expression `Retour` est définie), paramètres, en-têtes (avec bouton `Éditer cookies` sur l'en-tête `Cookie`), corps, variables locales `{{...}}`, ordre des axes, délai post-étape (`DelayAfterMs`, 500 ms par défaut), option `Continuer la chaîne si cette étape échoue`, et choix d'appliquer ou non la politique globale de rate limit.
 - **Extractions entre étapes (`ChainExtraction`)** :
   - Source : `Corps` (`Body`) ou `En-tête` (`Header`, avec nom d'en-tête insensible à la casse).
   - Type : `JSONPath` (corps uniquement) ou `Regex` (avec choix de l'index de groupe capturant, 1 par défaut).
@@ -193,14 +195,25 @@ Permet d'enchaîner plusieurs requêtes HTTP où les valeurs extraites d'une ét
   - Option `Obligatoire` et `Valeur par défaut si absent` (utilisable lorsqu'une extraction scalaire n'est pas obligatoire).
   - Bouton `Tester` sur chaque règle d'extraction : teste l'expression hors ligne sur la dernière réponse reçue par l'étape. La modification d'une expression efface l'ancien aperçu, et le basculement de `En liste [[...]]` relance automatiquement le test si une réponse est déjà disponible.
   - Lorsque l'extraction produit une liste, un bouton `Voir tout` ouvre l'overlay avec la totalité des éléments extraits (un par ligne).
+- **Expression de retour d'étape (`Retour` / `StepReturnEvaluator`)** :
+  - Chaque étape comporte un onglet `Retour` permettant de construire la valeur produite par l'étape, soit après son appel HTTP et ses extractions, soit en tant qu'**étape de retour pur** (badge `RET` dans la liste de gauche lorsque l'URL est laissée vide : aucun appel HTTP n'est envoyé et la valeur calculée devient directement le résultat de l'étape).
+  - Syntaxes prises en charge par `StepReturnParser` :
+    - Variable simple ou liste extraite : `return nom_variable`, `nom_variable`, `{{nom_variable}}`, `[[ma_liste]]`, ou variables prédéfinies `$index`, `$guid`, `$timestamp`.
+    - Retour multiple séparé par des virgules : `return a, b, c` (sérialisé en tableau JSON `[...]`).
+    - Objet JSON personnalisé : `return { jeton: token, avatars: ma_liste, id }` (clés avec ou sans guillemets, raccourci `{ id }` équivalent à `{ id: id }`, imbrication illimitée d'objets et de tableaux).
+    - Tableau personnalisé : `return [token, "texte libre", { cle: valeur }, [[liste]]]`.
+    - Chaînes interpolées et concaténation : `return "Bearer {{token}}"` ou `return "Bearer " + token`.
+    - Le mot-clé `return` en tête, le `;` final et les commentaires `//`, `#`, `/* ... */` sont optionnels.
+  - Bouton `Tester` dans l'onglet `Retour` : évalue l'expression hors ligne à partir des dernières variables accumulées, des extractions déjà testées et des variables locales de l'étape, avec affichage immédiat de l'aperçu et des erreurs de syntaxe ou de variables manquantes.
+  - Boutons `Copier` et `Voir` disponibles aussi bien sous le champ `Retour` que dans le bandeau `Retour : ...` au-dessus de la réponse lorsqu'un résultat est sélectionné.
 - **Itérations et boucles sur listes extraites** :
-  - Si une étape utilise une ou plusieurs listes `[[...]]` dans son URL, ses paramètres, ses en-têtes ou son corps, chaque liste devient automatiquement un axe d'itération (`BatchAxisKind.ExtractedList`), combinable ou parallélisable avec les paramètres et variables locales de l'étape.
+  - Si une étape utilise une ou plusieurs listes `[[...]]` dans son URL, ses paramètres, ses en-têtes ou son corps, chaque liste devient automatiquement un axe d'itération (`BatchAxisKind.ExtractedList`), combinable ou parallélisable avec les paramètres et variables locales de l'étape. Note : citer `[[ma_liste]]` ou `ma_liste` dans l'onglet `Retour` sans l'utiliser dans les champs HTTP retourne la liste complète en JSON sans déclencher de boucle.
   - L'application valide avant lancement que chaque `[[liste]]` provient d'une étape précédente et qu'aucun `{{variable}}` n'est utilisé à la place d'une liste.
 - **Exécution et résultats** :
   - La chaîne s'exécute séquentiellement d'étape en étape ; la première réponse arrivée s'affiche immédiatement dans le panneau de droite.
   - Un panneau `Variables accumulées` liste les valeurs scalaires et les listes collectées au fil de l'exécution, avec un bouton `Voir` pour afficher l'intégralité d'une liste dans l'overlay (masqué pour les variables sensibles).
 - **Générateur CLI autonome (`ChainCliGenerator`)** :
-  - Génère un script exécutable complet reproduisant fidèlement l'enchaînement configuré (en-têtes, authentification, substitution `{{...}}`, itération `[[...]]`, boucles Combinaisons/Parallèle, extractions JSONPath y compris `[n++]`/`[*]`, et extractions Regex) :
+  - Génère un script exécutable complet reproduisant fidèlement l'enchaînement configuré (en-têtes, authentification, substitution `{{...}}`, itération `[[...]]`, boucles Combinaisons/Parallèle, extractions JSONPath y compris `[n++]`/`[*]`, extractions Regex, étapes de retour pur et évaluation des expressions `Retour`) :
     - **Python** (`PythonChainCliEmitter`) : Python 3 utilisant uniquement la bibliothèque standard (`urllib.request`, `json`, `re`, `gzip`, `zlib`, `uuid`).
     - **JavaScript** (`JavaScriptChainCliEmitter`) : Node.js (v18+) utilisant `fetch` natif et `node:crypto`.
     - **PHP** (`PhpChainCliEmitter`) : PHP 8+ CLI utilisant `ext-curl` et `json_*` / `preg_*`.
@@ -234,13 +247,25 @@ Outil interactif pour analyser une réponse et obtenir une expression `JSONPath`
 
 ### Éditeur superposé (Overlay)
 
-Accessibles par le bouton d'agrandissement (`Corps de la requête`, `Corps de la réponse`, `Commande curl`, `Liste de valeurs`, `Réponse collée`) ou via `Voir tout` / `Voir` sur les listes extraites et les scripts CLI générés :
+Accessibles par le bouton d'agrandissement (`Corps de la requête`, `Corps de la réponse`, `Commande curl`, `Liste de valeurs`, `Réponse collée`, `Expression de retour`) ou via `Voir tout` / `Voir` sur les listes extraites, les valeurs retournées et les scripts CLI générés :
 
 - Affichage plein cadre dans la fenêtre principale, sans troncature du contenu.
 - Détection automatique de JSON valide (`MaxDepth = 1024`) faisant apparaître le bouton `Indenter le JSON`.
 - Bouton `Copier` vers le presse-papiers système.
 - Mode lecture seule (`Fermer`) ou édition (`Annuler` / `Enregistrer` mettant à jour la source d'origine et relançant l'analyse si applicable).
 - Fermeture par la touche `Échap` ou par clic sur l'arrière-plan assombri.
+
+---
+
+### Éditeur de cookies en popup
+
+Accessible depuis le bouton `Éditer cookies` qui s'affiche automatiquement sur toute ligne d'en-tête nommée `Cookie` (dans `Requête`, `Lot (curl)` et `Chaîne`) :
+
+- Deux modes d'édition synchronisés avec bascule directe en haut de la fenêtre :
+  - **Tableau** : liste chaque cookie avec case d'activation (`Actif`), nom et valeur éditables séparément, plus ajout/suppression de ligne. Seules les paires activées sont sérialisées à l'enregistrement.
+  - **Texte** : zone monospace éditable au format brut `nom1=valeur1; nom2=valeur2`, utile pour coller ou ajuster rapidement une chaîne `Cookie` complète.
+- Le passage de `Tableau` à `Texte` ou de `Texte` à `Tableau` convertit et synchronise les données sans perte (y compris les cookies désactivés conservés lors du retour en tableau si le mode tableau reste inchangé).
+- Bouton `Copier l'en-tête` pour copier la chaîne résultante dans le presse-papiers, bouton `Enregistrer` pour appliquer dans l'en-tête d'origine, et fermeture par `Annuler`, `Échap` ou clic sur l'arrière-plan.
 
 ---
 
@@ -319,8 +344,9 @@ PROJET_GUI_API/
 │   ├── BatchVariable.cs               Modèle complet de variable de gabarit (Fixe, Plage, Liste, Aléatoire)
 │   ├── ChainEnums.cs                  Énumérations de chaîne (sources, types d'extraction, statuts, langages CLI)
 │   ├── ChainExtraction.cs             Règle d'extraction entre étapes (corps/en-tête, JSONPath/Regex, liste)
-│   ├── ChainResults.cs                Résultats de planification, d'exécution et variables accumulées de chaîne
-│   ├── ChainStep.cs                   Modèle d'une étape de chaîne HTTP
+│   ├── ChainResults.cs                Résultats de planification, d'exécution, retours et variables accumulées de chaîne
+│   ├── ChainStep.cs                   Modèle d'une étape de chaîne HTTP et de son expression de retour
+│   ├── CookiePairItem.cs              Paire cookie activable (nom, valeur) pour l'éditeur popup
 │   ├── CurlParseResult.cs             Résultat du parseur curl et liste d'avertissements
 │   ├── Enums.cs                       Méthodes HTTP, types de corps, types d'authentification
 │   ├── ExtractorModels.cs             Formats, nœuds d'arbre et suggestions de l'Extracteur
@@ -329,14 +355,16 @@ PROJET_GUI_API/
 │   ├── RequestModel.cs                Modèle complet d'une requête HTTP
 │   ├── ResponseFilterMode.cs          Modes du filtre d'affinage en ligne (Auto, JsonPath, Regex, XPath)
 │   ├── ResponseModel.cs               Modèle complet d'une réponse HTTP reçue
+│   ├── StepReturnModels.cs            Nœuds AST et résultats d'analyse/évaluation des retours d'étapes
 │   └── VaryingParam.cs                Paramètre d'URL pouvant varier sur une plage entière
 ├── Services/
 │   ├── BatchExecutionHelper.cs        Planification, combinaison/zip, masquage de secrets et gestion retry/pause
 │   ├── BatchResultWriter.cs           Écriture asynchrone sur disque (fichiers unitaires, JSON, JSONL, CSV)
 │   ├── BatchRunner.cs                 Moteur d'exécution et de prévisualisation des lots
 │   ├── ChainCliGenerator.cs           Orchestrateur d'export CLI et construction des spécifications
-│   ├── ChainRunner.cs                 Moteur d'exécution séquentielle et dynamique des chaînes
+│   ├── ChainRunner.cs                 Moteur d'exécution séquentielle et dynamique des chaînes (avec retours)
 │   ├── ClipboardService.cs            Accès au presse-papiers via TopLevel Avalonia
+│   ├── CookieEditorService.cs         Bus d'ouverture et découpage/recomposition des en-têtes Cookie
 │   ├── CurlParser.cs                  Analyseur multi-shell (POSIX, PowerShell, cmd.exe)
 │   ├── ExtractionSuggester.cs         Détection de format, construction d'arbre JSON/XML/HTML et suggestion Regex
 │   ├── FolderPickerService.cs         Sélection et ouverture de dossiers système
@@ -349,6 +377,8 @@ PROJET_GUI_API/
 │   ├── RateLimitDetector.cs           Analyse Retry-After, backoff avec gigue et en-têtes de quota
 │   ├── ResponseExtractor.cs           Moteur d'extraction JSONPath et Regex (scalaire et liste)
 │   ├── ResponseRefiner.cs             Affinage temps réel des réponses (JSONPath, Regex, XPath, Auto)
+│   ├── StepReturnEvaluator.cs         Évaluation AST des expressions de retour et formatage JSON
+│   ├── StepReturnParser.cs            Analyseur lexical et syntaxique des expressions de retour d'étape
 │   ├── TemplateEngine.cs              Analyse et substitution {{...}} et [[...]]
 │   └── I*.cs                          Interfaces associées aux services ci-dessus
 ├── Styles/
@@ -357,9 +387,10 @@ PROJET_GUI_API/
 │   └── Tokens.axaml                   Thèmes Dark/Light, polices et dimensions
 ├── ViewModels/
 │   ├── BatchViewModel.cs              Logique de présentation de l'onglet Lot (curl)
-│   ├── ChainViewModel.cs              Logique de présentation de l'onglet Chaîne et export CLI
+│   ├── ChainViewModel.cs              Logique de présentation de l'onglet Chaîne, retours et export CLI
+│   ├── CookieEditorViewModel.cs       Logique du popup d'édition de cookies (bascule Tableau / Texte)
 │   ├── ExtractorViewModel.cs          Logique de présentation du laboratoire Extracteur
-│   ├── MainWindowViewModel.cs         Navigation entre onglets et passerelles inter-vues
+│   ├── MainWindowViewModel.cs         Navigation entre onglets, overlay et popup cookies
 │   ├── OverlayEditorViewModel.cs      Logique de l'éditeur superposé et formatage JSON
 │   ├── RequestViewModel.cs            Logique de construction de requête
 │   ├── ResponseViewModel.cs           Affichage, formatage et affinage de la réponse
@@ -372,9 +403,10 @@ PROJET_GUI_API/
     ├── BatchView.axaml(.cs)           Interface de l'onglet Lot (curl)
     ├── ChainExtractionEditor.axaml(.cs) Éditeur des règles d'extraction par étape
     ├── ChainView.axaml(.cs)           Interface de l'onglet Chaîne
+    ├── CookieEditorView.axaml(.cs)    Popup d'édition des cookies en tableau ou texte brut
     ├── ExtractorView.axaml(.cs)       Interface de l'onglet Extracteur
-    ├── KeyValueEditor.axaml(.cs)      Composant réutilisable d'édition clé/valeur
-    ├── MainWindow.axaml(.cs)          Fenêtre principale, onglets et hôte de l'overlay
+    ├── KeyValueEditor.axaml(.cs)      Composant réutilisable d'édition clé/valeur (avec accès cookies)
+    ├── MainWindow.axaml(.cs)          Fenêtre principale, onglets, overlay et hôte popup cookies
     ├── RequestView.axaml(.cs)         Interface de configuration de requête
     ├── ResponseView.axaml(.cs)        Interface d'affichage de réponse
     ├── SingleRequestView.axaml(.cs)   Interface de l'onglet Requête unitaire

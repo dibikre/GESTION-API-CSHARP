@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using ApiTester.Models;
 
 namespace ApiTester.Services;
 
@@ -53,6 +54,9 @@ internal static class PythonChainCliEmitter
             sb.AppendLine($"        \"mode\": {EscapeString(step.Mode)},");
             sb.AppendLine($"        \"body_type\": {EscapeString(step.BodyType)},");
             sb.AppendLine($"        \"body\": {EscapeString(step.Body)},");
+            sb.AppendLine($"        \"is_return_only\": {FormatBool(step.IsReturnOnly)},");
+            sb.AppendLine($"        \"return_node\": {FormatReturnNode(step.ReturnNode)},");
+            sb.AppendLine($"        \"return_error\": {(step.ReturnError is null ? "None" : EscapeString(step.ReturnError))},");
 
             sb.AppendLine("        \"headers\": [");
             foreach (var h in step.Headers)
@@ -508,6 +512,116 @@ def send_http(method: str, url: str, headers: list[tuple[str, str]], body_bytes:
         return 0, [], "", str(exc)
 
 
+def resolve_return_identifier(name: str, force_scalar: bool, force_list: bool, scalars: dict[str, str], list_vars: dict[str, str], accumulated_lists: dict[str, list[str]], global_index: int, req_guid: str, req_ts: str):
+    if name == "$index":
+        return str(global_index)
+    if name == "$guid":
+        return req_guid
+    if name == "$timestamp":
+        return req_ts
+    if force_list:
+        if name in list_vars:
+            return list_vars[name]
+        if name in accumulated_lists:
+            return list(accumulated_lists[name])
+        raise KeyError(f"Liste inconnue ou non définie : [[{name}]]")
+    if force_scalar:
+        if name in scalars:
+            return scalars[name]
+        raise KeyError(f"Variable inconnue ou non définie : {{{{{name}}}}}")
+    if name in list_vars:
+        return list_vars[name]
+    if name in scalars:
+        return scalars[name]
+    if name in accumulated_lists:
+        return list(accumulated_lists[name])
+    raise KeyError(f"Variable ou liste inconnue : {name}")
+
+
+def inline_return_str(val) -> str:
+    if val is None:
+        return ""
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, str):
+        return val
+    if isinstance(val, (dict, list)):
+        return json.dumps(val, ensure_ascii=False)
+    return str(val)
+
+
+def eval_return_node(node: dict, scalars: dict[str, str], list_vars: dict[str, str], accumulated_lists: dict[str, list[str]], global_index: int, req_guid: str, req_ts: str):
+    kind = node["type"]
+    if kind == "null":
+        return None
+    if kind == "bool":
+        return node["value"]
+    if kind == "num":
+        raw = node["raw"]
+        return float(raw) if "." in raw else int(raw)
+    if kind == "str":
+        text = node["value"]
+        if not node.get("interpolate"):
+            return text
+
+        def repl_ret(match: re.Match[str]) -> str:
+            if match.group(2) is not None:
+                v = resolve_return_identifier(match.group(2), False, True, scalars, list_vars, accumulated_lists, global_index, req_guid, req_ts)
+            else:
+                v = resolve_return_identifier(match.group(1), True, False, scalars, list_vars, accumulated_lists, global_index, req_guid, req_ts)
+            return inline_return_str(v)
+
+        return MARKER_RE.sub(repl_ret, text)
+    if kind == "id":
+        return resolve_return_identifier(
+            node["name"],
+            node.get("force_scalar", False),
+            node.get("force_list", False),
+            scalars,
+            list_vars,
+            accumulated_lists,
+            global_index,
+            req_guid,
+            req_ts,
+        )
+    if kind == "arr":
+        return [
+            eval_return_node(item, scalars, list_vars, accumulated_lists, global_index, req_guid, req_ts)
+            for item in node["items"]
+        ]
+    if kind == "obj":
+        obj = {}
+        for k, v_node in node["entries"]:
+            obj[k] = eval_return_node(v_node, scalars, list_vars, accumulated_lists, global_index, req_guid, req_ts)
+        return obj
+    if kind == "concat":
+        return "".join(
+            inline_return_str(eval_return_node(part, scalars, list_vars, accumulated_lists, global_index, req_guid, req_ts))
+            for part in node["parts"]
+        )
+    raise ValueError(f"Nœud de retour inconnu : {kind}")
+
+
+def format_return_output(val) -> str:
+    if val is None:
+        return "null"
+    if isinstance(val, str):
+        return val
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, (int, float)):
+        return json.dumps(val, ensure_ascii=False)
+    return json.dumps(val, ensure_ascii=False, indent=2)
+
+
+def print_return_output(formatted: str) -> None:
+    if "\n" in formatted:
+        print("  -> Retour :")
+        print(formatted)
+    else:
+        print(f"  -> Retour : {formatted}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Exécute la chaîne de requêtes générée par ApiTester.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Affiche les corps de réponse et variables extraites")
@@ -519,7 +633,11 @@ def main() -> int:
     has_any_failure = False
 
     for step_idx, step in enumerate(STEPS):
-        if not step["url"]:
+        if step.get("return_error"):
+            print(f"[ERREUR] Étape {step['rank']} ({step['name']}) : {step['return_error']}", file=sys.stderr)
+            return 1
+
+        if not step["url"] and not step.get("is_return_only"):
             print(f"[ERREUR] Étape {step['rank']} ({step['name']}) : URL vide.", file=sys.stderr)
             return 1
 
@@ -541,6 +659,32 @@ def main() -> int:
                     merged_vars[axis["name"]] = axis_values[a_idx]
                 elif axis["kind"] == "list":
                     list_vars[axis["name"]] = axis_values[a_idx]
+
+            if step.get("is_return_only"):
+                try:
+                    ret_val = eval_return_node(
+                        step["return_node"],
+                        merged_vars,
+                        list_vars,
+                        accumulated_lists,
+                        global_index,
+                        req_guid,
+                        req_ts,
+                    )
+                    formatted_ret = format_return_output(ret_val)
+                    print(f"[OK] Étape {step['rank']} ({step['name']}) [{iter_idx}/{len(iterations)}] RETURN")
+                    print_return_output(formatted_ret)
+                except (KeyError, ValueError) as exc:
+                    print(f"[ÉCHEC] Étape {step['rank']} ({step['name']}) [{iter_idx}/{len(iterations)}] RETURN : {exc}", file=sys.stderr)
+                    has_any_failure = True
+                    if not step["continue_on_error"]:
+                        return 1
+                    continue
+
+                has_more = iter_idx < len(iterations) or step_idx < len(STEPS) - 1
+                if has_more and step["delay_after_ms"] > 0:
+                    time.sleep(step["delay_after_ms"] / 1000.0)
+                continue
 
             try:
                 final_base_url = substitute_simple(step["url"], merged_vars, list_vars, global_index, req_guid, req_ts, url_encode=True)
@@ -582,6 +726,7 @@ def main() -> int:
 
             http_failed = net_err is not None or status >= 400
             extraction_failed = False
+            local_extracted: dict[str, str] = {}
 
             for ext in step["extractions"]:
                 if ext.get("is_list"):
@@ -600,18 +745,45 @@ def main() -> int:
                 ok, value_or_err = run_extraction(ext, resp_body, resp_headers)
                 if ok:
                     accumulated_vars[ext["variable"]] = value_or_err
+                    local_extracted[ext["variable"]] = value_or_err
                     if args.verbose:
                         print(f"  -> {ext['variable']} = {value_or_err}")
                 else:
                     accumulated_vars[ext["variable"]] = ext["default"]
+                    local_extracted[ext["variable"]] = ext["default"]
                     if ext["required"]:
                         extraction_failed = True
                         print(f"  [EXTRACTION] {ext['variable']} : {value_or_err}", file=sys.stderr)
 
             step_failed = http_failed or extraction_failed
+            formatted_ret: str | None = None
+            return_err: str | None = None
+            if not step_failed and step.get("return_node") is not None:
+                return_vars = dict(merged_vars)
+                return_vars.update(local_extracted)
+                try:
+                    ret_val = eval_return_node(
+                        step["return_node"],
+                        return_vars,
+                        list_vars,
+                        accumulated_lists,
+                        global_index,
+                        req_guid,
+                        req_ts,
+                    )
+                    formatted_ret = format_return_output(ret_val)
+                except (KeyError, ValueError) as exc:
+                    step_failed = True
+                    return_err = str(exc)
+
             status_label = "ÉCHEC" if step_failed else "OK"
             code_label = net_err if net_err is not None else f"HTTP {status}"
             print(f"[{status_label}] Étape {step['rank']} ({step['name']}) [{iter_idx}/{len(iterations)}] {step['method']} {final_url} -> {code_label} ({elapsed_ms} ms)")
+
+            if return_err is not None:
+                print(f"  [RETOUR] {return_err}", file=sys.stderr)
+            elif formatted_ret is not None:
+                print_return_output(formatted_ret)
 
             if args.verbose and resp_body:
                 print(resp_body[:1000])
@@ -631,6 +803,67 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 """);
+    }
+
+    private static string FormatReturnNode(StepReturnNode? node)
+    {
+        if (node is null)
+        {
+            return "None";
+        }
+
+        switch (node)
+        {
+            case NullReturnNode:
+                return "{\"type\": \"null\"}";
+            case BooleanReturnNode b:
+                return $"{{\"type\": \"bool\", \"value\": {FormatBool(b.Value)}}}";
+            case NumberReturnNode n:
+                return $"{{\"type\": \"num\", \"raw\": {EscapeString(n.RawText)}}}";
+            case StringLiteralReturnNode s:
+                return $"{{\"type\": \"str\", \"value\": {EscapeString(s.Value)}, \"interpolate\": {FormatBool(s.HasTemplateMarkers)}}}";
+            case IdentifierReturnNode id:
+                return $"{{\"type\": \"id\", \"name\": {EscapeString(id.Name)}, \"force_scalar\": {FormatBool(id.ForceScalar)}, \"force_list\": {FormatBool(id.ForceList)}}}";
+            case ArrayReturnNode arr:
+            {
+                var sb = new StringBuilder("{\"type\": \"arr\", \"items\": [");
+                for (var i = 0; i < arr.Items.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(FormatReturnNode(arr.Items[i]));
+                }
+                sb.Append("]}");
+                return sb.ToString();
+            }
+            case ObjectReturnNode obj:
+            {
+                var sb = new StringBuilder("{\"type\": \"obj\", \"entries\": [");
+                for (var i = 0; i < obj.Entries.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append('(');
+                    sb.Append(EscapeString(obj.Entries[i].Key));
+                    sb.Append(", ");
+                    sb.Append(FormatReturnNode(obj.Entries[i].Value));
+                    sb.Append(')');
+                }
+                sb.Append("]}");
+                return sb.ToString();
+            }
+            case ConcatReturnNode concat:
+            {
+                var sb = new StringBuilder("{\"type\": \"concat\", \"parts\": [");
+                for (var i = 0; i < concat.Parts.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(FormatReturnNode(concat.Parts[i]));
+                }
+                sb.Append("]}");
+                return sb.ToString();
+            }
+            default:
+                return "None";
+        }
     }
 
     private static string FormatBool(bool value) => value ? "True" : "False";

@@ -50,6 +50,9 @@ internal sealed record CliStepSpec(
     string Mode,
     string BodyType,
     string Body,
+    bool IsReturnOnly,
+    StepReturnNode? ReturnNode,
+    string? ReturnError,
     IReadOnlyList<CliHeaderSpec> Headers,
     IReadOnlyList<CliQueryParamSpec> QueryParams,
     IReadOnlyList<CliFormFieldSpec> FormFields,
@@ -60,6 +63,12 @@ internal sealed record CliStepSpec(
 public sealed class ChainCliGenerator : IChainCliGenerator
 {
     private static readonly TemplateEngine TemplateScanner = new();
+    private readonly IStepReturnEvaluator _stepReturnEvaluator;
+
+    public ChainCliGenerator(IStepReturnEvaluator? stepReturnEvaluator = null)
+    {
+        _stepReturnEvaluator = stepReturnEvaluator ?? new StepReturnEvaluator();
+    }
 
     public string Generate(IReadOnlyList<ChainStep> steps, ChainCliLanguage language)
     {
@@ -75,7 +84,7 @@ public sealed class ChainCliGenerator : IChainCliGenerator
         };
     }
 
-    private static List<CliStepSpec> BuildStepSpecs(IReadOnlyList<ChainStep> steps)
+    private List<CliStepSpec> BuildStepSpecs(IReadOnlyList<ChainStep> steps)
     {
         var specs = new List<CliStepSpec>(steps.Count);
 
@@ -127,6 +136,21 @@ public sealed class ChainCliGenerator : IChainCliGenerator
             var queryParams = BuildQueryParams(step, rawAxes);
             var extractions = BuildExtractions(step.Extractions);
 
+            StepReturnNode? returnNode = null;
+            string? returnError = null;
+            if (step.HasReturnExpression)
+            {
+                var parsedReturn = _stepReturnEvaluator.Parse(step.ReturnExpression);
+                if (parsedReturn.IsSuccess && parsedReturn.Root is not null)
+                {
+                    returnNode = parsedReturn.Root;
+                }
+                else
+                {
+                    returnError = parsedReturn.ErrorMessage ?? "Expression de retour invalide.";
+                }
+            }
+
             specs.Add(new CliStepSpec(
                 rank,
                 name,
@@ -138,6 +162,9 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                 mode,
                 bodyType,
                 body,
+                step.IsReturnOnlyStep,
+                returnNode,
+                returnError,
                 headers,
                 queryParams,
                 formFields,

@@ -111,6 +111,7 @@
                                     <Grid RowDefinitions="Auto,Auto" RowSpacing="3">
                                         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
                                             <Border Grid.Column="0"
+                                                    IsVisible="{Binding !IsReturnOnlyStep}"
                                                     Background="{DynamicResource SurfaceAltBrush}"
                                                     BorderBrush="{DynamicResource BorderBrush}"
                                                     BorderThickness="1"
@@ -123,6 +124,19 @@
                                                            Classes.post="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPost}}"
                                                            Classes.put="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPutOrPatch}}"
                                                            Classes.delete="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsDelete}}" />
+                                            </Border>
+
+                                            <Border Grid.Column="0"
+                                                    IsVisible="{Binding IsReturnOnlyStep}"
+                                                    Background="{DynamicResource SuccessSoftBrush}"
+                                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                    Padding="5,1"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="RET"
+                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource SuccessBrush}" />
                                             </Border>
 
                                             <TextBlock Grid.Column="1"
@@ -149,7 +163,7 @@
 
                                         <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="4">
                                             <TextBlock Grid.Column="0"
-                                                       Text="{Binding Extractions.Count, StringFormat='{}{0} extr.'}"
+                                                       Text="{Binding StepMetaSummaryText}"
                                                        FontSize="{DynamicResource FontSizeCaption}"
                                                        Foreground="{DynamicResource TextFaintBrush}"
                                                        VerticalAlignment="Center" />
@@ -390,7 +404,7 @@
                             <TextBox Grid.Column="1"
                                      Classes="mono"
                                      Text="{Binding Url}"
-                                     PlaceholderText="https://api.exemple.com/endpoint (accepte {{variables}} et [[listes]])"
+                                     PlaceholderText="https://api.exemple.com/endpoint (optionnel si Retour est défini ; accepte {{variables}} et [[listes]])"
                                      ToolTip.Tip="{Binding Url, Converter={x:Static conv:StringDisplayConverters.EmptyToNull}}"
                                      AutomationProperties.Name="URL de l'étape" />
                         </Grid>
@@ -568,6 +582,113 @@
                                                              InspectListCommand="{Binding #ChainRoot.ViewModel.InspectExtractedListCommand}"
                                                              HasLastResponse="{Binding HasLastResponse}"
                                                              LastResponseSummary="{Binding LastResponseSummary}" />
+                            </TabItem>
+
+                            <TabItem>
+                                <TabItem.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="Retour" VerticalAlignment="Center" />
+                                        <Border IsVisible="{Binding HasReturnExpression}"
+                                                Background="{DynamicResource SuccessSoftBrush}"
+                                                CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="actif"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource SuccessBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                </TabItem.Header>
+                                <Grid RowDefinitions="Auto,*,Auto,Auto,Auto" RowSpacing="6" Margin="0,6,0,0">
+                                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="Valeur retournée par cette étape (variables simples, listes, objets JSON ou listes personnalisées). Laisse l'URL vide pour créer une étape de retour pur."
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   TextWrapping="Wrap"
+                                                   VerticalAlignment="Center" />
+
+                                        <Button Grid.Column="1"
+                                                Classes="secondary"
+                                                Content="Tester"
+                                                Command="{Binding #ChainRoot.ViewModel.TestStepReturnCommand}"
+                                                ToolTip.Tip="Évaluer l'expression de retour avec les dernières variables disponibles"
+                                                VerticalAlignment="Center"
+                                                AutomationProperties.Name="Tester l'expression de retour" />
+
+                                        <Button Grid.Column="2"
+                                                Classes="icon"
+                                                Command="{Binding #ChainRoot.ViewModel.EnlargeStepReturnCommand}"
+                                                ToolTip.Tip="Agrandir"
+                                                VerticalAlignment="Center"
+                                                AutomationProperties.Name="Agrandir l'expression de retour">
+                                            <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                                        </Button>
+                                    </Grid>
+
+                                    <TextBox Grid.Row="1"
+                                             Classes="mono"
+                                             Text="{Binding ReturnExpression}"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             PlaceholderText="Exemples :&#x0A;return nom_variable&#x0A;return var1, var2&#x0A;return { token: token, ids: [[ids]], label: &quot;Bearer {{token}}&quot; }"
+                                             AutomationProperties.Name="Expression de retour de l'étape" />
+
+                                    <TextBlock Grid.Row="2"
+                                               IsVisible="{Binding HasReturnError}"
+                                               Text="{Binding ReturnError}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource DangerBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <Border Grid.Row="3"
+                                            IsVisible="{Binding HasLastReturnValue}"
+                                            Background="{DynamicResource SurfaceAltBrush}"
+                                            BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="{DynamicResource ControlCornerRadius}"
+                                            Padding="8,4">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding LastReturnPreviewText, StringFormat='Retour : {0}'}"
+                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource SuccessBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+
+                                            <Button Grid.Column="1"
+                                                    Classes="ghost"
+                                                    Content="Copier"
+                                                    Command="{Binding #ChainRoot.ViewModel.CopyStepReturnCommand}"
+                                                    FontSize="{DynamicResource FontSizeCaption}"
+                                                    Height="22"
+                                                    MinHeight="22"
+                                                    Padding="8,0"
+                                                    VerticalAlignment="Center"
+                                                    AutomationProperties.Name="Copier la dernière valeur retournée" />
+
+                                            <Button Grid.Column="2"
+                                                    Classes="ghost"
+                                                    Content="Voir"
+                                                    Command="{Binding #ChainRoot.ViewModel.InspectStepReturnCommand}"
+                                                    FontSize="{DynamicResource FontSizeCaption}"
+                                                    Height="22"
+                                                    MinHeight="22"
+                                                    Padding="8,0"
+                                                    VerticalAlignment="Center"
+                                                    AutomationProperties.Name="Afficher toute la valeur retournée" />
+                                        </Grid>
+                                    </Border>
+
+                                    <TextBlock Grid.Row="4"
+                                               Text="Syntaxes : return var · return a, b · { cle: val, shorthand } · [a, b, liste] · &quot;texte {{var}}&quot; · &quot;a&quot; + var"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Foreground="{DynamicResource TextFaintBrush}"
+                                               TextWrapping="Wrap" />
+                                </Grid>
                             </TabItem>
 
                             <TabItem Header="Options">
@@ -1059,6 +1180,14 @@
                                                    Foreground="{DynamicResource AccentBrush}"
                                                    TextTrimming="CharacterEllipsis" />
 
+                                        <TextBlock IsVisible="{Binding HasReturnValue}"
+                                                   Text="{Binding ReturnPreviewText}"
+                                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   Foreground="{DynamicResource SuccessBrush}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding ReturnValue}" />
+
                                         <TextBlock IsVisible="{Binding HasErrorMessage}"
                                                    Text="{Binding ErrorMessage}"
                                                    FontSize="{DynamicResource FontSizeCaption}"
@@ -1076,8 +1205,53 @@
                               Classes="vertical"
                               ResizeDirection="Columns" />
 
-                <views:ResponseView Grid.Column="2"
-                                    DataContext="{Binding SelectedResponse}" />
+                <Grid Grid.Column="2" RowDefinitions="Auto,*" RowSpacing="6">
+                    <Border Grid.Row="0"
+                            IsVisible="{Binding HasSelectedReturnValue}"
+                            Background="{DynamicResource SurfaceBrush}"
+                            BorderBrush="{DynamicResource SuccessBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource ControlCornerRadius}"
+                            Padding="10,6">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+                            <TextBlock Grid.Column="0"
+                                       Text="Retour :"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SuccessBrush}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding SelectedReturnPreviewText}"
+                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                            <Button Grid.Column="2"
+                                    Classes="ghost"
+                                    Content="Copier"
+                                    Command="{Binding CopySelectedReturnCommand}"
+                                    FontSize="{DynamicResource FontSizeSmall}"
+                                    Height="24"
+                                    MinHeight="24"
+                                    Padding="8,0"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Copier le retour sélectionné" />
+                            <Button Grid.Column="3"
+                                    Classes="ghost"
+                                    Content="Voir"
+                                    Command="{Binding InspectSelectedReturnCommand}"
+                                    FontSize="{DynamicResource FontSizeSmall}"
+                                    Height="24"
+                                    MinHeight="24"
+                                    Padding="8,0"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Afficher tout le retour sélectionné" />
+                        </Grid>
+                    </Border>
+
+                    <views:ResponseView Grid.Row="1"
+                                        DataContext="{Binding SelectedResponse}" />
+                </Grid>
             </Grid>
         </Grid>
     </Grid>
