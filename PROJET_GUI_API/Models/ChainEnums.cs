@@ -44,25 +44,56 @@ public enum ExtractionConditionOperator
     Contains,
     NotContains,
     StartsWith,
+    NotStartsWith,
     EndsWith,
+    NotEndsWith,
     Equals,
     NotEquals,
+    InList,
+    NotInList,
     RegexMatch,
     RegexNotMatch,
     RegexExtract,
     RegexExtractAll,
     RegexReplace,
     ReplaceText,
+    PrependText,
+    AppendText,
+    SetValue,
     Between,
     SplitPart,
     Trim,
     ToLower,
     ToUpper,
+    IsEmpty,
     NotEmpty,
+    LengthEquals,
     LengthMin,
     LengthMax,
+    NumberEquals,
+    NumberNotEquals,
     GreaterThan,
-    LessThan
+    GreaterOrEqual,
+    LessThan,
+    LessOrEqual
+}
+
+public enum ExtractionConditionalAction
+{
+    Keep,
+    Exclude,
+    SetValue,
+    PrependText,
+    AppendText,
+    ReplaceText,
+    RegexExtract,
+    RegexExtractAll,
+    RegexReplace,
+    Between,
+    SplitPart,
+    Trim,
+    ToLower,
+    ToUpper
 }
 
 public enum ExtractionConditionMatchMode

@@ -3,6 +3,7 @@
              xmlns:vm="using:ApiTester.ViewModels"
              xmlns:models="using:ApiTester.Models"
              xmlns:services="using:ApiTester.Services"
+             xmlns:views="using:ApiTester.Views"
              xmlns:conv="using:ApiTester.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -70,7 +71,7 @@
                         AutomationProperties.Name="Réinitialiser les conditions" />
             </Grid>
 
-            <!-- Barre de modèles rapides (Hex, UUID, Segment URL, IDs, etc.) -->
+            <!-- Barre de modèles rapides -->
             <Border Grid.Row="1"
                     Background="{DynamicResource SurfaceBrush}"
                     BorderBrush="{DynamicResource BorderBrush}"
@@ -194,20 +195,31 @@
                                 Spacing="8"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
-                        <TextBlock Text="Aucune condition définie. Sélectionne un exemple à gauche, choisis un modèle ci-dessus ou ajoute une règle manuelle."
+                        <TextBlock Text="Aucune condition définie. Sélectionne un exemple à gauche, choisis un modèle ci-dessus, ou crée une condition simple ou « Si ... Alors ... »."
                                    FontSize="{DynamicResource FontSizeSmall}"
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    TextWrapping="Wrap"
                                    TextAlignment="Center" />
-                        <Button Classes="secondary"
-                                HorizontalAlignment="Center"
-                                Command="{Binding AddConditionCommand}"
-                                AutomationProperties.Name="Ajouter une condition">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
-                                <TextBlock Text="Ajouter une condition" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
+                        <WrapPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <Button Classes="secondary"
+                                    Margin="0,0,6,4"
+                                    Command="{Binding AddConditionCommand}"
+                                    AutomationProperties.Name="Ajouter une condition">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                                    <TextBlock Text="Ajouter une condition" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Classes="secondary"
+                                    Margin="0,0,0,4"
+                                    Command="{Binding AddConditionalRuleCommand}"
+                                    AutomationProperties.Name="Ajouter une règle Si Alors">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                                    <TextBlock Text="Ajouter un « Si ... Alors ... »" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </WrapPanel>
                     </StackPanel>
 
                     <ScrollViewer IsVisible="{Binding #ConditionItems.ItemCount, Converter={x:Static conv:CollectionCountConverters.IsPositive}}"
@@ -225,26 +237,68 @@
                                                 Padding="8,6"
                                                 Margin="0,0,0,4">
                                             <StackPanel Spacing="6">
-                                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="4">
+                                                <!-- En-tête de la règle -->
+                                                <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" ColumnSpacing="4">
                                                     <CheckBox Grid.Column="0"
                                                               IsChecked="{Binding IsEnabled}"
-                                                              ToolTip.Tip="Activer ou désactiver cette condition"
+                                                              ToolTip.Tip="Activer ou désactiver cette règle"
                                                               VerticalAlignment="Center"
-                                                              AutomationProperties.Name="Activer la condition" />
+                                                              AutomationProperties.Name="Activer la règle" />
 
-                                                    <ComboBox Grid.Column="1"
-                                                              ItemsSource="{x:Static vm:ExtractionConditionsViewModel.OperatorOptions}"
-                                                              SelectedItem="{Binding Operator}"
-                                                              HorizontalAlignment="Stretch"
-                                                              AutomationProperties.Name="Opérateur de condition">
-                                                        <ComboBox.ItemTemplate>
-                                                            <DataTemplate x:DataType="models:ExtractionConditionOperator">
-                                                                <TextBlock Text="{Binding Converter={x:Static conv:ExtractionConditionOperatorConverters.ToLabel}}" />
-                                                            </DataTemplate>
-                                                        </ComboBox.ItemTemplate>
-                                                    </ComboBox>
+                                                    <Button Grid.Column="1"
+                                                            Classes.primary="{Binding IsConditional}"
+                                                            Classes.secondary="{Binding IsSimpleRule}"
+                                                            Content="Si"
+                                                            Height="24"
+                                                            MinHeight="24"
+                                                            Padding="7,0"
+                                                            FontSize="{DynamicResource FontSizeCaption}"
+                                                            Command="{Binding #ConditionsRoot.ViewModel.ToggleConditionalRuleCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            ToolTip.Tip="Basculer entre règle simple et règle conditionnelle Si / Alors / Sinon"
+                                                            AutomationProperties.Name="Basculer en mode Si Alors Sinon" />
 
-                                                    <Button Grid.Column="2"
+                                                    <Panel Grid.Column="2">
+                                                        <ComboBox IsVisible="{Binding IsSimpleRule}"
+                                                                  ItemsSource="{x:Static vm:ExtractionConditionsViewModel.OperatorOptions}"
+                                                                  SelectedItem="{Binding Operator}"
+                                                                  HorizontalAlignment="Stretch"
+                                                                  AutomationProperties.Name="Opérateur de condition">
+                                                            <ComboBox.ItemTemplate>
+                                                                <DataTemplate x:DataType="models:ExtractionConditionOperator">
+                                                                    <TextBlock Text="{Binding Converter={x:Static conv:ExtractionConditionOperatorConverters.ToLabel}}" />
+                                                                </DataTemplate>
+                                                            </ComboBox.ItemTemplate>
+                                                        </ComboBox>
+
+                                                        <Grid IsVisible="{Binding IsConditional}"
+                                                              ColumnDefinitions="Auto,*"
+                                                              ColumnSpacing="6">
+                                                            <Border Grid.Column="0"
+                                                                    Background="{DynamicResource AccentSoftBrush}"
+                                                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                                    Padding="6,2"
+                                                                    VerticalAlignment="Center">
+                                                                <TextBlock Text="SI"
+                                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                                           FontWeight="SemiBold"
+                                                                           Foreground="{DynamicResource AccentBrush}" />
+                                                            </Border>
+                                                            <ComboBox Grid.Column="1"
+                                                                      ItemsSource="{x:Static vm:ExtractionConditionsViewModel.FilterOperatorOptions}"
+                                                                      SelectedItem="{Binding Operator}"
+                                                                      HorizontalAlignment="Stretch"
+                                                                      AutomationProperties.Name="Test de la condition Si">
+                                                                <ComboBox.ItemTemplate>
+                                                                    <DataTemplate x:DataType="models:ExtractionConditionOperator">
+                                                                        <TextBlock Text="{Binding Converter={x:Static conv:ExtractionConditionOperatorConverters.ToLabel}}" />
+                                                                    </DataTemplate>
+                                                                </ComboBox.ItemTemplate>
+                                                            </ComboBox>
+                                                        </Grid>
+                                                    </Panel>
+
+                                                    <Button Grid.Column="3"
                                                             Classes="icon"
                                                             Command="{Binding #ConditionsRoot.ViewModel.MoveConditionUpCommand}"
                                                             CommandParameter="{Binding}"
@@ -253,7 +307,7 @@
                                                         <Path Classes="iconStroke" Data="{StaticResource IconArrowUp}" />
                                                     </Button>
 
-                                                    <Button Grid.Column="3"
+                                                    <Button Grid.Column="4"
                                                             Classes="icon"
                                                             Command="{Binding #ConditionsRoot.ViewModel.MoveConditionDownCommand}"
                                                             CommandParameter="{Binding}"
@@ -262,7 +316,7 @@
                                                         <Path Classes="iconStroke" Data="{StaticResource IconArrowDown}" />
                                                     </Button>
 
-                                                    <Button Grid.Column="4"
+                                                    <Button Grid.Column="5"
                                                             Classes="icon danger"
                                                             Command="{Binding #ConditionsRoot.ViewModel.RemoveConditionCommand}"
                                                             CommandParameter="{Binding}"
@@ -340,27 +394,72 @@
                                                               VerticalAlignment="Center"
                                                               AutomationProperties.Name="Ignorer la casse" />
                                                 </WrapPanel>
+
+                                                <!-- Branches ALORS / SINON lorsque la règle est conditionnelle -->
+                                                <StackPanel IsVisible="{Binding IsConditional}" Spacing="6">
+                                                    <Border Background="{DynamicResource SurfaceAltBrush}"
+                                                            BorderBrush="{DynamicResource BorderBrush}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="{DynamicResource ControlCornerRadius}"
+                                                            Padding="8,6">
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="ALORS"
+                                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{DynamicResource AccentBrush}" />
+                                                            <Panel>
+                                                                <views:ConditionalBranchEditor DataContext="{Binding ThenBranch}" />
+                                                            </Panel>
+                                                        </StackPanel>
+                                                    </Border>
+
+                                                    <Border Background="{DynamicResource SurfaceAltBrush}"
+                                                            BorderBrush="{DynamicResource BorderBrush}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="{DynamicResource ControlCornerRadius}"
+                                                            Padding="8,6">
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="SINON"
+                                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                                            <Panel>
+                                                                <views:ConditionalBranchEditor DataContext="{Binding ElseBranch}" />
+                                                            </Panel>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
                                             </StackPanel>
                                         </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
 
-                            <Button Classes="ghost"
-                                    HorizontalAlignment="Left"
-                                    Command="{Binding AddConditionCommand}"
-                                    AutomationProperties.Name="Ajouter une condition">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
-                                    <TextBlock Text="Ajouter une condition" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button>
+                            <WrapPanel Orientation="Horizontal">
+                                <Button Classes="ghost"
+                                        Margin="0,0,6,0"
+                                        Command="{Binding AddConditionCommand}"
+                                        AutomationProperties.Name="Ajouter une condition">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                                        <TextBlock Text="Ajouter une condition" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Classes="ghost"
+                                        Command="{Binding AddConditionalRuleCommand}"
+                                        AutomationProperties.Name="Ajouter une règle Si Alors">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconPlus}" />
+                                        <TextBlock Text="Ajouter un « Si ... Alors ... »" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </WrapPanel>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
 
                 <TextBlock Grid.Row="2"
-                           Text="Astuce : sélectionne un morceau à gauche (ex. un hash hex) pour générer une règle automatiquement, ou enchaîne Découper / Entre délimiteurs / Regex extraire."
+                           Text="Astuce : active « Si » sur une règle pour décider quoi faire selon l'égalité, l'inégalité, l'inclusion ou l'exclusion (garder, exclure, transformer ou valeur de repli)."
                            FontSize="{DynamicResource FontSizeCaption}"
                            Foreground="{DynamicResource TextFaintBrush}"
                            TextWrapping="Wrap" />
@@ -390,7 +489,7 @@
                            TextWrapping="Wrap" />
 
                 <TextBlock Grid.Row="2"
-                           Text="Syntaxes : mode: et|ou · unique: true|false · regex_extraire &quot;(...)&quot; groupe=1 · regex_extraire_tout &quot;(...)&quot; · decouper &quot;/&quot; index=-1 · entre &quot;A&quot; -&gt; &quot;B&quot; · remplacer &quot;A&quot; -&gt; &quot;B&quot; · regex_remplacer · nettoyer · minuscules · majuscules · contient · !contient · regex · non_vide · longueur &gt;= N · nombre &gt; N · [icase] · [inactif]"
+                           Text="Syntaxes : si &lt;test&gt; alors &lt;action&gt; sinon &lt;action&gt; | egal | != | dans_liste &quot;a,b&quot; | !dans_liste | !commence | !finit | est_vide | non_vide | nombre == != &gt; &gt;= &lt; &lt;= | longueur == &gt;= &lt;= | prefixer | suffixer | definir | garder | exclure | [icase] | [inactif]"
                            FontSize="{DynamicResource FontSizeCaption}"
                            Foreground="{DynamicResource TextFaintBrush}"
                            TextWrapping="Wrap" />

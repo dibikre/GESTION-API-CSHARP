@@ -16,6 +16,14 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
     public static IReadOnlyList<ExtractionConditionOperator> OperatorOptions { get; } =
         Enum.GetValues<ExtractionConditionOperator>();
 
+    public static IReadOnlyList<ExtractionConditionOperator> FilterOperatorOptions { get; } =
+        Enum.GetValues<ExtractionConditionOperator>()
+            .Where(ChainExtractionCondition.IsFilterOperator)
+            .ToArray();
+
+    public static IReadOnlyList<ExtractionConditionalAction> ConditionalActionOptions { get; } =
+        Enum.GetValues<ExtractionConditionalAction>();
+
     public static IReadOnlyList<ExtractionConditionMatchMode> MatchModeOptions { get; } =
         Enum.GetValues<ExtractionConditionMatchMode>();
 
@@ -292,6 +300,32 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void AddConditionalRule()
+    {
+        var cond = new ChainExtractionCondition
+        {
+            IsConditional = true,
+            Operator = ExtractionConditionOperator.Contains
+        };
+        cond.ReplaceBranches(
+            new ChainConditionalBranch { Action = ExtractionConditionalAction.Keep },
+            new ChainConditionalBranch { Action = ExtractionConditionalAction.Exclude });
+        AddTrackedCondition(cond);
+        RecalculatePreview();
+    }
+
+    [RelayCommand]
+    private void ToggleConditionalRule(ChainExtractionCondition? condition)
+    {
+        if (condition is null)
+        {
+            return;
+        }
+
+        condition.IsConditional = !condition.IsConditional;
+    }
+
+    [RelayCommand]
     private void RemoveCondition(ChainExtractionCondition? condition)
     {
         if (condition is null)
@@ -534,7 +568,7 @@ public partial class ExtractionConditionsViewModel : ViewModelBase
             mode.ToString(),
             dedup ? "1" : "0",
             string.Join(";", conditions.Select(c =>
-                $"{(c.IsEnabled ? '1' : '0')}:{(int)c.Operator}:{c.Value}:{c.Replacement}:{c.RegexGroup}:{c.SegmentIndex}:{(c.IgnoreCase ? '1' : '0')}")));
+                $"{(c.IsEnabled ? '1' : '0')}:{(c.IsConditional ? '1' : '0')}:{(int)c.Operator}:{c.Value}:{c.Replacement}:{c.RegexGroup}:{c.SegmentIndex}:{(c.IgnoreCase ? '1' : '0')}|{(int)c.ThenBranch.Action}:{c.ThenBranch.Value}:{c.ThenBranch.Replacement}:{c.ThenBranch.RegexGroup}:{c.ThenBranch.SegmentIndex}:{(c.ThenBranch.IgnoreCase ? '1' : '0')}|{(int)c.ElseBranch.Action}:{c.ElseBranch.Value}:{c.ElseBranch.Replacement}:{c.ElseBranch.RegexGroup}:{c.ElseBranch.SegmentIndex}:{(c.ElseBranch.IgnoreCase ? '1' : '0')}")));
     }
 
     private static string TruncatePreview(string text, int maxLen) =>

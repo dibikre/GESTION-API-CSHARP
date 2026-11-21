@@ -126,7 +126,9 @@ internal static class JavaScriptChainCliEmitter
                 sb.AppendLine("        conditions: [");
                 foreach (var c in ext.Conditions)
                 {
-                    sb.AppendLine($"          {{ op: {EscapeString(c.Operator)}, value: {EscapeString(c.Value)}, replacement: {EscapeString(c.Replacement)}, regexGroup: {c.RegexGroup}, segmentIndex: {c.SegmentIndex}, ignoreCase: {FormatBool(c.IgnoreCase)} }},");
+                    var thenJs = $"{{ action: {EscapeString(c.ThenBranch.Action)}, value: {EscapeString(c.ThenBranch.Value)}, replacement: {EscapeString(c.ThenBranch.Replacement)}, regexGroup: {c.ThenBranch.RegexGroup}, segmentIndex: {c.ThenBranch.SegmentIndex}, ignoreCase: {FormatBool(c.ThenBranch.IgnoreCase)} }}";
+                    var elseJs = $"{{ action: {EscapeString(c.ElseBranch.Action)}, value: {EscapeString(c.ElseBranch.Value)}, replacement: {EscapeString(c.ElseBranch.Replacement)}, regexGroup: {c.ElseBranch.RegexGroup}, segmentIndex: {c.ElseBranch.SegmentIndex}, ignoreCase: {FormatBool(c.ElseBranch.IgnoreCase)} }}";
+                    sb.AppendLine($"          {{ isConditional: {FormatBool(c.IsConditional)}, op: {EscapeString(c.Operator)}, value: {EscapeString(c.Value)}, replacement: {EscapeString(c.Replacement)}, regexGroup: {c.RegexGroup}, segmentIndex: {c.SegmentIndex}, ignoreCase: {FormatBool(c.IgnoreCase)}, thenBranch: {thenJs}, elseBranch: {elseJs} }},");
                 }
                 sb.AppendLine("        ],");
                 sb.AppendLine("      },");
@@ -505,8 +507,19 @@ function compileConditionRegex(pattern, ignoreCase, global = false) {
   }
 }
 
+function parseConditionList(raw) {
+  return String(raw || "").split(/[,;|\r\n]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+function tryParseCondNumber(raw) {
+  const s = String(raw || "").trim().replace(",", ".");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 function evalConditionFilter(cond, value) {
-  const target = cond.value;
+  const target = cond.value || "";
   const icase = Boolean(cond.ignoreCase);
   const vCmp = icase ? value.toLowerCase() : value;
   const tCmp = icase ? target.toLowerCase() : target;
@@ -515,37 +528,59 @@ function evalConditionFilter(cond, value) {
     case "contains": return vCmp.includes(tCmp);
     case "not_contains": return !vCmp.includes(tCmp);
     case "starts_with": return vCmp.startsWith(tCmp);
+    case "not_starts_with": return !vCmp.startsWith(tCmp);
     case "ends_with": return vCmp.endsWith(tCmp);
+    case "not_ends_with": return !vCmp.endsWith(tCmp);
     case "equals": return vCmp === tCmp;
     case "not_equals": return vCmp !== tCmp;
+    case "in_list": {
+      const items = parseConditionList(target);
+      return items.some((it) => vCmp === (icase ? it.toLowerCase() : it));
+    }
+    case "not_in_list": {
+      const items = parseConditionList(target);
+      return !items.some((it) => vCmp === (icase ? it.toLowerCase() : it));
+    }
     case "regex_match": return compileConditionRegex(target, icase).test(value);
     case "regex_not_match": return !compileConditionRegex(target, icase).test(value);
+    case "is_empty": return value.trim().length === 0;
     case "not_empty": return value.trim().length > 0;
+    case "length_equals": return value.length === Number.parseInt(target.trim(), 10);
     case "length_min": return value.length >= Number.parseInt(target.trim(), 10);
     case "length_max": return value.length <= Number.parseInt(target.trim(), 10);
-    case "greater_than": {
-      const n = Number(value.trim().replace(",", "."));
-      return Number.isFinite(n) && n > Number(target.trim().replace(",", "."));
-    }
-    case "less_than": {
-      const n = Number(value.trim().replace(",", "."));
-      return Number.isFinite(n) && n < Number(target.trim().replace(",", "."));
+    case "number_equals":
+    case "number_not_equals":
+    case "greater_than":
+    case "greater_or_equal":
+    case "less_than":
+    case "less_or_equal": {
+      const vNum = tryParseCondNumber(value);
+      const tNum = tryParseCondNumber(target);
+      if (vNum === null || tNum === null) return false;
+      if (cond.op === "number_equals") return vNum === tNum;
+      if (cond.op === "number_not_equals") return vNum !== tNum;
+      if (cond.op === "greater_than") return vNum > tNum;
+      if (cond.op === "greater_or_equal") return vNum >= tNum;
+      if (cond.op === "less_than") return vNum < tNum;
+      return vNum <= tNum;
     }
     default: return true;
   }
 }
 
-function applyConditionExtract(cond, value) {
-  const match = compileConditionRegex(cond.value, Boolean(cond.ignoreCase)).exec(value);
+function escapeRegExpLiteral(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function applyConditionExtractParts(pattern, grp, icase, value) {
+  const match = compileConditionRegex(pattern, icase).exec(value);
   if (!match) return { ok: false, value: "" };
-  const grp = Number.isInteger(cond.regexGroup) ? cond.regexGroup : 1;
   if (grp >= match.length || match[grp] === undefined) return { ok: false, value: "" };
   return { ok: true, value: match[grp] };
 }
 
-function applyConditionReplace(cond, value) {
-  const regex = compileConditionRegex(cond.value, Boolean(cond.ignoreCase), true);
-  const rawTpl = cond.replacement || "";
+function applyConditionReplaceParts(pattern, rawTpl, icase, value) {
+  const regex = compileConditionRegex(pattern, icase, true);
   const jsTpl = rawTpl.replace(/\$\$|\$0|\$\{(\d+)\}/g, (tok, braced) => {
     if (tok === "$$") return "$$";
     if (tok === "$0") return "$&";
@@ -554,24 +589,15 @@ function applyConditionReplace(cond, value) {
   return value.replace(regex, jsTpl);
 }
 
-function escapeRegExpLiteral(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function applyConditionReplaceText(cond, value) {
-  const target = cond.value || "";
-  const rep = cond.replacement || "";
+function applyConditionReplaceTextParts(target, rep, icase, value) {
   if (!target) return value;
-  if (cond.ignoreCase) {
+  if (icase) {
     return value.replace(new RegExp(escapeRegExpLiteral(target), "gi"), () => rep);
   }
   return value.split(target).join(rep);
 }
 
-function applyConditionBetween(cond, value) {
-  const left = cond.value || "";
-  const right = cond.replacement || "";
-  const icase = Boolean(cond.ignoreCase);
+function applyConditionBetweenParts(left, right, icase, value) {
   const hay = icase ? value.toLowerCase() : value;
   let startIdx = 0;
   if (left) {
@@ -589,10 +615,8 @@ function applyConditionBetween(cond, value) {
   return { ok: true, value: value.slice(startIdx) };
 }
 
-function applyConditionSplitPart(cond, value) {
-  const sep = cond.value || "";
-  const segIdx = Number.isInteger(cond.segmentIndex) ? cond.segmentIndex : 0;
-  const parts = cond.ignoreCase
+function applyConditionSplitPartParts(sep, segIdx, icase, value) {
+  const parts = icase
     ? value.split(new RegExp(escapeRegExpLiteral(sep), "i"))
     : value.split(sep);
   const resolved = segIdx < 0 ? parts.length + segIdx : segIdx;
@@ -600,66 +624,152 @@ function applyConditionSplitPart(cond, value) {
   return { ok: true, value: parts[resolved] };
 }
 
-function applyConditionTrim(cond, value) {
-  const chars = cond.value || "";
+function applyConditionTrimParts(chars, value) {
   if (!chars) return value.trim();
   const escaped = escapeRegExpLiteral(chars);
   return value.replace(new RegExp(`^[${escaped}]+|[${escaped}]+$`, "g"), "");
 }
 
+function executeActionBranch(action, val, rep, grp, segIdx, icase, curr, out) {
+  switch (action) {
+    case "keep":
+      out.push(curr);
+      break;
+    case "exclude":
+      break;
+    case "set_value":
+      out.push(val);
+      break;
+    case "prepend_text":
+      out.push(val + curr);
+      break;
+    case "append_text":
+      out.push(curr + val);
+      break;
+    case "regex_extract": {
+      const ex = applyConditionExtractParts(val, grp, icase, curr);
+      if (ex.ok) out.push(ex.value);
+      break;
+    }
+    case "regex_extract_all": {
+      const regex = compileConditionRegex(val, icase, true);
+      for (const m of curr.matchAll(regex)) {
+        if (grp < m.length && m[grp] !== undefined) out.push(m[grp]);
+      }
+      break;
+    }
+    case "regex_replace":
+      out.push(applyConditionReplaceParts(val, rep, icase, curr));
+      break;
+    case "replace_text":
+      out.push(applyConditionReplaceTextParts(val, rep, icase, curr));
+      break;
+    case "between": {
+      const bt = applyConditionBetweenParts(val, rep, icase, curr);
+      if (bt.ok) out.push(bt.value);
+      break;
+    }
+    case "split_part": {
+      const sp = applyConditionSplitPartParts(val, segIdx, icase, curr);
+      if (sp.ok) out.push(sp.value);
+      break;
+    }
+    case "trim":
+      out.push(applyConditionTrimParts(val, curr));
+      break;
+    case "to_lower":
+      out.push(curr.toLowerCase());
+      break;
+    case "to_upper":
+      out.push(curr.toUpperCase());
+      break;
+    default:
+      out.push(curr);
+      break;
+  }
+}
+
 function applySingleRuleBatch(cond, inputs) {
   const out = [];
+  if (cond.isConditional) {
+    const thenB = cond.thenBranch || { action: "keep" };
+    const elseB = cond.elseBranch || { action: "exclude" };
+    for (const curr of inputs) {
+      const br = evalConditionFilter(cond, curr) ? thenB : elseB;
+      executeActionBranch(
+        br.action || "keep",
+        br.value || "",
+        br.replacement || "",
+        Number.isInteger(br.regexGroup) ? br.regexGroup : 1,
+        Number.isInteger(br.segmentIndex) ? br.segmentIndex : 0,
+        Boolean(br.ignoreCase),
+        curr,
+        out
+      );
+    }
+    return out;
+  }
+
   for (const curr of inputs) {
-    switch (cond.op) {
-      case "regex_extract": {
-        const ex = applyConditionExtract(cond, curr);
-        if (ex.ok) out.push(ex.value);
-        break;
-      }
-      case "regex_extract_all": {
-        const regex = compileConditionRegex(cond.value, Boolean(cond.ignoreCase), true);
-        const grp = Number.isInteger(cond.regexGroup) ? cond.regexGroup : 1;
-        for (const m of curr.matchAll(regex)) {
-          if (grp < m.length && m[grp] !== undefined) out.push(m[grp]);
-        }
-        break;
-      }
-      case "regex_replace":
-        out.push(applyConditionReplace(cond, curr));
-        break;
-      case "replace_text":
-        out.push(applyConditionReplaceText(cond, curr));
-        break;
-      case "between": {
-        const bt = applyConditionBetween(cond, curr);
-        if (bt.ok) out.push(bt.value);
-        break;
-      }
-      case "split_part": {
-        const sp = applyConditionSplitPart(cond, curr);
-        if (sp.ok) out.push(sp.value);
-        break;
-      }
-      case "trim":
-        out.push(applyConditionTrim(cond, curr));
-        break;
-      case "to_lower":
-        out.push(curr.toLowerCase());
-        break;
-      case "to_upper":
-        out.push(curr.toUpperCase());
-        break;
-      default:
-        if (evalConditionFilter(cond, curr)) out.push(curr);
-        break;
+    if (TRANSFORM_OPS.has(cond.op)) {
+      executeActionBranch(
+        cond.op,
+        cond.value || "",
+        cond.replacement || "",
+        Number.isInteger(cond.regexGroup) ? cond.regexGroup : 1,
+        Number.isInteger(cond.segmentIndex) ? cond.segmentIndex : 0,
+        Boolean(cond.ignoreCase),
+        curr,
+        out
+      );
+    } else if (evalConditionFilter(cond, curr)) {
+      out.push(curr);
     }
   }
   return out;
 }
 
-const TRANSFORM_OPS = new Set(["regex_extract", "regex_extract_all", "regex_replace", "replace_text", "between", "split_part", "trim", "to_lower", "to_upper"]);
+const TRANSFORM_OPS = new Set(["regex_extract", "regex_extract_all", "regex_replace", "replace_text", "prepend_text", "append_text", "set_value", "between", "split_part", "trim", "to_lower", "to_upper"]);
 const EXTRACT_OPS = new Set(["regex_extract", "regex_extract_all"]);
-const NO_VALUE_OPS = new Set(["not_empty", "trim", "to_lower", "to_upper"]);
+const NO_VAL_PREDICATE_OPS = new Set(["is_empty", "not_empty"]);
+const NO_VAL_ACTION_OPS = new Set(["keep", "exclude", "set_value", "trim", "to_lower", "to_upper"]);
+
+function validateBranchSpec(action, val, rep, icase) {
+  if (action === "between") {
+    if (!val && !rep) return "Condition entre délimiteurs vide.";
+  } else if (!NO_VAL_ACTION_OPS.has(action) && !val) {
+    return "Action ou transformation vide.";
+  }
+  if (action === "regex_extract" || action === "regex_extract_all" || action === "regex_replace") {
+    try {
+      compileConditionRegex(val, icase, action !== "regex_extract");
+    } catch (err) {
+      return `Condition Regex invalide : ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  return null;
+}
+
+function validatePredicateSpec(op, val, icase) {
+  if (!NO_VAL_PREDICATE_OPS.has(op) && !val) {
+    return "Condition d'extraction vide.";
+  }
+  if ((op === "in_list" || op === "not_in_list") && parseConditionList(val).length === 0) {
+    return "Liste de valeurs vide.";
+  }
+  if (op === "regex_match" || op === "regex_not_match") {
+    try {
+      compileConditionRegex(val, icase, false);
+    } catch (err) {
+      return `Condition Regex invalide : ${err instanceof Error ? err.message : String(err)}`;
+    }
+  } else if (op === "length_equals" || op === "length_min" || op === "length_max") {
+    if (!/^\d+$/.test(val.trim())) return `Longueur invalide : ${val}`;
+  } else if (op === "number_equals" || op === "number_not_equals" || op === "greater_than" || op === "greater_or_equal" || op === "less_than" || op === "less_or_equal") {
+    if (tryParseCondNumber(val) === null) return `Nombre invalide : ${val}`;
+  }
+  return null;
+}
 
 function applyExtractionConditions(rawValues, ext) {
   const conditions = Array.isArray(ext.conditions) ? ext.conditions : [];
@@ -669,23 +779,19 @@ function applyExtractionConditions(rawValues, ext) {
   }
 
   for (const cond of conditions) {
-    if (cond.op === "between") {
-      if (!cond.value && !cond.replacement) return { ok: false, error: "Condition entre délimiteurs vide." };
-    } else if (!NO_VALUE_OPS.has(cond.op) && !cond.value) {
-      return { ok: false, error: "Condition d'extraction vide." };
-    }
-    if (cond.op === "regex_match" || cond.op === "regex_not_match" || cond.op === "regex_extract" || cond.op === "regex_extract_all" || cond.op === "regex_replace") {
-      try {
-        compileConditionRegex(cond.value, Boolean(cond.ignoreCase), cond.op === "regex_replace" || cond.op === "regex_extract_all");
-      } catch (err) {
-        return { ok: false, error: `Condition Regex invalide : ${err instanceof Error ? err.message : String(err)}` };
+    if (cond.isConditional) {
+      const pErr = validatePredicateSpec(cond.op, cond.value || "", Boolean(cond.ignoreCase));
+      if (pErr) return { ok: false, error: pErr };
+      for (const br of [cond.thenBranch || { action: "keep" }, cond.elseBranch || { action: "keep" }]) {
+        const bErr = validateBranchSpec(br.action || "keep", br.value || "", br.replacement || "", Boolean(br.ignoreCase));
+        if (bErr) return { ok: false, error: bErr };
       }
-    } else if (cond.op === "length_min" || cond.op === "length_max") {
-      const n = Number.parseInt(cond.value.trim(), 10);
-      if (!Number.isFinite(n) || n < 0) return { ok: false, error: `Longueur invalide : ${cond.value}` };
-    } else if (cond.op === "greater_than" || cond.op === "less_than") {
-      const n = Number(cond.value.trim().replace(",", "."));
-      if (!Number.isFinite(n)) return { ok: false, error: `Nombre invalide : ${cond.value}` };
+    } else if (TRANSFORM_OPS.has(cond.op)) {
+      const bErr = validateBranchSpec(cond.op, cond.value || "", cond.replacement || "", Boolean(cond.ignoreCase));
+      if (bErr) return { ok: false, error: bErr };
+    } else {
+      const pErr = validatePredicateSpec(cond.op, cond.value || "", Boolean(cond.ignoreCase));
+      if (pErr) return { ok: false, error: pErr };
     }
   }
 
@@ -701,9 +807,9 @@ function applyExtractionConditions(rawValues, ext) {
         if (currItems.length === 0) break;
       }
     } else {
-      const filters = conditions.filter((c) => !TRANSFORM_OPS.has(c.op));
-      const extracts = conditions.filter((c) => EXTRACT_OPS.has(c.op));
-      const transforms = conditions.filter((c) => TRANSFORM_OPS.has(c.op) && !EXTRACT_OPS.has(c.op));
+      const filters = conditions.filter((c) => !c.isConditional && !TRANSFORM_OPS.has(c.op));
+      const extracts = conditions.filter((c) => !c.isConditional && EXTRACT_OPS.has(c.op));
+      const transforms = conditions.filter((c) => c.isConditional || (TRANSFORM_OPS.has(c.op) && !EXTRACT_OPS.has(c.op)));
       if (filters.length > 0 && !filters.some((c) => evalConditionFilter(c, raw))) {
         continue;
       }
@@ -776,7 +882,9 @@ function runExtraction(ext, respBody, respHeaders) {
   }
   const filtered = applyExtractionConditions([rawOutcome.value], ext);
   if (filtered.ok && filtered.values.length > 0) {
-    const hasAll = ext.conditions.some((c) => c.op === "regex_extract_all");
+    const hasAll = ext.conditions.some((c) =>
+      (!c.isConditional && c.op === "regex_extract_all") ||
+      (c.isConditional && ((c.thenBranch && c.thenBranch.action === "regex_extract_all") || (c.elseBranch && c.elseBranch.action === "regex_extract_all"))));
     return { ok: true, value: hasAll && filtered.values.length > 1 ? filtered.values.join(", ") : filtered.values[0] };
   }
   return { ok: false, value: filtered.error || "La valeur extraite ne satisfait pas les conditions." };

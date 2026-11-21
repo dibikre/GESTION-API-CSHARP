@@ -28,14 +28,13 @@ public static class ExtractionConditionSyntax
         if (conditions.Count == 0 && includeExamplesWhenEmpty)
         {
             sb.AppendLine();
-            sb.AppendLine("# Une condition par ligne (# ou // pour commenter) :");
+            sb.AppendLine("# Une règle par ligne (# ou // pour commenter) :");
             sb.AppendLine("# regex_extraire \"([0-9a-fA-F]{16,})\"");
-            sb.AppendLine("# regex_extraire_tout \"([0-9a-fA-F]{16,})\"");
             sb.AppendLine("# decouper \"/\" index=-1");
-            sb.AppendLine("# entre \"/avatars/\" -> \"-full\"");
-            sb.AppendLine("# remplacer \"-full\" -> \"\"");
-            sb.AppendLine("# contient \"master.m3u8\" [icase]");
-            sb.AppendLine("# nettoyer");
+            sb.AppendLine("# dans_liste \"200, 201, 204\"");
+            sb.AppendLine("# nombre >= 100");
+            sb.AppendLine("# si contient \"-full\" alors regex_extraire \"([0-9a-fA-F]{16,})\" sinon exclure");
+            sb.AppendLine("# si egal \"\" alors definir \"N/A\" sinon garder");
             return sb.ToString();
         }
 
@@ -157,47 +156,155 @@ public static class ExtractionConditionSyntax
         condition = null;
         error = null;
 
-        var tokens = TokenizeLine(line, out var tokError);
+        var rawTokens = TokenizeLine(line, out var tokError);
         if (tokError is not null)
         {
             error = tokError;
             return false;
         }
 
-        if (tokens.Count == 0)
+        if (rawTokens.Count == 0)
         {
             error = "ligne vide.";
             return false;
         }
 
         var isEnabled = true;
-        var ignoreCase = false;
-        var cleaned = new List<(string Text, bool Quoted)>(tokens.Count);
-        foreach (var tok in tokens)
+        var tokensWithoutDisabled = new List<(string Text, bool Quoted)>(rawTokens.Count);
+        foreach (var tok in rawTokens)
         {
-            if (!tok.Quoted && tok.Text.Equals("[inactif]", StringComparison.OrdinalIgnoreCase))
+            if (!tok.Quoted && (tok.Text.Equals("[inactif]", StringComparison.OrdinalIgnoreCase) ||
+                                tok.Text.Equals("[off]", StringComparison.OrdinalIgnoreCase)))
             {
                 isEnabled = false;
-            }
-            else if (!tok.Quoted && tok.Text.Equals("[off]", StringComparison.OrdinalIgnoreCase))
-            {
-                isEnabled = false;
-            }
-            else if (!tok.Quoted && (tok.Text.Equals("[icase]", StringComparison.OrdinalIgnoreCase) ||
-                                     tok.Text.Equals("[i]", StringComparison.OrdinalIgnoreCase)))
-            {
-                ignoreCase = true;
-            }
-            else if (!tok.Quoted && tok.Text.Equals("[casse]", StringComparison.OrdinalIgnoreCase))
-            {
-                ignoreCase = false;
             }
             else
             {
-                cleaned.Add(tok);
+                tokensWithoutDisabled.Add(tok);
             }
         }
 
+        if (tokensWithoutDisabled.Count == 0)
+        {
+            error = "opérateur manquant.";
+            return false;
+        }
+
+        if (!tokensWithoutDisabled[0].Quoted &&
+            (tokensWithoutDisabled[0].Text.Equals("si", StringComparison.OrdinalIgnoreCase) ||
+             tokensWithoutDisabled[0].Text.Equals("if", StringComparison.OrdinalIgnoreCase)))
+        {
+            return TryParseConditionalRule(tokensWithoutDisabled, isEnabled, out condition, out error);
+        }
+
+        return TryParseSimpleRule(tokensWithoutDisabled, isEnabled, out condition, out error);
+    }
+
+    private static bool TryParseConditionalRule(
+        List<(string Text, bool Quoted)> tokens,
+        bool isEnabled,
+        out ChainExtractionCondition? condition,
+        out string? error)
+    {
+        condition = null;
+        error = null;
+
+        var alorsIdx = -1;
+        var sinonIdx = -1;
+        for (var i = 1; i < tokens.Count; i++)
+        {
+            if (tokens[i].Quoted)
+            {
+                continue;
+            }
+
+            if (alorsIdx < 0 && (tokens[i].Text.Equals("alors", StringComparison.OrdinalIgnoreCase) ||
+                                 tokens[i].Text.Equals("then", StringComparison.OrdinalIgnoreCase)))
+            {
+                alorsIdx = i;
+            }
+            else if (alorsIdx > 0 && sinonIdx < 0 &&
+                     (tokens[i].Text.Equals("sinon", StringComparison.OrdinalIgnoreCase) ||
+                      tokens[i].Text.Equals("else", StringComparison.OrdinalIgnoreCase)))
+            {
+                sinonIdx = i;
+            }
+        }
+
+        if (alorsIdx < 0)
+        {
+            error = "mot-clé « alors » manquant dans la règle « si ... alors ... ».";
+            return false;
+        }
+
+        var siTokens = tokens.GetRange(1, alorsIdx - 1);
+        var alorsEnd = sinonIdx > 0 ? sinonIdx : tokens.Count;
+        var alorsTokens = tokens.GetRange(alorsIdx + 1, alorsEnd - (alorsIdx + 1));
+        var sinonTokens = sinonIdx > 0 ? tokens.GetRange(sinonIdx + 1, tokens.Count - (sinonIdx + 1)) : [];
+
+        if (siTokens.Count == 0)
+        {
+            error = "condition manquante après « si ».";
+            return false;
+        }
+
+        if (alorsTokens.Count == 0)
+        {
+            error = "action manquante après « alors ».";
+            return false;
+        }
+
+        if (!TryParseSimpleRule(siTokens, isEnabled, out var predRule, out var siErr))
+        {
+            error = $"clause SI : {siErr}";
+            return false;
+        }
+
+        if (!ChainExtractionCondition.IsFilterOperator(predRule!.Operator))
+        {
+            error = "la clause SI attend un test (contient, egal, dans_liste, nombre, regex, etc.).";
+            return false;
+        }
+
+        if (!TryParseBranchTokens(alorsTokens, out var thenBranch, out var thenErr))
+        {
+            error = $"clause ALORS : {thenErr}";
+            return false;
+        }
+
+        var elseBranch = new ChainConditionalBranch { Action = ExtractionConditionalAction.Keep };
+        if (sinonTokens.Count > 0)
+        {
+            if (!TryParseBranchTokens(sinonTokens, out var parsedElse, out var elseErr))
+            {
+                error = $"clause SINON : {elseErr}";
+                return false;
+            }
+            elseBranch = parsedElse!;
+        }
+
+        condition = new ChainExtractionCondition
+        {
+            IsEnabled = isEnabled,
+            IsConditional = true,
+            Operator = predRule.Operator,
+            Value = predRule.Value,
+            IgnoreCase = predRule.IgnoreCase
+        };
+        condition.ReplaceBranches(thenBranch!, elseBranch);
+        return true;
+    }
+
+    private static bool TryParseSimpleRule(
+        List<(string Text, bool Quoted)> tokens,
+        bool isEnabled,
+        out ChainExtractionCondition? condition,
+        out string? error)
+    {
+        condition = null;
+        error = null;
+
+        var ignoreCase = ExtractCaseFlags(tokens, out var cleaned);
         if (cleaned.Count == 0)
         {
             error = "opérateur manquant.";
@@ -211,7 +318,8 @@ public static class ExtractionConditionSyntax
             return false;
         }
 
-        if (op is ExtractionConditionOperator.NotEmpty
+        if (op is ExtractionConditionOperator.IsEmpty
+            or ExtractionConditionOperator.NotEmpty
             or ExtractionConditionOperator.ToLower
             or ExtractionConditionOperator.ToUpper)
         {
@@ -231,6 +339,18 @@ public static class ExtractionConditionSyntax
                 IsEnabled = isEnabled,
                 Operator = op,
                 Value = trimChars
+            };
+            return true;
+        }
+
+        if (op == ExtractionConditionOperator.SetValue)
+        {
+            var newVal = idx < cleaned.Count ? cleaned[idx++].Text : string.Empty;
+            condition = new ChainExtractionCondition
+            {
+                IsEnabled = isEnabled,
+                Operator = op,
+                Value = newVal
             };
             return true;
         }
@@ -263,41 +383,17 @@ public static class ExtractionConditionSyntax
         else if (op is ExtractionConditionOperator.RegexExtract or ExtractionConditionOperator.RegexExtractAll
                  && idx < cleaned.Count)
         {
-            var grpTok = cleaned[idx].Text;
-            if (grpTok.StartsWith("groupe=", StringComparison.OrdinalIgnoreCase))
+            if (!TryParseGroupToken(cleaned[idx].Text, out regexGroup, out error))
             {
-                grpTok = grpTok[7..];
-            }
-            else if (grpTok.StartsWith("group=", StringComparison.OrdinalIgnoreCase))
-            {
-                grpTok = grpTok[6..];
-            }
-
-            if (!int.TryParse(grpTok, NumberStyles.Integer, CultureInfo.InvariantCulture, out regexGroup) || regexGroup < 0)
-            {
-                error = $"index de groupe invalide « {cleaned[idx].Text} ».";
                 return false;
             }
         }
         else if (op == ExtractionConditionOperator.SplitPart && idx < cleaned.Count)
         {
-            var idxTok = cleaned[idx].Text;
-            if (idxTok.StartsWith("index=", StringComparison.OrdinalIgnoreCase))
+            if (!TryParseIndexToken(cleaned[idx].Text, out segmentIndex, out error))
             {
-                idxTok = idxTok[6..];
-            }
-            else if (idxTok.StartsWith("part=", StringComparison.OrdinalIgnoreCase))
-            {
-                idxTok = idxTok[5..];
-            }
-
-            if (!int.TryParse(idxTok, NumberStyles.Integer, CultureInfo.InvariantCulture, out segmentIndex))
-            {
-                error = $"index de découpage invalide « {cleaned[idx].Text} ».";
                 return false;
             }
-
-            segmentIndex = Math.Clamp(segmentIndex, -99, 99);
         }
 
         condition = new ChainExtractionCondition
@@ -310,6 +406,179 @@ public static class ExtractionConditionSyntax
             SegmentIndex = segmentIndex,
             IgnoreCase = ignoreCase
         };
+        return true;
+    }
+
+    private static bool TryParseBranchTokens(
+        List<(string Text, bool Quoted)> tokens,
+        out ChainConditionalBranch? branch,
+        out string? error)
+    {
+        branch = null;
+        error = null;
+
+        var ignoreCase = ExtractCaseFlags(tokens, out var cleaned);
+        if (cleaned.Count == 0)
+        {
+            error = "action manquante.";
+            return false;
+        }
+
+        var keyword = cleaned[0].Text.ToLowerInvariant();
+        if (keyword is "garder" or "keep")
+        {
+            branch = new ChainConditionalBranch { Action = ExtractionConditionalAction.Keep };
+            return true;
+        }
+
+        if (keyword is "exclure" or "exclude" or "supprimer" or "drop")
+        {
+            branch = new ChainConditionalBranch { Action = ExtractionConditionalAction.Exclude };
+            return true;
+        }
+
+        var idx = 0;
+        if (!TryMatchOperator(cleaned, ref idx, out var op, out var opErr) ||
+            !ExtractionBranchExecutor.TryMapTransformOperator(op, out var action))
+        {
+            error = opErr ?? $"action inconnue « {cleaned[0].Text} ».";
+            return false;
+        }
+
+        if (action is ExtractionConditionalAction.ToLower or ExtractionConditionalAction.ToUpper)
+        {
+            branch = new ChainConditionalBranch { Action = action };
+            return true;
+        }
+
+        if (action is ExtractionConditionalAction.Trim or ExtractionConditionalAction.SetValue)
+        {
+            var val = idx < cleaned.Count ? cleaned[idx++].Text : string.Empty;
+            branch = new ChainConditionalBranch { Action = action, Value = val };
+            return true;
+        }
+
+        if (idx >= cleaned.Count)
+        {
+            error = "valeur manquante après l'action.";
+            return false;
+        }
+
+        var value = cleaned[idx++].Text;
+        var replacement = string.Empty;
+        var regexGroup = 1;
+        var segmentIndex = 0;
+
+        if (action is ExtractionConditionalAction.RegexReplace
+            or ExtractionConditionalAction.ReplaceText
+            or ExtractionConditionalAction.Between)
+        {
+            if (idx < cleaned.Count && !cleaned[idx].Quoted && cleaned[idx].Text == "->")
+            {
+                idx++;
+            }
+
+            if (idx < cleaned.Count)
+            {
+                replacement = cleaned[idx++].Text;
+            }
+        }
+        else if (action is ExtractionConditionalAction.RegexExtract or ExtractionConditionalAction.RegexExtractAll
+                 && idx < cleaned.Count)
+        {
+            if (!TryParseGroupToken(cleaned[idx].Text, out regexGroup, out error))
+            {
+                return false;
+            }
+        }
+        else if (action == ExtractionConditionalAction.SplitPart && idx < cleaned.Count)
+        {
+            if (!TryParseIndexToken(cleaned[idx].Text, out segmentIndex, out error))
+            {
+                return false;
+            }
+        }
+
+        branch = new ChainConditionalBranch
+        {
+            Action = action,
+            Value = value,
+            Replacement = replacement,
+            RegexGroup = regexGroup,
+            SegmentIndex = segmentIndex,
+            IgnoreCase = ignoreCase
+        };
+        return true;
+    }
+
+    private static bool ExtractCaseFlags(
+        List<(string Text, bool Quoted)> tokens,
+        out List<(string Text, bool Quoted)> cleaned)
+    {
+        var ignoreCase = false;
+        cleaned = new List<(string Text, bool Quoted)>(tokens.Count);
+        foreach (var tok in tokens)
+        {
+            if (!tok.Quoted && (tok.Text.Equals("[icase]", StringComparison.OrdinalIgnoreCase) ||
+                                tok.Text.Equals("[i]", StringComparison.OrdinalIgnoreCase)))
+            {
+                ignoreCase = true;
+            }
+            else if (!tok.Quoted && tok.Text.Equals("[casse]", StringComparison.OrdinalIgnoreCase))
+            {
+                ignoreCase = false;
+            }
+            else
+            {
+                cleaned.Add(tok);
+            }
+        }
+
+        return ignoreCase;
+    }
+
+    private static bool TryParseGroupToken(string raw, out int regexGroup, out string? error)
+    {
+        error = null;
+        var grpTok = raw;
+        if (grpTok.StartsWith("groupe=", StringComparison.OrdinalIgnoreCase))
+        {
+            grpTok = grpTok[7..];
+        }
+        else if (grpTok.StartsWith("group=", StringComparison.OrdinalIgnoreCase))
+        {
+            grpTok = grpTok[6..];
+        }
+
+        if (!int.TryParse(grpTok, NumberStyles.Integer, CultureInfo.InvariantCulture, out regexGroup) || regexGroup < 0)
+        {
+            error = $"index de groupe invalide « {raw} ».";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseIndexToken(string raw, out int segmentIndex, out string? error)
+    {
+        error = null;
+        var idxTok = raw;
+        if (idxTok.StartsWith("index=", StringComparison.OrdinalIgnoreCase))
+        {
+            idxTok = idxTok[6..];
+        }
+        else if (idxTok.StartsWith("part=", StringComparison.OrdinalIgnoreCase))
+        {
+            idxTok = idxTok[5..];
+        }
+
+        if (!int.TryParse(idxTok, NumberStyles.Integer, CultureInfo.InvariantCulture, out segmentIndex))
+        {
+            error = $"index de découpage invalide « {raw} ».";
+            return false;
+        }
+
+        segmentIndex = Math.Clamp(segmentIndex, -99, 99);
         return true;
     }
 
@@ -327,11 +596,17 @@ public static class ExtractionConditionSyntax
         {
             if (idx + 1 >= tokens.Count)
             {
-                error = "opérateur >= ou <= attendu après « longueur ».";
+                error = "opérateur ==, >= ou <= attendu après « longueur ».";
                 return false;
             }
 
             var cmp = tokens[idx + 1].Text;
+            if (cmp is "==" or "=" or "egal")
+            {
+                op = ExtractionConditionOperator.LengthEquals;
+                idx += 2;
+                return true;
+            }
             if (cmp is ">=" or "min")
             {
                 op = ExtractionConditionOperator.LengthMin;
@@ -345,7 +620,7 @@ public static class ExtractionConditionSyntax
                 return true;
             }
 
-            error = $"comparateur inconnu « {cmp} » pour « longueur » (>= ou <=).";
+            error = $"comparateur inconnu « {cmp} » pour « longueur » (==, >= ou <=).";
             return false;
         }
 
@@ -353,25 +628,19 @@ public static class ExtractionConditionSyntax
         {
             if (idx + 1 >= tokens.Count)
             {
-                error = "opérateur > ou < attendu après « nombre ».";
+                error = "opérateur ==, !=, >, >=, < ou <= attendu après « nombre ».";
                 return false;
             }
 
             var cmp = tokens[idx + 1].Text;
-            if (cmp == ">")
-            {
-                op = ExtractionConditionOperator.GreaterThan;
-                idx += 2;
-                return true;
-            }
-            if (cmp == "<")
-            {
-                op = ExtractionConditionOperator.LessThan;
-                idx += 2;
-                return true;
-            }
+            if (cmp is "==" or "=") { op = ExtractionConditionOperator.NumberEquals; idx += 2; return true; }
+            if (cmp == "!=") { op = ExtractionConditionOperator.NumberNotEquals; idx += 2; return true; }
+            if (cmp == ">") { op = ExtractionConditionOperator.GreaterThan; idx += 2; return true; }
+            if (cmp == ">=") { op = ExtractionConditionOperator.GreaterOrEqual; idx += 2; return true; }
+            if (cmp == "<") { op = ExtractionConditionOperator.LessThan; idx += 2; return true; }
+            if (cmp == "<=") { op = ExtractionConditionOperator.LessOrEqual; idx += 2; return true; }
 
-            error = $"comparateur inconnu « {cmp} » pour « nombre » (> ou <).";
+            error = $"comparateur inconnu « {cmp} » pour « nombre » (==, !=, >, >=, < ou <=).";
             return false;
         }
 
@@ -381,23 +650,36 @@ public static class ExtractionConditionSyntax
             case "contient" or "contains": op = ExtractionConditionOperator.Contains; return true;
             case "!contient" or "ne_contient_pas" or "not_contains" or "!contains": op = ExtractionConditionOperator.NotContains; return true;
             case "commence" or "commence_par" or "starts_with": op = ExtractionConditionOperator.StartsWith; return true;
+            case "!commence" or "ne_commence_pas" or "not_starts_with": op = ExtractionConditionOperator.NotStartsWith; return true;
             case "finit" or "finit_par" or "ends_with": op = ExtractionConditionOperator.EndsWith; return true;
+            case "!finit" or "ne_finit_pas" or "not_ends_with": op = ExtractionConditionOperator.NotEndsWith; return true;
             case "egal" or "equals" or "==": op = ExtractionConditionOperator.Equals; return true;
             case "different" or "not_equals" or "!=": op = ExtractionConditionOperator.NotEquals; return true;
+            case "dans_liste" or "in_list" or "dans": op = ExtractionConditionOperator.InList; return true;
+            case "!dans_liste" or "pas_dans_liste" or "not_in_list" or "hors_liste": op = ExtractionConditionOperator.NotInList; return true;
             case "regex" or "regex_correspond" or "regex_match" or "=~": op = ExtractionConditionOperator.RegexMatch; return true;
             case "!regex" or "regex_exclut" or "regex_not_match" or "!~": op = ExtractionConditionOperator.RegexNotMatch; return true;
             case "regex_extraire" or "extract" or "regex_extract": op = ExtractionConditionOperator.RegexExtract; return true;
             case "regex_extraire_tout" or "extract_all" or "regex_extract_all": op = ExtractionConditionOperator.RegexExtractAll; return true;
             case "regex_remplacer" or "regex_replace": op = ExtractionConditionOperator.RegexReplace; return true;
             case "remplacer" or "replace_text" or "replace": op = ExtractionConditionOperator.ReplaceText; return true;
+            case "prefixer" or "prepend": op = ExtractionConditionOperator.PrependText; return true;
+            case "suffixer" or "append": op = ExtractionConditionOperator.AppendText; return true;
+            case "definir" or "set" or "set_value" or "valeur": op = ExtractionConditionOperator.SetValue; return true;
             case "entre" or "between": op = ExtractionConditionOperator.Between; return true;
             case "decouper" or "split" or "split_part": op = ExtractionConditionOperator.SplitPart; return true;
             case "nettoyer" or "trim": op = ExtractionConditionOperator.Trim; return true;
             case "minuscules" or "lower" or "to_lower": op = ExtractionConditionOperator.ToLower; return true;
             case "majuscules" or "upper" or "to_upper": op = ExtractionConditionOperator.ToUpper; return true;
+            case "est_vide" or "vide" or "is_empty": op = ExtractionConditionOperator.IsEmpty; return true;
             case "non_vide" or "not_empty": op = ExtractionConditionOperator.NotEmpty; return true;
+            case "longueur==": op = ExtractionConditionOperator.LengthEquals; return true;
             case "longueur>=" or "min_length": op = ExtractionConditionOperator.LengthMin; return true;
             case "longueur<=" or "max_length": op = ExtractionConditionOperator.LengthMax; return true;
+            case "nombre==": op = ExtractionConditionOperator.NumberEquals; return true;
+            case "nombre!=": op = ExtractionConditionOperator.NumberNotEquals; return true;
+            case "nombre>=" or ">=": op = ExtractionConditionOperator.GreaterOrEqual; return true;
+            case "nombre<=" or "<=": op = ExtractionConditionOperator.LessOrEqual; return true;
             case ">": op = ExtractionConditionOperator.GreaterThan; return true;
             case "<": op = ExtractionConditionOperator.LessThan; return true;
             default:
@@ -409,78 +691,21 @@ public static class ExtractionConditionSyntax
     private static string FormatRuleLine(ChainExtractionCondition cond)
     {
         var sb = new StringBuilder();
-        var opWord = cond.Operator switch
+        if (cond.IsConditional)
         {
-            ExtractionConditionOperator.Contains => "contient",
-            ExtractionConditionOperator.NotContains => "!contient",
-            ExtractionConditionOperator.StartsWith => "commence",
-            ExtractionConditionOperator.EndsWith => "finit",
-            ExtractionConditionOperator.Equals => "egal",
-            ExtractionConditionOperator.NotEquals => "!=",
-            ExtractionConditionOperator.RegexMatch => "regex",
-            ExtractionConditionOperator.RegexNotMatch => "!regex",
-            ExtractionConditionOperator.RegexExtract => "regex_extraire",
-            ExtractionConditionOperator.RegexExtractAll => "regex_extraire_tout",
-            ExtractionConditionOperator.RegexReplace => "regex_remplacer",
-            ExtractionConditionOperator.ReplaceText => "remplacer",
-            ExtractionConditionOperator.Between => "entre",
-            ExtractionConditionOperator.SplitPart => "decouper",
-            ExtractionConditionOperator.Trim => "nettoyer",
-            ExtractionConditionOperator.ToLower => "minuscules",
-            ExtractionConditionOperator.ToUpper => "majuscules",
-            ExtractionConditionOperator.NotEmpty => "non_vide",
-            ExtractionConditionOperator.LengthMin => "longueur >=",
-            ExtractionConditionOperator.LengthMax => "longueur <=",
-            ExtractionConditionOperator.GreaterThan => "nombre >",
-            ExtractionConditionOperator.LessThan => "nombre <",
-            _ => "contient"
-        };
-
-        sb.Append(opWord);
-        if (cond.Operator is not (
-            ExtractionConditionOperator.NotEmpty
-            or ExtractionConditionOperator.ToLower
-            or ExtractionConditionOperator.ToUpper))
-        {
-            if (cond.Operator != ExtractionConditionOperator.Trim || !string.IsNullOrEmpty(cond.Value))
+            sb.Append("si ");
+            AppendOperatorAndArgs(sb, cond.Operator, cond.Value, cond.Replacement, cond.RegexGroup, cond.SegmentIndex, cond.IgnoreCase && cond.SupportsIgnoreCase);
+            sb.Append(" alors ");
+            AppendBranch(sb, cond.ThenBranch);
+            if (cond.ElseBranch.Action != ExtractionConditionalAction.Keep)
             {
-                sb.Append(' ');
-                if (cond.Operator is ExtractionConditionOperator.LengthMin
-                    or ExtractionConditionOperator.LengthMax
-                    or ExtractionConditionOperator.GreaterThan
-                    or ExtractionConditionOperator.LessThan)
-                {
-                    sb.Append(cond.Value.Trim());
-                }
-                else
-                {
-                    sb.Append(Quote(cond.Value));
-                }
+                sb.Append(" sinon ");
+                AppendBranch(sb, cond.ElseBranch);
             }
         }
-
-        if (cond.Operator is ExtractionConditionOperator.RegexReplace
-            or ExtractionConditionOperator.ReplaceText
-            or ExtractionConditionOperator.Between)
+        else
         {
-            sb.Append(" -> ");
-            sb.Append(Quote(cond.Replacement));
-        }
-        else if (cond.Operator is ExtractionConditionOperator.RegexExtract or ExtractionConditionOperator.RegexExtractAll
-                 && cond.RegexGroup != 1)
-        {
-            sb.Append(" groupe=");
-            sb.Append(cond.RegexGroup.ToString(CultureInfo.InvariantCulture));
-        }
-        else if (cond.Operator == ExtractionConditionOperator.SplitPart)
-        {
-            sb.Append(" index=");
-            sb.Append(cond.SegmentIndex.ToString(CultureInfo.InvariantCulture));
-        }
-
-        if (cond.IgnoreCase && cond.SupportsIgnoreCase)
-        {
-            sb.Append(" [icase]");
+            AppendOperatorAndArgs(sb, cond.Operator, cond.Value, cond.Replacement, cond.RegexGroup, cond.SegmentIndex, cond.IgnoreCase && cond.SupportsIgnoreCase);
         }
 
         if (!cond.IsEnabled)
@@ -489,6 +714,150 @@ public static class ExtractionConditionSyntax
         }
 
         return sb.ToString();
+    }
+
+    private static void AppendBranch(StringBuilder sb, ChainConditionalBranch branch)
+    {
+        if (branch.Action == ExtractionConditionalAction.Keep)
+        {
+            sb.Append("garder");
+            return;
+        }
+
+        if (branch.Action == ExtractionConditionalAction.Exclude)
+        {
+            sb.Append("exclure");
+            return;
+        }
+
+        var mappedOp = branch.Action switch
+        {
+            ExtractionConditionalAction.SetValue => ExtractionConditionOperator.SetValue,
+            ExtractionConditionalAction.PrependText => ExtractionConditionOperator.PrependText,
+            ExtractionConditionalAction.AppendText => ExtractionConditionOperator.AppendText,
+            ExtractionConditionalAction.ReplaceText => ExtractionConditionOperator.ReplaceText,
+            ExtractionConditionalAction.RegexExtract => ExtractionConditionOperator.RegexExtract,
+            ExtractionConditionalAction.RegexExtractAll => ExtractionConditionOperator.RegexExtractAll,
+            ExtractionConditionalAction.RegexReplace => ExtractionConditionOperator.RegexReplace,
+            ExtractionConditionalAction.Between => ExtractionConditionOperator.Between,
+            ExtractionConditionalAction.SplitPart => ExtractionConditionOperator.SplitPart,
+            ExtractionConditionalAction.Trim => ExtractionConditionOperator.Trim,
+            ExtractionConditionalAction.ToLower => ExtractionConditionOperator.ToLower,
+            ExtractionConditionalAction.ToUpper => ExtractionConditionOperator.ToUpper,
+            _ => ExtractionConditionOperator.SetValue
+        };
+
+        AppendOperatorAndArgs(
+            sb,
+            mappedOp,
+            branch.Value,
+            branch.Replacement,
+            branch.RegexGroup,
+            branch.SegmentIndex,
+            branch.IgnoreCase && branch.SupportsIgnoreCase);
+    }
+
+    private static void AppendOperatorAndArgs(
+        StringBuilder sb,
+        ExtractionConditionOperator op,
+        string? value,
+        string? replacement,
+        int regexGroup,
+        int segmentIndex,
+        bool appendIgnoreCase)
+    {
+        var opWord = op switch
+        {
+            ExtractionConditionOperator.Contains => "contient",
+            ExtractionConditionOperator.NotContains => "!contient",
+            ExtractionConditionOperator.StartsWith => "commence",
+            ExtractionConditionOperator.NotStartsWith => "!commence",
+            ExtractionConditionOperator.EndsWith => "finit",
+            ExtractionConditionOperator.NotEndsWith => "!finit",
+            ExtractionConditionOperator.Equals => "egal",
+            ExtractionConditionOperator.NotEquals => "!=",
+            ExtractionConditionOperator.InList => "dans_liste",
+            ExtractionConditionOperator.NotInList => "!dans_liste",
+            ExtractionConditionOperator.RegexMatch => "regex",
+            ExtractionConditionOperator.RegexNotMatch => "!regex",
+            ExtractionConditionOperator.RegexExtract => "regex_extraire",
+            ExtractionConditionOperator.RegexExtractAll => "regex_extraire_tout",
+            ExtractionConditionOperator.RegexReplace => "regex_remplacer",
+            ExtractionConditionOperator.ReplaceText => "remplacer",
+            ExtractionConditionOperator.PrependText => "prefixer",
+            ExtractionConditionOperator.AppendText => "suffixer",
+            ExtractionConditionOperator.SetValue => "definir",
+            ExtractionConditionOperator.Between => "entre",
+            ExtractionConditionOperator.SplitPart => "decouper",
+            ExtractionConditionOperator.Trim => "nettoyer",
+            ExtractionConditionOperator.ToLower => "minuscules",
+            ExtractionConditionOperator.ToUpper => "majuscules",
+            ExtractionConditionOperator.IsEmpty => "est_vide",
+            ExtractionConditionOperator.NotEmpty => "non_vide",
+            ExtractionConditionOperator.LengthEquals => "longueur ==",
+            ExtractionConditionOperator.LengthMin => "longueur >=",
+            ExtractionConditionOperator.LengthMax => "longueur <=",
+            ExtractionConditionOperator.NumberEquals => "nombre ==",
+            ExtractionConditionOperator.NumberNotEquals => "nombre !=",
+            ExtractionConditionOperator.GreaterThan => "nombre >",
+            ExtractionConditionOperator.GreaterOrEqual => "nombre >=",
+            ExtractionConditionOperator.LessThan => "nombre <",
+            ExtractionConditionOperator.LessOrEqual => "nombre <=",
+            _ => "contient"
+        };
+
+        sb.Append(opWord);
+        if (op is not (
+            ExtractionConditionOperator.IsEmpty
+            or ExtractionConditionOperator.NotEmpty
+            or ExtractionConditionOperator.ToLower
+            or ExtractionConditionOperator.ToUpper))
+        {
+            if (op != ExtractionConditionOperator.Trim || !string.IsNullOrEmpty(value))
+            {
+                sb.Append(' ');
+                if (op is ExtractionConditionOperator.LengthEquals
+                    or ExtractionConditionOperator.LengthMin
+                    or ExtractionConditionOperator.LengthMax
+                    or ExtractionConditionOperator.NumberEquals
+                    or ExtractionConditionOperator.NumberNotEquals
+                    or ExtractionConditionOperator.GreaterThan
+                    or ExtractionConditionOperator.GreaterOrEqual
+                    or ExtractionConditionOperator.LessThan
+                    or ExtractionConditionOperator.LessOrEqual)
+                {
+                    sb.Append((value ?? string.Empty).Trim());
+                }
+                else
+                {
+                    sb.Append(Quote(value));
+                }
+            }
+        }
+
+        if (op is ExtractionConditionOperator.RegexReplace
+            or ExtractionConditionOperator.ReplaceText
+            or ExtractionConditionOperator.Between)
+        {
+            sb.Append(" -> ");
+            sb.Append(Quote(replacement));
+        }
+        else if (op is ExtractionConditionOperator.RegexExtract or ExtractionConditionOperator.RegexExtractAll
+                 && regexGroup != 1)
+        {
+            sb.Append(" groupe=");
+            sb.Append(regexGroup.ToString(CultureInfo.InvariantCulture));
+        }
+        else if (op == ExtractionConditionOperator.SplitPart)
+        {
+            sb.Append(" index=");
+            sb.Append(segmentIndex.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (appendIgnoreCase)
+        {
+            sb.Append(" [icase]");
+        }
     }
 
     private static string Quote(string? value)

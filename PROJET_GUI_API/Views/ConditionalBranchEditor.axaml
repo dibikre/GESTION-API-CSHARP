@@ -1,0 +1,94 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="360" d:DesignHeight="120"
+             x:Class="ApiTester.Views.ConditionalBranchEditor"
+             x:DataType="models:ChainConditionalBranch">
+
+    <StackPanel Spacing="6">
+        <ComboBox ItemsSource="{x:Static vm:ExtractionConditionsViewModel.ConditionalActionOptions}"
+                  SelectedItem="{Binding Action}"
+                  HorizontalAlignment="Stretch"
+                  AutomationProperties.Name="Action de branche conditionnelle">
+            <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="models:ExtractionConditionalAction">
+                    <TextBlock Text="{Binding Converter={x:Static conv:ExtractionConditionalActionConverters.ToLabel}}" />
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
+
+        <TextBox Classes="mono"
+                 IsVisible="{Binding RequiresValue}"
+                 Text="{Binding Value}"
+                 PlaceholderText="{Binding ValuePlaceholder}"
+                 AutomationProperties.Name="Valeur de l'action conditionnelle" />
+
+        <Grid IsVisible="{Binding HasReplacementRow}"
+              ColumnDefinitions="Auto,*"
+              ColumnSpacing="6">
+            <TextBlock Grid.Column="0"
+                       Text="{Binding ReplacementLabel}"
+                       FontSize="{DynamicResource FontSizeCaption}"
+                       Foreground="{DynamicResource TextMutedBrush}"
+                       VerticalAlignment="Center" />
+            <TextBox Grid.Column="1"
+                     Classes="mono"
+                     Text="{Binding Replacement}"
+                     PlaceholderText="{Binding ReplacementPlaceholder}"
+                     AutomationProperties.Name="Seconde valeur de l'action conditionnelle" />
+        </Grid>
+
+        <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel IsVisible="{Binding IsRegexExtract}"
+                        Orientation="Horizontal"
+                        Spacing="6"
+                        Margin="0,0,12,0"
+                        VerticalAlignment="Center">
+                <TextBlock Text="Groupe"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Center" />
+                <NumericUpDown Value="{Binding RegexGroup, Converter={x:Static conv:RegexGroupToDecimalConverter.Instance}, Mode=TwoWay}"
+                               Minimum="0"
+                               Maximum="99"
+                               Increment="1"
+                               FormatString="0"
+                               ShowButtonSpinner="False"
+                               Width="54"
+                               ToolTip.Tip="0 = correspondance complète ; 1, 2... = groupe entre parenthèses (...)"
+                               AutomationProperties.Name="Index du groupe Regex de la branche" />
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding IsSplitPart}"
+                        Orientation="Horizontal"
+                        Spacing="6"
+                        Margin="0,0,12,0"
+                        VerticalAlignment="Center">
+                <TextBlock Text="Index"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Center" />
+                <NumericUpDown Value="{Binding SegmentIndex, Converter={x:Static conv:SegmentIndexToDecimalConverter.Instance}, Mode=TwoWay}"
+                               Minimum="-99"
+                               Maximum="99"
+                               Increment="1"
+                               FormatString="0"
+                               ShowButtonSpinner="False"
+                               Width="58"
+                               ToolTip.Tip="0 = premier morceau, 1 = deuxième, -1 = dernier morceau"
+                               AutomationProperties.Name="Index du segment de la branche" />
+            </StackPanel>
+
+            <CheckBox IsVisible="{Binding SupportsIgnoreCase}"
+                      IsChecked="{Binding IgnoreCase}"
+                      Content="Ignorer la casse"
+                      VerticalAlignment="Center"
+                      AutomationProperties.Name="Ignorer la casse sur cette action" />
+        </WrapPanel>
+    </StackPanel>
+
+</UserControl>

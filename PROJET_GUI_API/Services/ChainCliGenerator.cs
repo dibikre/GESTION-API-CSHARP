@@ -28,13 +28,24 @@ internal sealed record CliAxisSpec(
     CliRangeSpec? Range,
     IReadOnlyList<string> Values);
 
-internal sealed record CliExtractionConditionSpec(
-    string Operator,
+internal sealed record CliConditionalBranchSpec(
+    string Action,
     string Value,
     string Replacement,
     int RegexGroup,
     int SegmentIndex,
     bool IgnoreCase);
+
+internal sealed record CliExtractionConditionSpec(
+    bool IsConditional,
+    string Operator,
+    string Value,
+    string Replacement,
+    int RegexGroup,
+    int SegmentIndex,
+    bool IgnoreCase,
+    CliConditionalBranchSpec ThenBranch,
+    CliConditionalBranchSpec ElseBranch);
 
 internal sealed record CliExtractionSpec(
     string VariableName,
@@ -439,12 +450,15 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                 }
 
                 condSpecs.Add(new CliExtractionConditionSpec(
+                    cond.IsConditional,
                     MapConditionOperator(cond.Operator),
                     cond.Value ?? string.Empty,
                     cond.Replacement ?? string.Empty,
                     Math.Max(0, cond.RegexGroup),
                     Math.Clamp(cond.SegmentIndex, -99, 99),
-                    cond.IgnoreCase));
+                    cond.IgnoreCase,
+                    MapBranch(cond.ThenBranch),
+                    MapBranch(cond.ElseBranch)));
             }
 
             result.Add(new CliExtractionSpec(
@@ -465,30 +479,70 @@ public sealed class ChainCliGenerator : IChainCliGenerator
         return result;
     }
 
+    private static CliConditionalBranchSpec MapBranch(ChainConditionalBranch branch) => new(
+        MapConditionalAction(branch.Action),
+        branch.Value ?? string.Empty,
+        branch.Replacement ?? string.Empty,
+        Math.Max(0, branch.RegexGroup),
+        Math.Clamp(branch.SegmentIndex, -99, 99),
+        branch.IgnoreCase);
+
+    private static string MapConditionalAction(ExtractionConditionalAction action) => action switch
+    {
+        ExtractionConditionalAction.Keep => "keep",
+        ExtractionConditionalAction.Exclude => "exclude",
+        ExtractionConditionalAction.SetValue => "set_value",
+        ExtractionConditionalAction.PrependText => "prepend_text",
+        ExtractionConditionalAction.AppendText => "append_text",
+        ExtractionConditionalAction.ReplaceText => "replace_text",
+        ExtractionConditionalAction.RegexExtract => "regex_extract",
+        ExtractionConditionalAction.RegexExtractAll => "regex_extract_all",
+        ExtractionConditionalAction.RegexReplace => "regex_replace",
+        ExtractionConditionalAction.Between => "between",
+        ExtractionConditionalAction.SplitPart => "split_part",
+        ExtractionConditionalAction.Trim => "trim",
+        ExtractionConditionalAction.ToLower => "to_lower",
+        ExtractionConditionalAction.ToUpper => "to_upper",
+        _ => "keep"
+    };
+
     private static string MapConditionOperator(ExtractionConditionOperator op) => op switch
     {
         ExtractionConditionOperator.Contains => "contains",
         ExtractionConditionOperator.NotContains => "not_contains",
         ExtractionConditionOperator.StartsWith => "starts_with",
+        ExtractionConditionOperator.NotStartsWith => "not_starts_with",
         ExtractionConditionOperator.EndsWith => "ends_with",
+        ExtractionConditionOperator.NotEndsWith => "not_ends_with",
         ExtractionConditionOperator.Equals => "equals",
         ExtractionConditionOperator.NotEquals => "not_equals",
+        ExtractionConditionOperator.InList => "in_list",
+        ExtractionConditionOperator.NotInList => "not_in_list",
         ExtractionConditionOperator.RegexMatch => "regex_match",
         ExtractionConditionOperator.RegexNotMatch => "regex_not_match",
         ExtractionConditionOperator.RegexExtract => "regex_extract",
         ExtractionConditionOperator.RegexExtractAll => "regex_extract_all",
         ExtractionConditionOperator.RegexReplace => "regex_replace",
         ExtractionConditionOperator.ReplaceText => "replace_text",
+        ExtractionConditionOperator.PrependText => "prepend_text",
+        ExtractionConditionOperator.AppendText => "append_text",
+        ExtractionConditionOperator.SetValue => "set_value",
         ExtractionConditionOperator.Between => "between",
         ExtractionConditionOperator.SplitPart => "split_part",
         ExtractionConditionOperator.Trim => "trim",
         ExtractionConditionOperator.ToLower => "to_lower",
         ExtractionConditionOperator.ToUpper => "to_upper",
+        ExtractionConditionOperator.IsEmpty => "is_empty",
         ExtractionConditionOperator.NotEmpty => "not_empty",
+        ExtractionConditionOperator.LengthEquals => "length_equals",
         ExtractionConditionOperator.LengthMin => "length_min",
         ExtractionConditionOperator.LengthMax => "length_max",
+        ExtractionConditionOperator.NumberEquals => "number_equals",
+        ExtractionConditionOperator.NumberNotEquals => "number_not_equals",
         ExtractionConditionOperator.GreaterThan => "greater_than",
+        ExtractionConditionOperator.GreaterOrEqual => "greater_or_equal",
         ExtractionConditionOperator.LessThan => "less_than",
+        ExtractionConditionOperator.LessOrEqual => "less_or_equal",
         _ => "contains"
     };
 

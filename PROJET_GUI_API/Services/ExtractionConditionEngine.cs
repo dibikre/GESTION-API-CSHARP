@@ -14,35 +14,26 @@ public sealed record ConditionEvaluationResult(
 
 public static class ExtractionConditionEngine
 {
-    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
-
-    private sealed record CompiledRule(
+    private sealed record CompiledPredicate(
         ExtractionConditionOperator Operator,
         string TextValue,
-        string Replacement,
-        int RegexGroup,
-        int SegmentIndex,
         bool IgnoreCase,
         Regex? CompiledRegex,
+        IReadOnlyList<string> ListValues,
         int IntThreshold,
-        double DoubleThreshold)
-    {
-        public bool IsExtractTransform => Operator is ExtractionConditionOperator.RegexExtract
-            or ExtractionConditionOperator.RegexExtractAll;
+        double DoubleThreshold);
 
-        public bool IsFilterOnly => Operator is ExtractionConditionOperator.Contains
-            or ExtractionConditionOperator.NotContains
-            or ExtractionConditionOperator.StartsWith
-            or ExtractionConditionOperator.EndsWith
-            or ExtractionConditionOperator.Equals
-            or ExtractionConditionOperator.NotEquals
-            or ExtractionConditionOperator.RegexMatch
-            or ExtractionConditionOperator.RegexNotMatch
-            or ExtractionConditionOperator.NotEmpty
-            or ExtractionConditionOperator.LengthMin
-            or ExtractionConditionOperator.LengthMax
-            or ExtractionConditionOperator.GreaterThan
-            or ExtractionConditionOperator.LessThan;
+    private sealed record CompiledRule(
+        bool IsConditional,
+        CompiledPredicate? Predicate,
+        CompiledActionBranch? TransformBranch,
+        CompiledActionBranch? ThenBranch,
+        CompiledActionBranch? ElseBranch)
+    {
+        public bool IsFilterOnly => !IsConditional && TransformBranch is null;
+
+        public bool IsExtractTransform => !IsConditional && TransformBranch?.Action is
+            ExtractionConditionalAction.RegexExtract or ExtractionConditionalAction.RegexExtractAll;
     }
 
     public static ExtractionOutcome ApplyToScalar(
@@ -62,7 +53,13 @@ public static class ExtractionConditionEngine
             return ExtractionOutcome.Failure("La valeur extraite ne satisfait pas les conditions.");
         }
 
-        var hasExtractAll = conditions.Any(c => c.IsEnabled && c.Operator == ExtractionConditionOperator.RegexExtractAll);
+        var hasExtractAll = conditions.Any(c =>
+            c.IsEnabled && (
+                (!c.IsConditional && c.Operator == ExtractionConditionOperator.RegexExtractAll) ||
+                (c.IsConditional && (
+                    c.ThenBranch.Action == ExtractionConditionalAction.RegexExtractAll ||
+                    c.ElseBranch.Action == ExtractionConditionalAction.RegexExtractAll))));
+
         return hasExtractAll && listResult.Values.Count > 1
             ? ExtractionOutcome.Success(string.Join(", ", listResult.Values))
             : ExtractionOutcome.Success(listResult.Values[0]);
@@ -141,96 +138,159 @@ public static class ExtractionConditionEngine
                 continue;
             }
 
-            var val = c.Value ?? string.Empty;
-            var rep = c.Replacement ?? string.Empty;
             var lineNum = i + 1;
+            var label = $"Condition #{lineNum}";
 
-            if (c.Operator == ExtractionConditionOperator.Between)
+            if (c.IsConditional)
             {
-                if (string.IsNullOrEmpty(val) && string.IsNullOrEmpty(rep))
+                if (!ChainExtractionCondition.IsFilterOperator(c.Operator))
                 {
-                    error = $"Condition #{lineNum} : indique au moins un délimiteur gauche ou droit.";
-                    return false;
-                }
-            }
-            else if (c.Operator is not (
-                ExtractionConditionOperator.NotEmpty
-                or ExtractionConditionOperator.Trim
-                or ExtractionConditionOperator.ToLower
-                or ExtractionConditionOperator.ToUpper)
-                && string.IsNullOrEmpty(val))
-            {
-                error = $"Condition #{lineNum} : valeur ou motif vide.";
-                return false;
-            }
-
-            Regex? regex = null;
-            if (c.Operator is ExtractionConditionOperator.RegexMatch
-                or ExtractionConditionOperator.RegexNotMatch
-                or ExtractionConditionOperator.RegexExtract
-                or ExtractionConditionOperator.RegexExtractAll
-                or ExtractionConditionOperator.RegexReplace)
-            {
-                var options = RegexOptions.CultureInvariant;
-                if (c.IgnoreCase)
-                {
-                    options |= RegexOptions.IgnoreCase;
-                }
-
-                try
-                {
-                    regex = new Regex(val, options, RegexTimeout);
-                }
-                catch (ArgumentException ex)
-                {
-                    error = $"Condition #{lineNum} : Regex invalide ({ex.Message}).";
+                    error = $"{label} : l'opérateur « SI » doit être un test (Contient, Égal à, Nombre, etc.).";
                     return false;
                 }
 
-                if (c.Operator is ExtractionConditionOperator.RegexExtract or ExtractionConditionOperator.RegexExtractAll)
+                if (!TryCompilePredicate(c.Operator, c.Value, c.IgnoreCase, $"{label} (SI)", out var pred, out error))
                 {
-                    var grp = Math.Max(0, c.RegexGroup);
-                    if (grp > 0 && !regex.GetGroupNumbers().Contains(grp))
-                    {
-                        error = $"Condition #{lineNum} : Groupe #{grp} absent du motif Regex — entoure la partie à capturer avec (...) ou mets Groupe à 0.";
-                        return false;
-                    }
-                }
-            }
-
-            var intThreshold = 0;
-            if (c.Operator is ExtractionConditionOperator.LengthMin or ExtractionConditionOperator.LengthMax)
-            {
-                if (!int.TryParse(val.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out intThreshold) || intThreshold < 0)
-                {
-                    error = $"Condition #{lineNum} : longueur attendue entière >= 0 (reçu « {val} »).";
                     return false;
                 }
-            }
 
-            var doubleThreshold = 0d;
-            if (c.Operator is ExtractionConditionOperator.GreaterThan or ExtractionConditionOperator.LessThan)
-            {
-                if (!double.TryParse(val.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out doubleThreshold)
-                    || !double.IsFinite(doubleThreshold))
+                if (!ExtractionBranchExecutor.TryCompileBranch(
+                        c.ThenBranch.Action,
+                        c.ThenBranch.Value,
+                        c.ThenBranch.Replacement,
+                        c.ThenBranch.RegexGroup,
+                        c.ThenBranch.SegmentIndex,
+                        c.ThenBranch.IgnoreCase,
+                        $"{label} (ALORS)",
+                        out var thenCompiled,
+                        out error))
                 {
-                    error = $"Condition #{lineNum} : nombre attendu (reçu « {val} »).";
                     return false;
                 }
+
+                if (!ExtractionBranchExecutor.TryCompileBranch(
+                        c.ElseBranch.Action,
+                        c.ElseBranch.Value,
+                        c.ElseBranch.Replacement,
+                        c.ElseBranch.RegexGroup,
+                        c.ElseBranch.SegmentIndex,
+                        c.ElseBranch.IgnoreCase,
+                        $"{label} (SINON)",
+                        out var elseCompiled,
+                        out error))
+                {
+                    return false;
+                }
+
+                compiled.Add(new CompiledRule(true, pred, null, thenCompiled, elseCompiled));
+                continue;
             }
 
-            compiled.Add(new CompiledRule(
-                c.Operator,
-                val,
-                rep,
-                Math.Max(0, c.RegexGroup),
-                Math.Clamp(c.SegmentIndex, -99, 99),
-                c.IgnoreCase,
-                regex,
-                intThreshold,
-                doubleThreshold));
+            if (ExtractionBranchExecutor.TryMapTransformOperator(c.Operator, out var action))
+            {
+                if (!ExtractionBranchExecutor.TryCompileBranch(
+                        action,
+                        c.Value,
+                        c.Replacement,
+                        c.RegexGroup,
+                        c.SegmentIndex,
+                        c.IgnoreCase,
+                        label,
+                        out var trBranch,
+                        out error))
+                {
+                    return false;
+                }
+
+                compiled.Add(new CompiledRule(false, null, trBranch, null, null));
+            }
+            else
+            {
+                if (!TryCompilePredicate(c.Operator, c.Value, c.IgnoreCase, label, out var pred, out error))
+                {
+                    return false;
+                }
+
+                compiled.Add(new CompiledRule(false, pred, null, null, null));
+            }
         }
 
+        return true;
+    }
+
+    private static bool TryCompilePredicate(
+        ExtractionConditionOperator op,
+        string? rawValue,
+        bool ignoreCase,
+        string contextLabel,
+        out CompiledPredicate? predicate,
+        out string? error)
+    {
+        predicate = null;
+        error = null;
+        var val = rawValue ?? string.Empty;
+
+        if (op is not (ExtractionConditionOperator.IsEmpty or ExtractionConditionOperator.NotEmpty)
+            && string.IsNullOrEmpty(val))
+        {
+            error = $"{contextLabel} : valeur ou motif vide.";
+            return false;
+        }
+
+        IReadOnlyList<string> listValues = [];
+        if (op is ExtractionConditionOperator.InList or ExtractionConditionOperator.NotInList)
+        {
+            listValues = ExtractionBranchExecutor.ParseListValues(val);
+            if (listValues.Count == 0)
+            {
+                error = $"{contextLabel} : indique au moins une valeur séparée par , ou |.";
+                return false;
+            }
+        }
+
+        Regex? regex = null;
+        if (op is ExtractionConditionOperator.RegexMatch or ExtractionConditionOperator.RegexNotMatch)
+        {
+            var options = RegexOptions.CultureInvariant | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
+            try
+            {
+                regex = new Regex(val, options, ExtractionBranchExecutor.RegexTimeout);
+            }
+            catch (ArgumentException ex)
+            {
+                error = $"{contextLabel} : Regex invalide ({ex.Message}).";
+                return false;
+            }
+        }
+
+        var intThreshold = 0;
+        if (op is ExtractionConditionOperator.LengthEquals
+            or ExtractionConditionOperator.LengthMin
+            or ExtractionConditionOperator.LengthMax)
+        {
+            if (!int.TryParse(val.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out intThreshold) || intThreshold < 0)
+            {
+                error = $"{contextLabel} : longueur attendue entière >= 0 (reçu « {val} »).";
+                return false;
+            }
+        }
+
+        var doubleThreshold = 0d;
+        if (op is ExtractionConditionOperator.NumberEquals
+            or ExtractionConditionOperator.NumberNotEquals
+            or ExtractionConditionOperator.GreaterThan
+            or ExtractionConditionOperator.GreaterOrEqual
+            or ExtractionConditionOperator.LessThan
+            or ExtractionConditionOperator.LessOrEqual)
+        {
+            if (!ExtractionBranchExecutor.TryParseNumber(val, out doubleThreshold))
+            {
+                error = $"{contextLabel} : nombre attendu (reçu « {val} »).";
+                return false;
+            }
+        }
+
+        predicate = new CompiledPredicate(op, val, ignoreCase, regex, listValues, intThreshold, doubleThreshold);
         return true;
     }
 
@@ -280,7 +340,7 @@ public static class ExtractionConditionEngine
             }
         }
 
-        if (filterRules.Count > 0 && !filterRules.Any(r => EvaluateFilter(r, initial)))
+        if (filterRules.Count > 0 && !filterRules.Any(r => EvaluatePredicate(r.Predicate!, initial)))
         {
             return [];
         }
@@ -337,181 +397,60 @@ public static class ExtractionConditionEngine
 
         foreach (var current in inputs)
         {
-            switch (rule.Operator)
+            if (rule.IsConditional)
             {
-                case ExtractionConditionOperator.RegexExtract:
-                    if (TryExtractRegexGroup(rule, current, out var extracted))
-                    {
-                        next.Add(extracted);
-                    }
-                    break;
-
-                case ExtractionConditionOperator.RegexExtractAll:
-                    foreach (Match match in rule.CompiledRegex!.Matches(current))
-                    {
-                        if (match.Success && rule.RegexGroup < match.Groups.Count)
-                        {
-                            var grp = match.Groups[rule.RegexGroup];
-                            if (grp.Success)
-                            {
-                                next.Add(grp.Value);
-                            }
-                        }
-                    }
-                    break;
-
-                case ExtractionConditionOperator.RegexReplace:
-                    next.Add(rule.CompiledRegex!.Replace(current, rule.Replacement));
-                    break;
-
-                case ExtractionConditionOperator.ReplaceText:
-                    next.Add(current.Replace(
-                        rule.TextValue,
-                        rule.Replacement,
-                        rule.IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
-                    break;
-
-                case ExtractionConditionOperator.Between:
-                    if (TryExtractBetween(current, rule.TextValue, rule.Replacement, rule.IgnoreCase, out var sliced))
-                    {
-                        next.Add(sliced);
-                    }
-                    break;
-
-                case ExtractionConditionOperator.SplitPart:
-                    if (TrySplitPart(current, rule.TextValue, rule.SegmentIndex, rule.IgnoreCase, out var part))
-                    {
-                        next.Add(part);
-                    }
-                    break;
-
-                case ExtractionConditionOperator.Trim:
-                    next.Add(string.IsNullOrEmpty(rule.TextValue)
-                        ? current.Trim()
-                        : current.Trim(rule.TextValue.ToCharArray()));
-                    break;
-
-                case ExtractionConditionOperator.ToLower:
-                    next.Add(current.ToLowerInvariant());
-                    break;
-
-                case ExtractionConditionOperator.ToUpper:
-                    next.Add(current.ToUpperInvariant());
-                    break;
-
-                default:
-                    if (EvaluateFilter(rule, current))
-                    {
-                        next.Add(current);
-                    }
-                    break;
+                var branch = EvaluatePredicate(rule.Predicate!, current)
+                    ? rule.ThenBranch!
+                    : rule.ElseBranch!;
+                ExtractionBranchExecutor.ExecuteBranchOnValue(branch, current, next);
+            }
+            else if (rule.TransformBranch is not null)
+            {
+                ExtractionBranchExecutor.ExecuteBranchOnValue(rule.TransformBranch, current, next);
+            }
+            else if (EvaluatePredicate(rule.Predicate!, current))
+            {
+                next.Add(current);
             }
         }
 
         return next;
     }
 
-    private static bool TryExtractBetween(
-        string input,
-        string leftDelimiter,
-        string rightDelimiter,
-        bool ignoreCase,
-        out string result)
+    private static bool EvaluatePredicate(CompiledPredicate pred, string value)
     {
-        var cmp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        var startIdx = 0;
-
-        if (!string.IsNullOrEmpty(leftDelimiter))
+        var cmp = pred.IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return pred.Operator switch
         {
-            var foundLeft = input.IndexOf(leftDelimiter, cmp);
-            if (foundLeft < 0)
-            {
-                result = string.Empty;
-                return false;
-            }
-            startIdx = foundLeft + leftDelimiter.Length;
-        }
-
-        if (!string.IsNullOrEmpty(rightDelimiter))
-        {
-            var foundRight = input.IndexOf(rightDelimiter, startIdx, cmp);
-            if (foundRight < 0)
-            {
-                result = string.Empty;
-                return false;
-            }
-            result = input[startIdx..foundRight];
-            return true;
-        }
-
-        result = input[startIdx..];
-        return true;
-    }
-
-    private static bool TrySplitPart(
-        string input,
-        string separator,
-        int segmentIndex,
-        bool ignoreCase,
-        out string part)
-    {
-        var parts = ignoreCase
-            ? Regex.Split(input, Regex.Escape(separator), RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, RegexTimeout)
-            : input.Split(separator, StringSplitOptions.None);
-
-        var resolved = segmentIndex < 0 ? parts.Length + segmentIndex : segmentIndex;
-        if (resolved < 0 || resolved >= parts.Length)
-        {
-            part = string.Empty;
-            return false;
-        }
-
-        part = parts[resolved];
-        return true;
-    }
-
-    private static bool TryExtractRegexGroup(CompiledRule rule, string input, out string extracted)
-    {
-        var match = rule.CompiledRegex!.Match(input);
-        if (!match.Success || rule.RegexGroup >= match.Groups.Count)
-        {
-            extracted = string.Empty;
-            return false;
-        }
-
-        var grp = match.Groups[rule.RegexGroup];
-        if (!grp.Success)
-        {
-            extracted = string.Empty;
-            return false;
-        }
-
-        extracted = grp.Value;
-        return true;
-    }
-
-    private static bool EvaluateFilter(CompiledRule rule, string value)
-    {
-        var cmp = rule.IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        return rule.Operator switch
-        {
-            ExtractionConditionOperator.Contains => value.Contains(rule.TextValue, cmp),
-            ExtractionConditionOperator.NotContains => !value.Contains(rule.TextValue, cmp),
-            ExtractionConditionOperator.StartsWith => value.StartsWith(rule.TextValue, cmp),
-            ExtractionConditionOperator.EndsWith => value.EndsWith(rule.TextValue, cmp),
-            ExtractionConditionOperator.Equals => string.Equals(value, rule.TextValue, cmp),
-            ExtractionConditionOperator.NotEquals => !string.Equals(value, rule.TextValue, cmp),
-            ExtractionConditionOperator.RegexMatch => rule.CompiledRegex!.IsMatch(value),
-            ExtractionConditionOperator.RegexNotMatch => !rule.CompiledRegex!.IsMatch(value),
+            ExtractionConditionOperator.Contains => value.Contains(pred.TextValue, cmp),
+            ExtractionConditionOperator.NotContains => !value.Contains(pred.TextValue, cmp),
+            ExtractionConditionOperator.StartsWith => value.StartsWith(pred.TextValue, cmp),
+            ExtractionConditionOperator.NotStartsWith => !value.StartsWith(pred.TextValue, cmp),
+            ExtractionConditionOperator.EndsWith => value.EndsWith(pred.TextValue, cmp),
+            ExtractionConditionOperator.NotEndsWith => !value.EndsWith(pred.TextValue, cmp),
+            ExtractionConditionOperator.Equals => string.Equals(value, pred.TextValue, cmp),
+            ExtractionConditionOperator.NotEquals => !string.Equals(value, pred.TextValue, cmp),
+            ExtractionConditionOperator.InList => pred.ListValues.Any(item => string.Equals(value, item, cmp)),
+            ExtractionConditionOperator.NotInList => !pred.ListValues.Any(item => string.Equals(value, item, cmp)),
+            ExtractionConditionOperator.RegexMatch => pred.CompiledRegex!.IsMatch(value),
+            ExtractionConditionOperator.RegexNotMatch => !pred.CompiledRegex!.IsMatch(value),
+            ExtractionConditionOperator.IsEmpty => string.IsNullOrWhiteSpace(value),
             ExtractionConditionOperator.NotEmpty => !string.IsNullOrWhiteSpace(value),
-            ExtractionConditionOperator.LengthMin => value.Length >= rule.IntThreshold,
-            ExtractionConditionOperator.LengthMax => value.Length <= rule.IntThreshold,
+            ExtractionConditionOperator.LengthEquals => value.Length == pred.IntThreshold,
+            ExtractionConditionOperator.LengthMin => value.Length >= pred.IntThreshold,
+            ExtractionConditionOperator.LengthMax => value.Length <= pred.IntThreshold,
+            ExtractionConditionOperator.NumberEquals =>
+                ExtractionBranchExecutor.TryParseNumber(value, out var eqVal) && eqVal == pred.DoubleThreshold,
+            ExtractionConditionOperator.NumberNotEquals =>
+                ExtractionBranchExecutor.TryParseNumber(value, out var neqVal) && neqVal != pred.DoubleThreshold,
             ExtractionConditionOperator.GreaterThan =>
-                double.TryParse(value.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var gtVal)
-                && gtVal > rule.DoubleThreshold,
+                ExtractionBranchExecutor.TryParseNumber(value, out var gtVal) && gtVal > pred.DoubleThreshold,
+            ExtractionConditionOperator.GreaterOrEqual =>
+                ExtractionBranchExecutor.TryParseNumber(value, out var gteVal) && gteVal >= pred.DoubleThreshold,
             ExtractionConditionOperator.LessThan =>
-                double.TryParse(value.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var ltVal)
-                && ltVal < rule.DoubleThreshold,
+                ExtractionBranchExecutor.TryParseNumber(value, out var ltVal) && ltVal < pred.DoubleThreshold,
+            ExtractionConditionOperator.LessOrEqual =>
+                ExtractionBranchExecutor.TryParseNumber(value, out var lteVal) && lteVal <= pred.DoubleThreshold,
             _ => true
         };
     }

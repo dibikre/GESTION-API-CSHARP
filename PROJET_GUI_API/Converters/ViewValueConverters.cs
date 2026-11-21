@@ -307,26 +307,62 @@ public static class ExtractionConditionOperatorConverters
             ExtractionConditionOperator.Contains => "Contient",
             ExtractionConditionOperator.NotContains => "Ne contient pas",
             ExtractionConditionOperator.StartsWith => "Commence par",
+            ExtractionConditionOperator.NotStartsWith => "Ne commence pas par",
             ExtractionConditionOperator.EndsWith => "Finit par",
-            ExtractionConditionOperator.Equals => "Égal à",
-            ExtractionConditionOperator.NotEquals => "Différent de",
+            ExtractionConditionOperator.NotEndsWith => "Ne finit pas par",
+            ExtractionConditionOperator.Equals => "Égal à (==)",
+            ExtractionConditionOperator.NotEquals => "Différent de (!=)",
+            ExtractionConditionOperator.InList => "Est dans la liste",
+            ExtractionConditionOperator.NotInList => "Exclu de la liste",
             ExtractionConditionOperator.RegexMatch => "Regex correspond",
             ExtractionConditionOperator.RegexNotMatch => "Regex exclut",
             ExtractionConditionOperator.RegexExtract => "Regex extraire (groupe)",
             ExtractionConditionOperator.RegexExtractAll => "Regex extraire tout (éclater)",
             ExtractionConditionOperator.RegexReplace => "Regex remplacer",
             ExtractionConditionOperator.ReplaceText => "Remplacer texte",
+            ExtractionConditionOperator.PrependText => "Ajouter au début (préfixe)",
+            ExtractionConditionOperator.AppendText => "Ajouter à la fin (suffixe)",
+            ExtractionConditionOperator.SetValue => "Remplacer toute la valeur par",
             ExtractionConditionOperator.Between => "Entre délimiteurs",
             ExtractionConditionOperator.SplitPart => "Découper (séparateur / index)",
             ExtractionConditionOperator.Trim => "Nettoyer début / fin",
             ExtractionConditionOperator.ToLower => "Convertir en minuscules",
             ExtractionConditionOperator.ToUpper => "Convertir en MAJUSCULES",
+            ExtractionConditionOperator.IsEmpty => "Est vide",
             ExtractionConditionOperator.NotEmpty => "Non vide",
+            ExtractionConditionOperator.LengthEquals => "Longueur ==",
             ExtractionConditionOperator.LengthMin => "Longueur >=",
             ExtractionConditionOperator.LengthMax => "Longueur <=",
+            ExtractionConditionOperator.NumberEquals => "Nombre ==",
+            ExtractionConditionOperator.NumberNotEquals => "Nombre !=",
             ExtractionConditionOperator.GreaterThan => "Nombre >",
+            ExtractionConditionOperator.GreaterOrEqual => "Nombre >=",
             ExtractionConditionOperator.LessThan => "Nombre <",
+            ExtractionConditionOperator.LessOrEqual => "Nombre <=",
             _ => op.ToString()
+        });
+}
+
+public static class ExtractionConditionalActionConverters
+{
+    public static readonly IValueConverter ToLabel =
+        new FuncValueConverter<ExtractionConditionalAction, string>(action => action switch
+        {
+            ExtractionConditionalAction.Keep => "Garder tel quel",
+            ExtractionConditionalAction.Exclude => "Exclure l'élément",
+            ExtractionConditionalAction.SetValue => "Remplacer toute la valeur par",
+            ExtractionConditionalAction.PrependText => "Ajouter au début (préfixe)",
+            ExtractionConditionalAction.AppendText => "Ajouter à la fin (suffixe)",
+            ExtractionConditionalAction.ReplaceText => "Remplacer texte",
+            ExtractionConditionalAction.RegexExtract => "Regex extraire (groupe)",
+            ExtractionConditionalAction.RegexExtractAll => "Regex extraire tout (éclater)",
+            ExtractionConditionalAction.RegexReplace => "Regex remplacer",
+            ExtractionConditionalAction.Between => "Entre délimiteurs",
+            ExtractionConditionalAction.SplitPart => "Découper (séparateur / index)",
+            ExtractionConditionalAction.Trim => "Nettoyer début / fin",
+            ExtractionConditionalAction.ToLower => "Convertir en minuscules",
+            ExtractionConditionalAction.ToUpper => "Convertir en MAJUSCULES",
+            _ => action.ToString()
         });
 }
 

@@ -98,6 +98,54 @@ public static partial class ExtractionPresetCatalog
         new("Lignes non vides uniquement", () => new ChainExtractionCondition
         {
             Operator = ExtractionConditionOperator.NotEmpty
+        }),
+        new("Si vide -> valeur par défaut (N/A)", () =>
+        {
+            var cond = new ChainExtractionCondition
+            {
+                IsConditional = true,
+                Operator = ExtractionConditionOperator.IsEmpty
+            };
+            cond.ReplaceBranches(
+                new ChainConditionalBranch { Action = ExtractionConditionalAction.SetValue, Value = "N/A" },
+                new ChainConditionalBranch { Action = ExtractionConditionalAction.Keep });
+            return cond;
+        }),
+        new("Si contient -> extraire hex, sinon exclure", () =>
+        {
+            var cond = new ChainExtractionCondition
+            {
+                IsConditional = true,
+                Operator = ExtractionConditionOperator.Contains,
+                Value = "-full"
+            };
+            cond.ReplaceBranches(
+                new ChainConditionalBranch { Action = ExtractionConditionalAction.RegexExtract, Value = "([0-9a-fA-F]{16,})", RegexGroup = 1 },
+                new ChainConditionalBranch { Action = ExtractionConditionalAction.Exclude });
+            return cond;
+        }),
+        new("Si chemin relatif (/) -> préfixer domaine", () =>
+        {
+            var cond = new ChainExtractionCondition
+            {
+                IsConditional = true,
+                Operator = ExtractionConditionOperator.StartsWith,
+                Value = "/"
+            };
+            cond.ReplaceBranches(
+                new ChainConditionalBranch { Action = ExtractionConditionalAction.PrependText, Value = "https://exemple.com" },
+                new ChainConditionalBranch { Action = ExtractionConditionalAction.Keep });
+            return cond;
+        }),
+        new("Inclure uniquement une liste (a, b, c)", () => new ChainExtractionCondition
+        {
+            Operator = ExtractionConditionOperator.InList,
+            Value = "200, 201, 204"
+        }),
+        new("Exclure une liste de valeurs (a, b, c)", () => new ChainExtractionCondition
+        {
+            Operator = ExtractionConditionOperator.NotInList,
+            Value = "null, none, undefined"
         })
     ];
 
