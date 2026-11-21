@@ -43,6 +43,12 @@ public partial class ChainExtractionEditor : UserControl
     public static readonly StyledProperty<IExtractionSuggester?> ExtractionSuggesterProperty =
         AvaloniaProperty.Register<ChainExtractionEditor, IExtractionSuggester?>(nameof(ExtractionSuggester));
 
+    public static readonly StyledProperty<Func<ChainExtraction, IReadOnlyList<RealtimeExtractionSuggestion>>?> SourceVariablesProviderProperty =
+        AvaloniaProperty.Register<ChainExtractionEditor, Func<ChainExtraction, IReadOnlyList<RealtimeExtractionSuggestion>>?>(nameof(SourceVariablesProvider));
+
+    public static readonly StyledProperty<Func<ChainExtraction, ResponseModel?>?> SuggestionResponseResolverProperty =
+        AvaloniaProperty.Register<ChainExtractionEditor, Func<ChainExtraction, ResponseModel?>?>(nameof(SuggestionResponseResolver));
+
     private readonly ObservableCollection<RealtimeExtractionSuggestion> _suggestions = [];
     private TextBox? _activeTextBox;
     private TextBox? _suppressNextGotFocusForBox;
@@ -112,13 +118,28 @@ public partial class ChainExtractionEditor : UserControl
         set => SetValue(ExtractionSuggesterProperty, value);
     }
 
+    public Func<ChainExtraction, IReadOnlyList<RealtimeExtractionSuggestion>>? SourceVariablesProvider
+    {
+        get => GetValue(SourceVariablesProviderProperty);
+        set => SetValue(SourceVariablesProviderProperty, value);
+    }
+
+    public Func<ChainExtraction, ResponseModel?>? SuggestionResponseResolver
+    {
+        get => GetValue(SuggestionResponseResolverProperty);
+        set => SetValue(SuggestionResponseResolverProperty, value);
+    }
+
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
 
         if (change.Property == LastResponseProperty || change.Property == HasLastResponseProperty)
         {
-            if (LastResponse is null || !HasLastResponse)
+            var allowWithoutLastResponse = _activeExtraction?.IsVariableSource == true ||
+                (_activeTextBox is not null && IsSourceVariableBox(_activeTextBox));
+
+            if (!allowWithoutLastResponse && (LastResponse is null || !HasLastResponse))
             {
                 CloseSuggestionsPopup();
             }
@@ -419,7 +440,8 @@ public partial class ChainExtractionEditor : UserControl
 
         if (e.PropertyName is nameof(ChainExtraction.Kind)
             or nameof(ChainExtraction.Source)
-            or nameof(ChainExtraction.IsList))
+            or nameof(ChainExtraction.IsList)
+            or nameof(ChainExtraction.SourceVariableName))
         {
             if (SuggestionsPopup.IsOpen && CanSuggestFor(_activeTextBox, _activeExtraction))
             {
@@ -452,27 +474,45 @@ public partial class ChainExtractionEditor : UserControl
         }
     }
 
+    private ResponseModel? ResolveEffectiveResponse(ChainExtraction extraction)
+    {
+        if (SuggestionResponseResolver is not null)
+        {
+            return SuggestionResponseResolver(extraction);
+        }
+
+        return extraction.IsVariableSource ? null : LastResponse;
+    }
+
     private bool CanSuggestFor(TextBox tb, ChainExtraction extraction)
     {
-        if (!HasLastResponse || LastResponse is null)
+        if (IsSourceVariableBox(tb))
         {
-            return false;
+            return extraction.IsVariableSource;
         }
 
         if (IsHeaderNameBox(tb))
         {
-            return extraction.IsHeaderSource;
+            return HasLastResponse && LastResponse is not null && extraction.IsHeaderSource;
         }
 
-        return extraction.RequiresExpression;
+        if (!extraction.RequiresExpression)
+        {
+            return false;
+        }
+
+        if (extraction.IsVariableSource)
+        {
+            return ResolveEffectiveResponse(extraction) is not null;
+        }
+
+        return HasLastResponse && LastResponse is not null;
     }
 
     private void RefreshSuggestionsFor(TextBox tb, bool openIfAny)
     {
         if (!_isAttachedToVisualTree ||
             tb.DataContext is not ChainExtraction extraction ||
-            LastResponse is null ||
-            !HasLastResponse ||
             !tb.IsVisible ||
             !tb.IsEnabled ||
             TopLevel.GetTopLevel(tb) is null)
@@ -481,21 +521,42 @@ public partial class ChainExtractionEditor : UserControl
             return;
         }
 
-        var suggester = ExtractionSuggester ?? new ExtractionSuggester();
+        var isSourceVariable = IsSourceVariableBox(tb);
         var isHeaderName = IsHeaderNameBox(tb);
         var query = tb.Text;
 
-        IReadOnlyList<RealtimeExtractionSuggestion> items = isHeaderName
-            ? suggester.SuggestHeaderNames(LastResponse, query, maxResults: 25)
-            : suggester.SuggestRealtime(
-                LastResponse,
-                extraction.Source,
-                extraction.Kind,
-                query,
-                extraction.HeaderName,
-                extraction.VariableName,
-                extraction.IsList,
-                maxResults: 25);
+        IReadOnlyList<RealtimeExtractionSuggestion> items;
+        if (isSourceVariable)
+        {
+            items = FilterSourceVariableSuggestions(
+                SourceVariablesProvider?.Invoke(extraction) ?? [],
+                query);
+        }
+        else
+        {
+            var effectiveResponse = extraction.IsVariableSource
+                ? ResolveEffectiveResponse(extraction)
+                : (HasLastResponse ? LastResponse : null);
+
+            if (effectiveResponse is null)
+            {
+                CloseSuggestionsPopup();
+                return;
+            }
+
+            var suggester = ExtractionSuggester ?? new ExtractionSuggester();
+            items = isHeaderName
+                ? suggester.SuggestHeaderNames(effectiveResponse, query, maxResults: 25)
+                : suggester.SuggestRealtime(
+                    effectiveResponse,
+                    extraction.Source,
+                    extraction.Kind,
+                    query,
+                    extraction.HeaderName,
+                    extraction.VariableName,
+                    extraction.IsList,
+                    maxResults: 25);
+        }
 
         _suggestions.Clear();
         foreach (var item in items)
@@ -509,11 +570,13 @@ public partial class ChainExtractionEditor : UserControl
             return;
         }
 
-        SuggestionsHeaderText.Text = isHeaderName
-            ? $"En-têtes de la réponse ({_suggestions.Count})"
-            : extraction.Kind == ExtractionKind.JsonPath
-                ? $"Suggestions JSONPath ({_suggestions.Count})"
-                : $"Suggestions Regex ({_suggestions.Count})";
+        SuggestionsHeaderText.Text = isSourceVariable
+            ? $"Variables disponibles ({_suggestions.Count})"
+            : isHeaderName
+                ? $"En-têtes de la réponse ({_suggestions.Count})"
+                : extraction.Kind == ExtractionKind.JsonPath
+                    ? $"Suggestions JSONPath ({_suggestions.Count})"
+                    : $"Suggestions Regex ({_suggestions.Count})";
 
         var targetWidth = tb.Bounds.Width > 0 ? Math.Clamp(tb.Bounds.Width, 420, 680) : 480;
         SuggestionsBorder.Width = targetWidth;
@@ -528,6 +591,39 @@ public partial class ChainExtractionEditor : UserControl
         }
     }
 
+    private static IReadOnlyList<RealtimeExtractionSuggestion> FilterSourceVariableSuggestions(
+        IReadOnlyList<RealtimeExtractionSuggestion> candidates,
+        string? query)
+    {
+        if (candidates.Count == 0)
+        {
+            return [];
+        }
+
+        var norm = (query ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(norm))
+        {
+            return candidates.Take(25).ToList();
+        }
+
+        var exactOrPrefix = new List<RealtimeExtractionSuggestion>();
+        var contains = new List<RealtimeExtractionSuggestion>();
+        foreach (var candidate in candidates)
+        {
+            if (candidate.Expression.StartsWith(norm, StringComparison.OrdinalIgnoreCase))
+            {
+                exactOrPrefix.Add(candidate);
+            }
+            else if (candidate.Expression.Contains(norm, StringComparison.OrdinalIgnoreCase) ||
+                     candidate.PreviewValue.Contains(norm, StringComparison.OrdinalIgnoreCase))
+            {
+                contains.Add(candidate);
+            }
+        }
+
+        return exactOrPrefix.Concat(contains).Take(25).ToList();
+    }
+
     private void ApplySuggestion(RealtimeExtractionSuggestion suggestion)
     {
         if (_activeExtraction is null)
@@ -538,6 +634,7 @@ public partial class ChainExtractionEditor : UserControl
 
         var extraction = _activeExtraction;
         var targetBox = _activeTextBox;
+        var isSourceVariable = targetBox is not null && IsSourceVariableBox(targetBox);
         var isHeaderName = targetBox is not null && IsHeaderNameBox(targetBox);
 
         _suppressSuggestionsUpdate = true;
@@ -546,7 +643,11 @@ public partial class ChainExtractionEditor : UserControl
         {
             CloseSuggestionsPopup();
 
-            if (isHeaderName)
+            if (isSourceVariable)
+            {
+                extraction.SourceVariableName = suggestion.Expression;
+            }
+            else if (isHeaderName)
             {
                 extraction.HeaderName = suggestion.Expression;
             }
@@ -568,7 +669,8 @@ public partial class ChainExtractionEditor : UserControl
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(extraction.VariableName) &&
+            if (!isSourceVariable &&
+                string.IsNullOrWhiteSpace(extraction.VariableName) &&
                 !string.IsNullOrWhiteSpace(suggestion.SuggestedVariableName))
             {
                 extraction.VariableName = EnsureUniqueVariableName(suggestion.SuggestedVariableName, extraction);
@@ -591,9 +693,14 @@ public partial class ChainExtractionEditor : UserControl
             ClearSuppressNextGotFocusAsync(targetBox);
         }
 
-        if (TestCommand?.CanExecute(extraction) == true)
+        if (!isSourceVariable ||
+            extraction.Kind == ExtractionKind.FullResponse ||
+            !string.IsNullOrWhiteSpace(extraction.Expression))
         {
-            TestCommand.Execute(extraction);
+            if (TestCommand?.CanExecute(extraction) == true)
+            {
+                TestCommand.Execute(extraction);
+            }
         }
     }
 
@@ -659,4 +766,7 @@ public partial class ChainExtractionEditor : UserControl
 
     private static bool IsHeaderNameBox(TextBox tb) =>
         string.Equals(tb.Tag as string, "HeaderName", StringComparison.Ordinal);
+
+    private static bool IsSourceVariableBox(TextBox tb) =>
+        string.Equals(tb.Tag as string, "SourceVariable", StringComparison.Ordinal);
 }

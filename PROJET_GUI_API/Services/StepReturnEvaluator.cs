@@ -291,47 +291,88 @@ public sealed class StepReturnEvaluator : IStepReturnEvaluator
                     return false;
                 }
 
-                result = null;
-                error = accumulatedLists is not null && accumulatedLists.ContainsKey(rootName)
-                    ? $"[[{id.Name}]] : « {rootName} » est déjà une liste simple ; utilise [[{rootName}]]."
-                    : $"Variable inconnue ou non définie : « {rootName} » (pour [[{id.Name}]]).";
-                return false;
-            }
-
-            if (!scalars.TryGetValue(rootName, out var rootJson))
-            {
-                result = null;
-                error = accumulatedLists is not null && accumulatedLists.ContainsKey(rootName)
-                    ? $"« {rootName} » est une liste simple et ne supporte pas l'accès « .{jsonPath} »."
-                    : $"Variable inconnue ou non définie : « {rootName} » (pour « {id.Name} »).";
-                return false;
-            }
-
-            if (!id.ForceScalar && ResponseExtractor.JsonPathHasWildcard(jsonPath))
-            {
-                var wildcardOutcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, jsonPath);
-                if (wildcardOutcome.IsSuccess)
+                if (accumulatedLists is not null && accumulatedLists.TryGetValue(rootName, out var sourceListForList))
                 {
-                    result = BuildJsonArray(wildcardOutcome.Values);
+                    var listOutcome = ResponseExtractor.ExtractListJsonPathFromValues(sourceListForList, jsonPath);
+                    if (listOutcome.IsSuccess)
+                    {
+                        result = BuildJsonArray(listOutcome.Values);
+                        error = null;
+                        return true;
+                    }
+
+                    result = null;
+                    error = $"[[{id.Name}]] : {listOutcome.ErrorMessage}";
+                    return false;
+                }
+
+                result = null;
+                error = $"Variable ou liste inconnue : « {rootName} » (pour [[{id.Name}]]).";
+                return false;
+            }
+
+            if (scalars.TryGetValue(rootName, out var rootJson))
+            {
+                if (!id.ForceScalar && ResponseExtractor.JsonPathHasWildcard(jsonPath))
+                {
+                    var wildcardOutcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, jsonPath);
+                    if (wildcardOutcome.IsSuccess)
+                    {
+                        result = BuildJsonArray(wildcardOutcome.Values);
+                        error = null;
+                        return true;
+                    }
+
+                    result = null;
+                    error = $"{id.Name} : {wildcardOutcome.ErrorMessage}";
+                    return false;
+                }
+
+                var jpOutcome = ResponseExtractor.ExtractJsonPathFromBody(rootJson, jsonPath);
+                if (jpOutcome.IsSuccess)
+                {
+                    result = JsonValue.Create(jpOutcome.Value);
                     error = null;
                     return true;
                 }
 
                 result = null;
-                error = $"{id.Name} : {wildcardOutcome.ErrorMessage}";
+                error = $"{id.Name} : {jpOutcome.ErrorMessage}";
                 return false;
             }
 
-            var jpOutcome = ResponseExtractor.ExtractJsonPathFromBody(rootJson, jsonPath);
-            if (jpOutcome.IsSuccess)
+            if (accumulatedLists is not null && accumulatedLists.TryGetValue(rootName, out var sourceList))
             {
-                result = JsonValue.Create(jpOutcome.Value);
-                error = null;
-                return true;
+                if (!id.ForceScalar && ResponseExtractor.JsonPathHasWildcard(jsonPath))
+                {
+                    var wildcardOutcome = ResponseExtractor.ExtractListJsonPathFromValues(sourceList, jsonPath);
+                    if (wildcardOutcome.IsSuccess)
+                    {
+                        result = BuildJsonArray(wildcardOutcome.Values);
+                        error = null;
+                        return true;
+                    }
+
+                    result = null;
+                    error = $"{id.Name} : {wildcardOutcome.ErrorMessage}";
+                    return false;
+                }
+
+                var jpOutcome = ResponseExtractor.ExtractJsonPathFromValues(sourceList, jsonPath);
+                if (jpOutcome.IsSuccess)
+                {
+                    result = JsonValue.Create(jpOutcome.Value);
+                    error = null;
+                    return true;
+                }
+
+                result = null;
+                error = $"{id.Name} : {jpOutcome.ErrorMessage}";
+                return false;
             }
 
             result = null;
-            error = $"{id.Name} : {jpOutcome.ErrorMessage}";
+            error = $"Variable ou liste inconnue : « {rootName} » (pour « {id.Name} »).";
             return false;
         }
 

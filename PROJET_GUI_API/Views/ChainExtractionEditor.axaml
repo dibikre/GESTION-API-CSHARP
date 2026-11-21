@@ -110,7 +110,7 @@
                                         <ComboBox Grid.Column="2"
                                                   ItemsSource="{x:Static vm:ChainViewModel.ExtractionKinds}"
                                                   SelectedItem="{Binding Kind}"
-                                                  IsEnabled="{Binding IsBodySource}"
+                                                  IsEnabled="{Binding CanSelectKind}"
                                                   AutomationProperties.Name="Type d'extraction">
                                             <ComboBox.ItemTemplate>
                                                 <DataTemplate x:DataType="models:ExtractionKind">
@@ -136,12 +136,17 @@
 
                                             <Button Grid.Column="1"
                                                     Classes="icon"
-                                                    IsVisible="{Binding #Root.HasLastResponse}"
                                                     IsEnabled="{Binding RequiresExpression}"
                                                     Focusable="False"
                                                     Click="OnToggleSuggestionsButtonClick"
-                                                    ToolTip.Tip="Suggestions depuis la dernière réponse (Ctrl+Espace)"
+                                                    ToolTip.Tip="Suggestions depuis la dernière réponse ou la variable source (Ctrl+Espace)"
                                                     AutomationProperties.Name="Afficher les suggestions en temps réel">
+                                                <Button.IsVisible>
+                                                    <MultiBinding Converter="{x:Static BoolConverters.Or}">
+                                                        <Binding ElementName="Root" Path="HasLastResponse" />
+                                                        <Binding Path="IsVariableSource" />
+                                                    </MultiBinding>
+                                                </Button.IsVisible>
                                                 <Path Classes="iconStroke" Data="{StaticResource IconChevronDown}" />
                                             </Button>
                                         </Grid>
@@ -151,9 +156,15 @@
                                                 Content="Tester"
                                                 Command="{Binding #Root.TestCommand}"
                                                 CommandParameter="{Binding}"
-                                                IsEnabled="{Binding #Root.HasLastResponse}"
-                                                ToolTip.Tip="Tester l'extraction sur la dernière réponse reçue"
-                                                AutomationProperties.Name="Tester l'extraction" />
+                                                ToolTip.Tip="Tester l'extraction sur la dernière réponse reçue ou la variable source"
+                                                AutomationProperties.Name="Tester l'extraction">
+                                            <Button.IsEnabled>
+                                                <MultiBinding Converter="{x:Static BoolConverters.Or}">
+                                                    <Binding ElementName="Root" Path="HasLastResponse" />
+                                                    <Binding Path="IsVariableSource" />
+                                                </MultiBinding>
+                                            </Button.IsEnabled>
+                                        </Button>
 
                                         <Button Grid.Column="5"
                                                 Classes="icon danger"
@@ -186,6 +197,39 @@
                                                      LostFocus="OnSuggestionTextBoxLostFocus"
                                                      TextChanged="OnSuggestionTextBoxTextChanged"
                                                      AutomationProperties.Name="Nom de l'en-tête HTTP" />
+                                        </StackPanel>
+
+                                        <StackPanel IsVisible="{Binding IsVariableSource}"
+                                                    Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    Margin="0,0,12,0"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="Variable"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="4">
+                                                <TextBox Grid.Column="0"
+                                                         Classes="mono"
+                                                         Text="{Binding SourceVariableName}"
+                                                         Width="168"
+                                                         PlaceholderText="ex. a"
+                                                         Tag="SourceVariable"
+                                                         Loaded="OnSuggestionTextBoxLoaded"
+                                                         Unloaded="OnSuggestionTextBoxUnloaded"
+                                                         GotFocus="OnSuggestionTextBoxGotFocus"
+                                                         LostFocus="OnSuggestionTextBoxLostFocus"
+                                                         TextChanged="OnSuggestionTextBoxTextChanged"
+                                                         AutomationProperties.Name="Nom de la variable source" />
+                                                <Button Grid.Column="1"
+                                                        Classes="icon"
+                                                        Focusable="False"
+                                                        Click="OnToggleSuggestionsButtonClick"
+                                                        ToolTip.Tip="Variables disponibles (Ctrl+Espace)"
+                                                        AutomationProperties.Name="Afficher les variables sources disponibles">
+                                                    <Path Classes="iconStroke" Data="{StaticResource IconChevronDown}" />
+                                                </Button>
+                                            </Grid>
                                         </StackPanel>
 
                                         <StackPanel IsVisible="{Binding ShowRegexGroup}"

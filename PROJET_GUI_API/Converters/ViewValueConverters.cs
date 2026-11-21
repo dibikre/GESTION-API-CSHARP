@@ -296,6 +296,7 @@ public static class ChainExtractionSourceConverters
         {
             ChainExtractionSource.Body => "Corps",
             ChainExtractionSource.Header => "En-tête",
+            ChainExtractionSource.Variable => "Variable",
             _ => source.ToString()
         });
 }

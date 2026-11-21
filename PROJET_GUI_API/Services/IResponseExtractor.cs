@@ -41,4 +41,19 @@ public interface IResponseExtractor
     /// Extrait la liste brute sans appliquer les conditions de filtrage ou de transformation.
     /// </summary>
     ListExtractionOutcome ExtractRawList(ResponseModel response, ChainExtraction extraction);
+
+    /// <summary>
+    /// Extrait une valeur scalaire depuis le contenu d'une autre variable (liste ou scalaire).
+    /// </summary>
+    ExtractionOutcome ExtractFromVariable(IReadOnlyList<string> sourceValues, ChainExtraction extraction);
+
+    /// <summary>
+    /// Extrait toutes les valeurs correspondantes en liste depuis le contenu d'une autre variable.
+    /// </summary>
+    ListExtractionOutcome ExtractListFromVariable(IReadOnlyList<string> sourceValues, ChainExtraction extraction);
+
+    /// <summary>
+    /// Extrait la liste brute depuis le contenu d'une autre variable sans appliquer les conditions.
+    /// </summary>
+    ListExtractionOutcome ExtractRawListFromVariable(IReadOnlyList<string> sourceValues, ChainExtraction extraction);
 }

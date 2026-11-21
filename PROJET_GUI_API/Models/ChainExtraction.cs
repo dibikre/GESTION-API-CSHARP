@@ -38,11 +38,17 @@ public partial class ChainExtraction : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsBodySource))]
     [NotifyPropertyChangedFor(nameof(IsHeaderSource))]
+    [NotifyPropertyChangedFor(nameof(IsVariableSource))]
+    [NotifyPropertyChangedFor(nameof(CanSelectKind))]
+    [NotifyPropertyChangedFor(nameof(RequiresExpression))]
     [NotifyPropertyChangedFor(nameof(ExpressionPlaceholder))]
     public partial ChainExtractionSource Source { get; set; } = ChainExtractionSource.Body;
 
     [ObservableProperty]
     public partial string HeaderName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string SourceVariableName { get; set; } = string.Empty;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsOptional))]
@@ -89,6 +95,10 @@ public partial class ChainExtraction : ObservableObject
     public bool IsBodySource => Source == ChainExtractionSource.Body;
 
     public bool IsHeaderSource => Source == ChainExtractionSource.Header;
+
+    public bool IsVariableSource => Source == ChainExtractionSource.Variable;
+
+    public bool CanSelectKind => Source != ChainExtractionSource.Header;
 
     public bool IsJsonPathKind => Kind == ExtractionKind.JsonPath;
 
@@ -152,13 +162,23 @@ public partial class ChainExtraction : ObservableObject
         ? (IsList ? "nom_liste" : "nom_variable")
         : (IsList ? $"[[{VariableName.Trim()}]]" : $"{{{{{VariableName.Trim()}}}}}");
 
-    public string ExpressionPlaceholder => Source == ChainExtractionSource.Header
-        ? "ex. Bearer (.+)"
-        : Kind == ExtractionKind.FullResponse
+    public string ExpressionPlaceholder => Source switch
+    {
+        ChainExtractionSource.Header => "ex. Bearer (.+)",
+        ChainExtractionSource.Variable => Kind switch
+        {
+            ExtractionKind.FullResponse => "(copier la valeur de la variable source)",
+            ExtractionKind.JsonPath => IsList
+                ? "ex. items[*].id ou __DEFAULT_SCOPE__[\"webapp.app-context\"]"
+                : "ex. __DEFAULT_SCOPE__[\"webapp.app-context\"].language",
+            _ => "ex. \"language\":\"([^\"]+)\""
+        },
+        _ => Kind == ExtractionKind.FullResponse
             ? "(réponse complète — réutilisable via {{var.chemin}})"
             : Kind == ExtractionKind.JsonPath
                 ? (IsList ? "ex. items[*].id, items[n++].id ou data.tags" : "ex. data.token ou items[0].id")
-                : "ex. \"token\":\"([^\"]+)\"";
+                : "ex. \"token\":\"([^\"]+)\""
+    };
 
     partial void OnKindChanged(ExtractionKind value)
     {
@@ -181,6 +201,14 @@ public partial class ChainExtraction : ObservableObject
     partial void OnHeaderNameChanged(string value)
     {
         if (string.IsNullOrWhiteSpace(value) && Source == ChainExtractionSource.Header)
+        {
+            ClearPreviewState();
+        }
+    }
+
+    partial void OnSourceVariableNameChanged(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) && Source == ChainExtractionSource.Variable)
         {
             ClearPreviewState();
         }
@@ -240,6 +268,7 @@ public partial class ChainExtraction : ObservableObject
             RegexGroup = RegexGroup,
             Source = Source,
             HeaderName = HeaderName,
+            SourceVariableName = SourceVariableName,
             IsRequired = IsRequired,
             IsList = IsList,
             DefaultValueIfMissing = DefaultValueIfMissing,

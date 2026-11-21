@@ -202,6 +202,7 @@ public static class ChainPipelineSerializer
         RegexGroup = extraction.RegexGroup,
         Source = extraction.Source,
         HeaderName = extraction.HeaderName ?? string.Empty,
+        SourceVariableName = extraction.SourceVariableName ?? string.Empty,
         IsRequired = extraction.IsRequired,
         IsList = extraction.IsList,
         DefaultValueIfMissing = extraction.DefaultValueIfMissing ?? string.Empty,

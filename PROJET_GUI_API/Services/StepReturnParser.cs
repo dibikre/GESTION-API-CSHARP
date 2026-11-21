@@ -627,14 +627,52 @@ internal static class StepReturnParser
             }
             else if (input[index] == '[')
             {
-                var closeIdx = input.IndexOf(']', index + 1);
-                if (closeIdx < 0)
+                var scan = index + 1;
+                var inQuote = '\0';
+                var escaped = false;
+                var closeIdx = -1;
+                var invalidUnquoted = false;
+
+                while (scan < len)
                 {
-                    break;
+                    var ch = input[scan];
+                    if (inQuote != '\0')
+                    {
+                        if (escaped)
+                        {
+                            escaped = false;
+                        }
+                        else if (ch == '\\')
+                        {
+                            escaped = true;
+                        }
+                        else if (ch == inQuote)
+                        {
+                            inQuote = '\0';
+                        }
+                    }
+                    else
+                    {
+                        if (ch is '"' or '\'')
+                        {
+                            inQuote = ch;
+                        }
+                        else if (ch == ']')
+                        {
+                            closeIdx = scan;
+                            break;
+                        }
+                        else if (ch is '[' or '\r' or '\n' or ',' or '{' or '}')
+                        {
+                            invalidUnquoted = true;
+                            break;
+                        }
+                    }
+
+                    scan++;
                 }
 
-                var inner = input[(index + 1)..closeIdx];
-                if (inner.IndexOfAny(['[', '\r', '\n', ',', '{', '}']) >= 0)
+                if (closeIdx < 0 || invalidUnquoted || inQuote != '\0')
                 {
                     break;
                 }
@@ -678,7 +716,7 @@ internal static class StepReturnParser
                     if (VariablePathHelper.TrySplit(id.Name, out var rootName, out var jsonPath) &&
                         jsonPath is not null)
                     {
-                        if (seenScalars.Add(rootName)) scalars.Add(rootName);
+                        if (seenAmbiguous.Add(rootName)) ambiguous.Add(rootName);
                         return;
                     }
                     if (id.ForceList)
@@ -704,7 +742,7 @@ internal static class StepReturnParser
                             if (VariablePathHelper.TrySplit(rawListName, out var listRoot, out var listPath) &&
                                 listPath is not null)
                             {
-                                if (seenScalars.Add(listRoot)) scalars.Add(listRoot);
+                                if (seenAmbiguous.Add(listRoot)) ambiguous.Add(listRoot);
                             }
                             else if (seenLists.Add(rawListName))
                             {
@@ -713,11 +751,23 @@ internal static class StepReturnParser
                         }
                         else if (m.Groups[1].Success)
                         {
-                            var rawScalarName = VariablePathHelper.ExtractRootName(m.Groups[1].Value);
-                            if (rawScalarName is not ("$index" or "$guid" or "$timestamp" or "$ip") &&
-                                seenScalars.Add(rawScalarName))
+                            if (VariablePathHelper.TrySplit(m.Groups[1].Value, out var scalarRoot, out var scalarPath) &&
+                                scalarPath is not null)
                             {
-                                scalars.Add(rawScalarName);
+                                if (scalarRoot is not ("$index" or "$guid" or "$timestamp" or "$ip") &&
+                                    seenAmbiguous.Add(scalarRoot))
+                                {
+                                    ambiguous.Add(scalarRoot);
+                                }
+                            }
+                            else
+                            {
+                                var rawScalarName = VariablePathHelper.ExtractRootName(m.Groups[1].Value);
+                                if (rawScalarName is not ("$index" or "$guid" or "$timestamp" or "$ip") &&
+                                    seenScalars.Add(rawScalarName))
+                                {
+                                    scalars.Add(rawScalarName);
+                                }
                             }
                         }
                     }

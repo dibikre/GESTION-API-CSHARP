@@ -319,16 +319,10 @@ internal static class RealtimeExtractionCatalog
                         break;
                     }
 
-                    var isPathSafe = IsSafeJsonPathSegment(prop.Name);
-                    var childPath = !isPathSafe
-                        ? string.Empty
-                        : string.IsNullOrEmpty(path)
-                            ? prop.Name
-                            : $"{path}.{prop.Name}";
-
-                    var childWildcard = !isPathSafe || wildcardBasePath is null
+                    var childPath = FormatJsonPathChild(path, prop.Name);
+                    var childWildcard = wildcardBasePath is null
                         ? null
-                        : $"{wildcardBasePath}.{prop.Name}";
+                        : FormatJsonPathChild(wildcardBasePath, prop.Name);
 
                     WalkJson(
                         prop.Value,
@@ -923,11 +917,38 @@ internal static class RealtimeExtractionCatalog
             : $"{singleLine[..(maxChars - 1)]}…";
     }
 
-    private static bool IsSafeJsonPathSegment(string name) =>
-        !string.IsNullOrWhiteSpace(name) &&
-        !name.Contains('.') &&
-        !name.Contains('[') &&
-        !name.Contains(']');
+    internal static string FormatJsonPathChild(string parentPath, string propName)
+    {
+        if (IsSafeJsonPathSegment(propName))
+        {
+            return string.IsNullOrEmpty(parentPath)
+                ? propName
+                : $"{parentPath}.{propName}";
+        }
+
+        var escaped = propName
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
+        return $"{parentPath}[\"{escaped}\"]";
+    }
+
+    private static bool IsSafeJsonPathSegment(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        foreach (var ch in name)
+        {
+            if (char.IsWhiteSpace(ch) || ch is '.' or '[' or ']' or '"' or '\'' or '\\')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static string FormatElementShortPreview(JsonElement el) => el.ValueKind switch
     {

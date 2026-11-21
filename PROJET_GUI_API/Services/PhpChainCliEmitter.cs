@@ -121,6 +121,7 @@ internal static class PhpChainCliEmitter
                 sb.AppendLine($"                'expression' => {EscapeString(ext.Expression)},");
                 sb.AppendLine($"                'regexGroup' => {ext.RegexGroup},");
                 sb.AppendLine($"                'headerName' => {EscapeString(ext.HeaderName)},");
+                sb.AppendLine($"                'sourceVariable' => {EscapeString(ext.SourceVariableName)},");
                 sb.AppendLine($"                'required' => {FormatBool(ext.IsRequired)},");
                 sb.AppendLine($"                'defaultValue' => {EscapeString(ext.DefaultValueIfMissing)},");
                 sb.AppendLine($"                'isList' => {FormatBool(ext.IsList)},");
@@ -253,10 +254,13 @@ function buildIterations(array $axes, string $mode, array $accumulatedLists, arr
         if ($axis['kind'] === 'list') {
             [$root, $jp] = splitVarPath($axis['name']);
             if ($jp !== null) {
-                if (!array_key_exists($root, $scalarVars)) {
-                    return [[], null, "Variable « {$root} » introuvable pour [[{$axis['name']}]]."];
+                if (array_key_exists($root, $scalarVars)) {
+                    [$ok, $res] = extractJsonPathList((string)$scalarVars[$root], $jp);
+                } elseif (array_key_exists($root, $accumulatedLists)) {
+                    [$ok, $res] = extractJsonPathListFromValues($accumulatedLists[$root], $jp);
+                } else {
+                    return [[], null, "Variable ou liste « {$root} » introuvable pour [[{$axis['name']}]]."];
                 }
-                [$ok, $res] = extractJsonPathList((string)$scalarVars[$root], $jp);
                 if ($ok && is_array($res) && count($res) > 0) {
                     $list = $res;
                 } elseif (is_string($res) && stripos($res, 'est vide') !== false) {
@@ -306,18 +310,27 @@ function buildIterations(array $axes, string $mode, array $accumulatedLists, arr
     return [$acc, null, null];
 }
 
-function resolveMarker(?string $scalarName, ?string $listName, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs): string {
+function resolveMarker(?string $scalarName, ?string $listName, array $variables, array $listVars, ?array $accumulatedLists, int $globalIndex, string $reqGuid, string $reqTs): string {
     if ($listName !== null && $listName !== '') {
         if (array_key_exists($listName, $listVars)) {
             return (string)$listVars[$listName];
         }
         [$root, $jp] = splitVarPath($listName);
-        if ($jp !== null && array_key_exists($root, $variables)) {
-            [$ok, $res] = extractJsonPathList((string)$variables[$root], $jp);
-            if ($ok && is_array($res) && count($res) > 0) {
-                return (string)$res[0];
+        if ($jp !== null) {
+            if (array_key_exists($root, $variables)) {
+                [$ok, $res] = extractJsonPathList((string)$variables[$root], $jp);
+                if ($ok && is_array($res) && count($res) > 0) {
+                    return (string)$res[0];
+                }
+                throw new RuntimeException("[[{$listName}]] : " . (is_string($res) ? $res : 'Erreur JSONPath'));
             }
-            throw new RuntimeException("[[{$listName}]] : " . (is_string($res) ? $res : 'Erreur JSONPath'));
+            if ($accumulatedLists !== null && array_key_exists($root, $accumulatedLists)) {
+                [$ok, $res] = extractJsonPathListFromValues($accumulatedLists[$root], $jp);
+                if ($ok && is_array($res) && count($res) > 0) {
+                    return (string)$res[0];
+                }
+                throw new RuntimeException("[[{$listName}]] : " . (is_string($res) ? $res : 'Erreur JSONPath'));
+            }
         }
         throw new RuntimeException("Liste inconnue ou non définie : [[" . $listName . "]]");
     }
@@ -330,19 +343,26 @@ function resolveMarker(?string $scalarName, ?string $listName, array $variables,
     if ($name === '$timestamp') return $reqTs;
     [$root, $jp] = splitVarPath($name);
     if ($jp !== null) {
-        if (!array_key_exists($root, $variables)) {
-            throw new RuntimeException("Variable inconnue ou non définie : {{" . $root . "}} (pour {{" . $name . "}})");
+        if (array_key_exists($root, $variables)) {
+            [$ok, $res] = extractJsonPath((string)$variables[$root], $jp);
+            if (!$ok) {
+                throw new RuntimeException("{{" . $name . "}} : " . (string)$res);
+            }
+            return (string)$res;
         }
-        [$ok, $res] = extractJsonPath((string)$variables[$root], $jp);
-        if (!$ok) {
-            throw new RuntimeException("{{" . $name . "}} : " . (string)$res);
+        if ($accumulatedLists !== null && array_key_exists($root, $accumulatedLists)) {
+            [$ok, $res] = extractJsonPathFromValues($accumulatedLists[$root], $jp);
+            if (!$ok) {
+                throw new RuntimeException("{{" . $name . "}} : " . (string)$res);
+            }
+            return (string)$res;
         }
-        return (string)$res;
+        throw new RuntimeException("Variable inconnue ou non définie : {{" . $root . "}} (pour {{" . $name . "}})");
     }
     throw new RuntimeException("Variable inconnue ou non définie : {{" . $name . "}}");
 }
 
-function substituteUrl(string $text, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs): string {
+function substituteUrl(string $text, array $variables, array $listVars, ?array $accumulatedLists, int $globalIndex, string $reqGuid, string $reqTs): string {
     if ($text === '') {
         return '';
     }
@@ -358,7 +378,7 @@ function substituteUrl(string $text, array $variables, array $listVars, int $glo
         $listName = (isset($matches[2][$idx]) && $matches[2][$idx][1] >= 0) ? $matches[2][$idx][0] : '';
 
         $out .= substr($text, $lastOffset, $matchOffset - $lastOffset);
-        $val = resolveMarker($scalarName, $listName, $variables, $listVars, $globalIndex, $reqGuid, $reqTs);
+        $val = resolveMarker($scalarName, $listName, $variables, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
         if (isInQueryValueContext($out)) {
             $out .= rawurlencode($val);
         } else {
@@ -371,21 +391,21 @@ function substituteUrl(string $text, array $variables, array $listVars, int $glo
     return $out;
 }
 
-function substituteSimple(string $text, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs, bool $urlEncode = false): string {
+function substituteSimple(string $text, array $variables, array $listVars, ?array $accumulatedLists, int $globalIndex, string $reqGuid, string $reqTs, bool $urlEncode = false): string {
     if ($text === '') {
         return '';
     }
     return (string)preg_replace_callback(
         MARKER_RE,
-        static function (array $match) use ($variables, $listVars, $globalIndex, $reqGuid, $reqTs, $urlEncode): string {
-            $val = resolveMarker($match[1] ?? null, $match[2] ?? null, $variables, $listVars, $globalIndex, $reqGuid, $reqTs);
+        static function (array $match) use ($variables, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs, $urlEncode): string {
+            $val = resolveMarker($match[1] ?? null, $match[2] ?? null, $variables, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
             return $urlEncode ? rawurlencode($val) : $val;
         },
         $text
     );
 }
 
-function substituteJsonBody(string $text, array $variables, array $listVars, int $globalIndex, string $reqGuid, string $reqTs): string {
+function substituteJsonBody(string $text, array $variables, array $listVars, ?array $accumulatedLists, int $globalIndex, string $reqGuid, string $reqTs): string {
     if ($text === '') {
         return '';
     }
@@ -421,7 +441,7 @@ function substituteJsonBody(string $text, array $variables, array $listVars, int
         }
 
         $out .= substr($text, $lastScanned, $matchOffset - $lastScanned);
-        $val = resolveMarker($scalarName, $listName, $variables, $listVars, $globalIndex, $reqGuid, $reqTs);
+        $val = resolveMarker($scalarName, $listName, $variables, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
         if ($inString) {
             $encoded = json_encode($val, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
             $out .= ($encoded !== false && strlen($encoded) >= 2) ? substr($encoded, 1, -1) : '';
@@ -467,38 +487,92 @@ function parseJsonPath(string $rawPath): array {
     }
 
     $steps = [];
-    foreach (explode('.', $path) as $part) {
-        if ($part === '') {
-            throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
-        }
-        $bracket = strpos($part, '[');
-        if ($bracket === false) {
-            $steps[] = [$part, null, false];
+    $pos = 0;
+    $len = strlen($path);
+    while ($pos < $len) {
+        if ($path[$pos] === '.') {
+            if ($pos === 0 || $pos + 1 >= $len || $path[$pos + 1] === '.') {
+                throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
+            }
+            $pos++;
             continue;
         }
-        $prop = $bracket > 0 ? substr($part, 0, $bracket) : null;
-        $pos = $bracket;
-        $first = true;
-        $len = strlen($part);
-        while ($pos < $len) {
-            if ($part[$pos] !== '[') {
+        if ($path[$pos] === '[') {
+            while ($pos < $len && $path[$pos] === '[') {
+                $cursor = $pos + 1;
+                while ($cursor < $len && ctype_space($path[$cursor])) {
+                    $cursor++;
+                }
+                if ($cursor < $len && ($path[$cursor] === '"' || $path[$cursor] === "'")) {
+                    $q = $path[$cursor];
+                    $cursor++;
+                    $key = '';
+                    $closedQuote = false;
+                    while ($cursor < $len) {
+                        $ch = $path[$cursor++];
+                        if ($ch === '\\' && $cursor < $len) {
+                            $esc = $path[$cursor++];
+                            $key .= match ($esc) {
+                                '\\' => '\\',
+                                '"' => '"',
+                                "'" => "'",
+                                'n' => "\n",
+                                'r' => "\r",
+                                't' => "\t",
+                                default => $esc,
+                            };
+                            continue;
+                        }
+                        if ($ch === $q) {
+                            $closedQuote = true;
+                            break;
+                        }
+                        $key .= $ch;
+                    }
+                    if (!$closedQuote) {
+                        throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
+                    }
+                    while ($cursor < $len && ctype_space($path[$cursor])) {
+                        $cursor++;
+                    }
+                    if ($cursor >= $len || $path[$cursor] !== ']') {
+                        throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
+                    }
+                    $steps[] = [$key, null, false];
+                    $pos = $cursor + 1;
+                    continue;
+                }
+                $close = strpos($path, ']', $pos + 1);
+                if ($close === false) {
+                    throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
+                }
+                $idxStr = trim(substr($path, $pos + 1, $close - $pos - 1));
+                if ($idxStr === '*' || $idxStr === '' || $idxStr === '++' || preg_match('/^(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)$/', $idxStr)) {
+                    $steps[] = [null, null, true];
+                } elseif (preg_match('/^-?\d+$/', $idxStr)) {
+                    $steps[] = [null, (int)$idxStr, false];
+                } else {
+                    throw new RuntimeException("Index invalide dans {$rawPath}");
+                }
+                $pos = $close + 1;
+            }
+            if ($pos < $len && $path[$pos] !== '.') {
                 throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
             }
-            $close = strpos($part, ']', $pos + 1);
-            if ($close === false) {
-                throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
-            }
-            $idxStr = trim(substr($part, $pos + 1, $close - $pos - 1));
-            if ($idxStr === '*' || $idxStr === '' || $idxStr === '++' || preg_match('/^(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)$/', $idxStr)) {
-                $steps[] = [$first ? $prop : null, null, true];
-            } elseif (preg_match('/^-?\d+$/', $idxStr)) {
-                $steps[] = [$first ? $prop : null, (int)$idxStr, false];
-            } else {
-                throw new RuntimeException("Index invalide dans {$rawPath}");
-            }
-            $first = false;
-            $pos = $close + 1;
+            continue;
         }
+        $segStart = $pos;
+        while ($pos < $len && $path[$pos] !== '.' && $path[$pos] !== '[' && $path[$pos] !== ']') {
+            $pos++;
+        }
+        if ($pos < $len && $path[$pos] === ']') {
+            throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
+        }
+        $prop = substr($path, $segStart, $pos - $segStart);
+        if ($prop === '') {
+            throw new RuntimeException("Chemin JSONPath invalide : {$rawPath}");
+        }
+        $steps[] = [$prop, null, false];
     }
     return $steps;
 }
@@ -511,24 +585,81 @@ function formatJsonValue(mixed $current): string {
     return (string)json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
-function extractJsonPath(string $body, string $rawPath): array {
+function unwrapJsonString(mixed $val): mixed {
+    if (!is_string($val)) return $val;
+    $trimmed = ltrim($val, "\xEF\xBB\xBF \t\r\n");
+    if ($trimmed === '' || ($trimmed[0] !== '{' && $trimmed[0] !== '[')) {
+        return $val;
+    }
     try {
-        $steps = parseJsonPath($rawPath);
-        foreach ($steps as [, , $isWildcard]) {
-            if ($isWildcard) {
-                return [false, 'Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]].'];
-            }
+        return json_decode($trimmed, false, 512, JSON_THROW_ON_ERROR);
+    } catch (Throwable) {
+        return $val;
+    }
+}
+
+function getMaxContiguousPropIdx(array $steps, int $startIdx): int {
+    $end = $startIdx;
+    $count = count($steps);
+    while ($end + 1 < $count) {
+        $nxt = $steps[$end + 1];
+        if ($nxt[0] === null || $nxt[1] !== null || $nxt[2]) {
+            break;
+        }
+        $curr = $steps[$end];
+        if ($curr[1] !== null || $curr[2]) {
+            break;
+        }
+        $end++;
+    }
+    return $end;
+}
+
+function looksLikeJsonArray(?string $raw): bool {
+    if ($raw === null || trim($raw) === '') return false;
+    return str_starts_with(ltrim($raw, "\xEF\xBB\xBF \t\r\n"), '[');
+}
+
+function extractJsonPathSteps(string $body, array $steps, int $startIdx = 0): array {
+    try {
+        if (trim($body) === '') {
+            return [false, 'Le corps est vide (JSON attendu).'];
         }
         $clean = ltrim($body, "\xEF\xBB\xBF");
         $current = json_decode($clean, false, 512, JSON_THROW_ON_ERROR);
-        foreach ($steps as [$prop, $arrIdx]) {
+        $count = count($steps);
+        for ($i = $startIdx; $i < $count; $i++) {
+            [$prop, $arrIdx] = $steps[$i];
             if ($prop !== null) {
-                if (!is_object($current) || !property_exists($current, $prop)) {
+                $current = unwrapJsonString($current);
+                if (!is_object($current)) {
                     return [false, "Propriété JSON introuvable : {$prop}"];
                 }
-                $current = $current->{$prop};
+                if (property_exists($current, $prop)) {
+                    $current = $current->{$prop};
+                } else {
+                    $matched = false;
+                    $maxEnd = getMaxContiguousPropIdx($steps, $i);
+                    for ($endIdx = $maxEnd; $endIdx > $i; $endIdx--) {
+                        $parts = [];
+                        for ($k = $i; $k <= $endIdx; $k++) {
+                            $parts[] = (string)$steps[$k][0];
+                        }
+                        $joined = implode('.', $parts);
+                        if (property_exists($current, $joined)) {
+                            $current = $current->{$joined};
+                            $i = $endIdx;
+                            $matched = true;
+                            break;
+                        }
+                    }
+                    if (!$matched) {
+                        return [false, "Propriété JSON introuvable : {$prop}"];
+                    }
+                }
             }
             if ($arrIdx !== null) {
+                $current = unwrapJsonString($current);
                 if (!is_array($current)) {
                     return [false, "Index [{$arrIdx}] inapplicable"];
                 }
@@ -546,36 +677,88 @@ function extractJsonPath(string $body, string $rawPath): array {
     }
 }
 
-function extractJsonPathList(string $body, string $rawPath): array {
+function extractJsonPath(string $body, string $rawPath): array {
     try {
         $steps = parseJsonPath($rawPath);
+        foreach ($steps as [, , $isWildcard]) {
+            if ($isWildcard) {
+                return [false, 'Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]].'];
+            }
+        }
+        return extractJsonPathSteps($body, $steps, 0);
+    } catch (Throwable $e) {
+        return [false, $e->getMessage()];
+    }
+}
+
+function extractJsonPathListSteps(string $body, array $steps, int $startIdx = 0): array {
+    try {
+        if (trim($body) === '') {
+            return [false, 'Le corps est vide (JSON attendu).'];
+        }
         $clean = ltrim($body, "\xEF\xBB\xBF");
         $currentElements = [json_decode($clean, false, 512, JSON_THROW_ON_ERROR)];
         $hasWildcard = false;
+        $count = count($steps);
 
-        foreach ($steps as [$prop, $arrIdx, $isWildcard]) {
+        for ($i = $startIdx; $i < $count; $i++) {
+            [$prop, $arrIdx, $isWildcard] = $steps[$i];
             if ($prop !== null) {
-                $nextElements = [];
-                foreach ($currentElements as $el) {
+                $exactMatches = [];
+                $allExact = true;
+                foreach ($currentElements as $rawEl) {
+                    $el = unwrapJsonString($rawEl);
                     if (!is_object($el) || !property_exists($el, $prop)) {
-                        if (!$hasWildcard) {
-                            return [false, "Propriété JSON introuvable : {$prop}"];
-                        }
+                        $allExact = false;
                         continue;
                     }
-                    $nextElements[] = $el->{$prop};
+                    $exactMatches[] = $el->{$prop};
                 }
-                if (count($nextElements) === 0) {
-                    return [false, "Propriété JSON introuvable : {$prop}"];
+                if (count($exactMatches) > 0 && ($allExact || $hasWildcard)) {
+                    $currentElements = $exactMatches;
+                } else {
+                    $matchedJoined = false;
+                    $maxEnd = getMaxContiguousPropIdx($steps, $i);
+                    for ($endIdx = $maxEnd; $endIdx > $i; $endIdx--) {
+                        $parts = [];
+                        for ($k = $i; $k <= $endIdx; $k++) {
+                            $parts[] = (string)$steps[$k][0];
+                        }
+                        $joined = implode('.', $parts);
+                        $jMatches = [];
+                        $allJ = true;
+                        foreach ($currentElements as $rawEl) {
+                            $el = unwrapJsonString($rawEl);
+                            if (!is_object($el) || !property_exists($el, $joined)) {
+                                $allJ = false;
+                                continue;
+                            }
+                            $jMatches[] = $el->{$joined};
+                        }
+                        if (count($jMatches) > 0 && ($allJ || $hasWildcard)) {
+                            $currentElements = $jMatches;
+                            $i = $endIdx;
+                            [$prop, $arrIdx, $isWildcard] = $steps[$i];
+                            $matchedJoined = true;
+                            break;
+                        }
+                    }
+                    if (!$matchedJoined) {
+                        if (count($exactMatches) > 0) {
+                            $currentElements = $exactMatches;
+                        } else {
+                            return [false, "Propriété JSON introuvable : {$prop}"];
+                        }
+                    }
                 }
-                $currentElements = $nextElements;
             }
 
             if ($isWildcard) {
                 $wasWildcard = $hasWildcard;
                 $hasWildcard = true;
                 $nextElements = [];
-                foreach ($currentElements as $el) {
+                foreach ($currentElements as $rawEl) {
+                    $el = unwrapJsonString($rawEl);
                     if (!is_array($el)) {
                         if (!$wasWildcard) {
                             return [false, 'Le sélecteur [*] est inapplicable sur cet élément'];
@@ -592,7 +775,8 @@ function extractJsonPathList(string $body, string $rawPath): array {
                 $currentElements = $nextElements;
             } elseif ($arrIdx !== null) {
                 $nextElements = [];
-                foreach ($currentElements as $el) {
+                foreach ($currentElements as $rawEl) {
+                    $el = unwrapJsonString($rawEl);
                     if (!is_array($el)) {
                         if (!$hasWildcard) {
                             return [false, "Index [{$arrIdx}] inapplicable"];
@@ -630,6 +814,114 @@ function extractJsonPathList(string $body, string $rawPath): array {
     } catch (Throwable $e) {
         return [false, $e->getMessage()];
     }
+}
+
+function extractJsonPathList(string $body, string $rawPath): array {
+    try {
+        $steps = parseJsonPath($rawPath);
+        return extractJsonPathListSteps($body, $steps, 0);
+    } catch (Throwable $e) {
+        return [false, $e->getMessage()];
+    }
+}
+
+function extractJsonPathFromValues(array $sourceValues, string $rawPath): array {
+    $cnt = count($sourceValues);
+    if ($cnt === 0) {
+        return [false, 'La liste source est vide.'];
+    }
+    try {
+        $steps = parseJsonPath($rawPath);
+    } catch (Throwable $e) {
+        return [false, $e->getMessage()];
+    }
+    foreach ($steps as [, , $isWild]) {
+        if ($isWild) {
+            return [false, 'Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]].'];
+        }
+    }
+    if (count($steps) === 0) {
+        return [true, $cnt === 1 ? (string)$sourceValues[0] : (string)json_encode(array_values($sourceValues), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
+    }
+    if ($steps[0][0] === null && $steps[0][1] !== null && ($cnt > 1 || !looksLikeJsonArray((string)$sourceValues[0]))) {
+        $idx = $steps[0][1];
+        $resolved = $idx < 0 ? $cnt + $idx : $idx;
+        if ($resolved < 0 || $resolved >= $cnt) {
+            return [false, "Index [{$idx}] hors limites (taille : {$cnt})"];
+        }
+        $chosen = (string)$sourceValues[$resolved];
+        if (count($steps) === 1) {
+            return [true, $chosen];
+        }
+        return extractJsonPathSteps($chosen, $steps, 1);
+    }
+    $lastErr = 'Aucune correspondance JSONPath dans la variable source.';
+    foreach ($sourceValues as $item) {
+        $res = extractJsonPathSteps((string)$item, $steps, 0);
+        if ($res[0]) {
+            return $res;
+        }
+        $lastErr = $res[1];
+    }
+    return [false, $lastErr];
+}
+
+function extractJsonPathListFromValues(array $sourceValues, string $rawPath): array {
+    $cnt = count($sourceValues);
+    if ($cnt === 0) {
+        return [false, 'La liste source est vide.'];
+    }
+    try {
+        $steps = parseJsonPath($rawPath);
+    } catch (Throwable $e) {
+        return [false, $e->getMessage()];
+    }
+    if (count($steps) === 0) {
+        return [true, array_values(array_map('strval', $sourceValues))];
+    }
+    if ($steps[0][0] === null && ($steps[0][2] || $steps[0][1] !== null) && ($cnt > 1 || !looksLikeJsonArray((string)$sourceValues[0]))) {
+        if ($steps[0][2]) {
+            if (count($steps) === 1) {
+                return [true, array_values(array_map('strval', $sourceValues))];
+            }
+            $collected = [];
+            $lastErr = null;
+            foreach ($sourceValues as $item) {
+                [$ok, $res] = extractJsonPathListSteps((string)$item, $steps, 1);
+                if ($ok && is_array($res)) {
+                    foreach ($res as $v) $collected[] = $v;
+                } else {
+                    $lastErr = is_string($res) ? $res : null;
+                }
+            }
+            return count($collected) > 0
+                ? [true, $collected]
+                : [false, $lastErr ?? "Aucune valeur extraite pour l'expression JSONPath."];
+        }
+        $idx = $steps[0][1];
+        $resolved = $idx < 0 ? $cnt + $idx : $idx;
+        if ($resolved < 0 || $resolved >= $cnt) {
+            return [false, "Index [{$idx}] hors limites (taille : {$cnt})"];
+        }
+        $chosen = (string)$sourceValues[$resolved];
+        if (count($steps) === 1) {
+            return [true, [$chosen]];
+        }
+        return extractJsonPathListSteps($chosen, $steps, 1);
+    }
+    $aggregated = [];
+    $lastErr = null;
+    foreach ($sourceValues as $item) {
+        [$ok, $res] = extractJsonPathListSteps((string)$item, $steps, 0);
+        if ($ok && is_array($res)) {
+            foreach ($res as $v) $aggregated[] = $v;
+        } else {
+            $lastErr = is_string($res) ? $res : null;
+        }
+    }
+    return count($aggregated) > 0
+        ? [true, $aggregated]
+        : [false, $lastErr ?? "Aucune valeur extraite pour l'expression JSONPath."];
 }
 
 function extractRegex(string $text, string $pattern, int $groupIdx): array {
@@ -1073,9 +1365,39 @@ function applyExtractionConditions(array $rawValues, array $ext): array {
     return [true, $out];
 }
 
-function runExtraction(array $ext, string $respBody, array $respHeaders): array {
+function resolveVariableSourceValues(string $sourceVarName, array $localLists, array $localExtracted, array $accumulatedLists, array $mergedVars, array $listVars): array {
+    $key = trim($sourceVarName);
+    if ($key === '') return [];
+    if (array_key_exists($key, $localLists)) return array_values($localLists[$key]);
+    if (array_key_exists($key, $localExtracted)) return [$localExtracted[$key]];
+    if (array_key_exists($key, $listVars)) return [$listVars[$key]];
+    if (array_key_exists($key, $accumulatedLists)) return array_values($accumulatedLists[$key]);
+    if (array_key_exists($key, $mergedVars)) return [$mergedVars[$key]];
+    return [];
+}
+
+function runExtraction(array $ext, string $respBody, array $respHeaders, ?array $sourceValues = null): array {
     $rawOutcome = [false, 'Aucune correspondance'];
-    if ($ext['source'] === 'header') {
+    if ($ext['source'] === 'variable') {
+        $srcName = (string)($ext['sourceVariable'] ?? '');
+        if ($srcName === '') {
+            return [false, 'Nom de variable source vide.'];
+        }
+        if ($sourceValues === null || count($sourceValues) === 0) {
+            return [false, "Variable source « {$srcName} » vide ou introuvable."];
+        }
+        if ($ext['kind'] === 'full_response') {
+            $rawOutcome = [true, count($sourceValues) === 1 ? (string)$sourceValues[0] : (string)json_encode(array_values($sourceValues), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
+        } elseif ($ext['kind'] === 'jsonpath') {
+            $rawOutcome = extractJsonPathFromValues($sourceValues, $ext['expression']);
+        } else {
+            foreach ($sourceValues as $item) {
+                [$ok, $res] = extractRegex((string)$item, $ext['expression'], $ext['regexGroup']);
+                $rawOutcome = [$ok, $res];
+                if ($ok) break;
+            }
+        }
+    } elseif ($ext['source'] === 'header') {
         $target = strtolower($ext['headerName']);
         $matching = [];
         foreach ($respHeaders as [$k, $v]) {
@@ -1117,9 +1439,35 @@ function runExtraction(array $ext, string $respBody, array $respHeaders): array 
     return [false, is_string($cRes) ? $cRes : 'La valeur extraite ne satisfait pas les conditions.'];
 }
 
-function runListExtraction(array $ext, string $respBody, array $respHeaders): array {
+function runListExtraction(array $ext, string $respBody, array $respHeaders, ?array $sourceValues = null): array {
     $rawValues = [];
-    if ($ext['source'] === 'header') {
+    if ($ext['source'] === 'variable') {
+        $srcName = (string)($ext['sourceVariable'] ?? '');
+        if ($srcName === '') {
+            return [false, 'Nom de variable source vide.'];
+        }
+        if ($sourceValues === null || count($sourceValues) === 0) {
+            return [false, "Variable source « {$srcName} » vide ou introuvable."];
+        }
+        if ($ext['kind'] === 'jsonpath') {
+            [$ok, $res] = extractJsonPathListFromValues($sourceValues, $ext['expression']);
+            if (!$ok) return [false, $res];
+            $rawValues = $res;
+        } else {
+            $lastErr = 'Aucune correspondance';
+            foreach ($sourceValues as $item) {
+                [$ok, $res] = extractRegexList((string)$item, $ext['expression'], $ext['regexGroup']);
+                if ($ok) {
+                    foreach ($res as $v) $rawValues[] = $v;
+                } else {
+                    $lastErr = $res;
+                }
+            }
+            if (count($rawValues) === 0) {
+                return [false, $lastErr];
+            }
+        }
+    } elseif ($ext['source'] === 'header') {
         $target = strtolower($ext['headerName']);
         $matching = [];
         foreach ($respHeaders as [$k, $v]) {
@@ -1280,28 +1628,54 @@ function resolveReturnIdentifier(string $name, bool $forceScalar, bool $forceLis
                 }
                 throw new RuntimeException("[[{$name}]] : " . (string)$res);
             }
-            throw new RuntimeException("Variable inconnue ou non définie : {$root} (pour [[{$name}]])");
+            if (array_key_exists($root, $accumulatedLists)) {
+                [$ok, $res] = extractJsonPathListFromValues($accumulatedLists[$root], $jp);
+                if ($ok && is_array($res)) {
+                    return $res;
+                }
+                throw new RuntimeException("[[{$name}]] : " . (string)$res);
+            }
+            throw new RuntimeException("Variable ou liste inconnue : {$root} (pour [[{$name}]])");
         }
-        if (!array_key_exists($root, $scalars)) {
-            throw new RuntimeException("Variable inconnue ou non définie : {$root} (pour {$name})");
-        }
-        if (!$forceScalar) {
-            $steps = parseJsonPath($jp);
-            foreach ($steps as [, , $isWildcard]) {
-                if ($isWildcard) {
-                    [$ok, $res] = extractJsonPathList((string)$scalars[$root], $jp);
-                    if ($ok && is_array($res)) {
-                        return $res;
+        if (array_key_exists($root, $scalars)) {
+            if (!$forceScalar) {
+                $steps = parseJsonPath($jp);
+                foreach ($steps as [, , $isWildcard]) {
+                    if ($isWildcard) {
+                        [$ok, $res] = extractJsonPathList((string)$scalars[$root], $jp);
+                        if ($ok && is_array($res)) {
+                            return $res;
+                        }
+                        throw new RuntimeException("{$name} : " . (string)$res);
                     }
-                    throw new RuntimeException("{$name} : " . (string)$res);
                 }
             }
+            [$ok, $res] = extractJsonPath((string)$scalars[$root], $jp);
+            if ($ok) {
+                return $res;
+            }
+            throw new RuntimeException("{$name} : " . (string)$res);
         }
-        [$ok, $res] = extractJsonPath((string)$scalars[$root], $jp);
-        if ($ok) {
-            return $res;
+        if (array_key_exists($root, $accumulatedLists)) {
+            if (!$forceScalar) {
+                $steps = parseJsonPath($jp);
+                foreach ($steps as [, , $isWildcard]) {
+                    if ($isWildcard) {
+                        [$ok, $res] = extractJsonPathListFromValues($accumulatedLists[$root], $jp);
+                        if ($ok && is_array($res)) {
+                            return $res;
+                        }
+                        throw new RuntimeException("{$name} : " . (string)$res);
+                    }
+                }
+            }
+            [$ok, $res] = extractJsonPathFromValues($accumulatedLists[$root], $jp);
+            if ($ok) {
+                return $res;
+            }
+            throw new RuntimeException("{$name} : " . (string)$res);
         }
-        throw new RuntimeException("{$name} : " . (string)$res);
+        throw new RuntimeException("Variable ou liste inconnue : {$root} (pour {$name})");
     }
 
     if ($forceList) {
@@ -1509,31 +1883,31 @@ foreach ($steps as $stepIdx => $step) {
         }
 
         try {
-            $finalBaseUrl = substituteUrl($step['url'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs);
+            $finalBaseUrl = substituteUrl($step['url'], $mergedVars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
             $queryItems = [];
             foreach ($step['queryParams'] as $qp) {
                 if ($qp['axisIndex'] !== null) {
                     $queryItems[] = [$qp['key'], $axisValues[$qp['axisIndex']]];
                 } else {
-                    $queryItems[] = [$qp['key'], substituteSimple($qp['value'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs)];
+                    $queryItems[] = [$qp['key'], substituteSimple($qp['value'], $mergedVars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs)];
                 }
             }
             $finalUrl = buildFinalUrl($finalBaseUrl, $queryItems);
 
             $finalHeaders = [];
             foreach ($step['headers'] as [$hk, $hv]) {
-                $finalHeaders[] = [$hk, substituteSimple($hv, $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs)];
+                $finalHeaders[] = [$hk, substituteSimple($hv, $mergedVars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs)];
             }
 
             $bodyToSend = null;
             if ($step['bodyType'] === 'json') {
-                $bodyToSend = substituteJsonBody($step['body'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs);
+                $bodyToSend = substituteJsonBody($step['body'], $mergedVars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
             } elseif ($step['bodyType'] === 'text') {
-                $bodyToSend = substituteSimple($step['body'], $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs);
+                $bodyToSend = substituteSimple($step['body'], $mergedVars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs);
             } elseif ($step['bodyType'] === 'form') {
                 $formPairs = [];
                 foreach ($step['formFields'] as [$fk, $fv]) {
-                    $formPairs[] = rawurlencode((string)$fk) . '=' . rawurlencode(substituteSimple($fv, $mergedVars, $listVars, $globalIndex, $reqGuid, $reqTs));
+                    $formPairs[] = rawurlencode((string)$fk) . '=' . rawurlencode(substituteSimple($fv, $mergedVars, $listVars, $accumulatedLists, $globalIndex, $reqGuid, $reqTs));
                 }
                 $bodyToSend = implode('&', $formPairs);
             }
@@ -1553,18 +1927,25 @@ foreach ($steps as $stepIdx => $step) {
         $httpFailed = $netErr !== null || $status >= 400;
         $extractionFailed = false;
         $localExtracted = [];
+        $localLists = [];
 
         foreach ($step['extractions'] as $ext) {
+            $srcValues = $ext['source'] === 'variable'
+                ? resolveVariableSourceValues((string)($ext['sourceVariable'] ?? ''), $localLists, $localExtracted, $accumulatedLists, $mergedVars, $listVars)
+                : null;
             if (!empty($ext['isList'])) {
-                [$ok, $valuesOrErr] = runListExtraction($ext, $respBody, $respHeaders);
+                [$ok, $valuesOrErr] = runListExtraction($ext, $respBody, $respHeaders, $srcValues);
                 if ($ok) {
                     $accumulatedLists[$ext['variable']] = $valuesOrErr;
+                    $localLists[$ext['variable']] = $valuesOrErr;
                     if ($verbose) {
                         $cnt = count($valuesOrErr);
                         echo "  -> [[{$ext['variable']}]] = {$cnt} élément(s)\n";
                     }
                 } else {
-                    $accumulatedLists[$ext['variable']] = $ext['defaultValue'] !== '' ? [$ext['defaultValue']] : [];
+                    $fallbackList = $ext['defaultValue'] !== '' ? [$ext['defaultValue']] : [];
+                    $accumulatedLists[$ext['variable']] = $fallbackList;
+                    $localLists[$ext['variable']] = $fallbackList;
                     if ($ext['required']) {
                         $extractionFailed = true;
                         fwrite(STDERR, "  [EXTRACTION] [[{$ext['variable']}]] : {$valuesOrErr}\n");
@@ -1573,7 +1954,7 @@ foreach ($steps as $stepIdx => $step) {
                 continue;
             }
 
-            [$ok, $valueOrErr] = runExtraction($ext, $respBody, $respHeaders);
+            [$ok, $valueOrErr] = runExtraction($ext, $respBody, $respHeaders, $srcValues);
             if ($ok) {
                 $accumulatedVars[$ext['variable']] = $valueOrErr;
                 $localExtracted[$ext['variable']] = $valueOrErr;

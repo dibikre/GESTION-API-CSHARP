@@ -53,7 +53,7 @@ internal static class RealtimeExtractionMatcher
         IExtractionSuggester suggester,
         int maxResults)
     {
-        if (kind == ExtractionKind.FullResponse && source == ChainExtractionSource.Body)
+        if (kind == ExtractionKind.FullResponse && source != ChainExtractionSource.Header)
         {
             return [];
         }

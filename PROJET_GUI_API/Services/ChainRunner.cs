@@ -68,6 +68,15 @@ public sealed class ChainRunner : IChainRunner
                 return result;
             }
 
+            var configuredVarNames = step.Variables
+                .Where(v => v.IsConfigured && !v.HasError && !string.IsNullOrWhiteSpace(v.Name))
+                .Select(v => v.Name)
+                .ToHashSet(StringComparer.Ordinal);
+
+            var extractionSourcePool = new HashSet<string>(availableFromPreviousSteps, StringComparer.Ordinal);
+            extractionSourcePool.UnionWith(availableListsFromPreviousSteps);
+            extractionSourcePool.UnionWith(configuredVarNames);
+
             foreach (var ext in step.Extractions)
             {
                 if (!_responseExtractor.TryValidateVariableName(ext.VariableName, out var varError))
@@ -96,7 +105,7 @@ public sealed class ChainRunner : IChainRunner
 
                 if (ext.Kind == ExtractionKind.FullResponse && ext.IsList)
                 {
-                    result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : le mode Réponse complète capture tout le corps dans « {ext.VariableName} » ; décoche « En liste [[...]] ».";
+                    result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : le mode Réponse complète capture toute la valeur dans « {ext.VariableName} » ; décoche « En liste [[...]] ».";
                     return result;
                 }
 
@@ -106,12 +115,30 @@ public sealed class ChainRunner : IChainRunner
                     return result;
                 }
 
+                if (ext.Source == ChainExtractionSource.Variable)
+                {
+                    if (string.IsNullOrWhiteSpace(ext.SourceVariableName))
+                    {
+                        result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : saisis le nom de la variable source pour « {ext.VariableName} ».";
+                        return result;
+                    }
+
+                    var srcVar = ext.SourceVariableName.Trim();
+                    if (!extractionSourcePool.Contains(srcVar))
+                    {
+                        result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : variable source « {srcVar} » introuvable avant l'extraction « {ext.VariableName} » (extrais-la plus haut ou à une étape précédente).";
+                        return result;
+                    }
+                }
+
                 if (ext.Conditions.Count > 0 &&
                     !ExtractionConditionEngine.ValidateConditions(ext.Conditions, out var condError))
                 {
                     result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : extraction « {ext.VariableName} » — {condError}";
                     return result;
                 }
+
+                extractionSourcePool.Add(ext.VariableName.Trim());
             }
 
             var template = step.BuildTemplateRequest();
@@ -121,22 +148,17 @@ public sealed class ChainRunner : IChainRunner
                 return result;
             }
 
-            var configuredVarNames = step.Variables
-                .Where(v => v.IsUsed && v.IsConfigured && !v.HasError && !string.IsNullOrWhiteSpace(v.Name))
-                .Select(v => v.Name)
-                .ToHashSet(StringComparer.Ordinal);
-
             var usedLists = _templateEngine.ExtractListVariables(template);
             foreach (var listVar in usedLists)
             {
                 if (VariablePathHelper.TrySplit(listVar.Name, out var listRoot, out var listJsonPath) &&
                     listJsonPath is not null)
                 {
-                    if (!availableFromPreviousSteps.Contains(listRoot) && !configuredVarNames.Contains(listRoot))
+                    if (!availableFromPreviousSteps.Contains(listRoot) &&
+                        !availableListsFromPreviousSteps.Contains(listRoot) &&
+                        !configuredVarNames.Contains(listRoot))
                     {
-                        result.ValidationError = availableListsFromPreviousSteps.Contains(listRoot)
-                            ? $"Étape {stepNumber} ({stepLabel}) : [[{listVar.Name}]] — « {listRoot} » est une liste simple ; utilise [[{listRoot}]] ou extrais la réponse complète."
-                            : $"Étape {stepNumber} ({stepLabel}) : [[{listVar.Name}]] — la variable « {listRoot} » n'est extraite par aucune étape précédente.";
+                        result.ValidationError = $"Étape {stepNumber} ({stepLabel}) : [[{listVar.Name}]] — la variable « {listRoot} » n'est extraite par aucune étape précédente.";
                         return result;
                     }
                     continue;
@@ -151,15 +173,24 @@ public sealed class ChainRunner : IChainRunner
                 }
             }
 
+            var bareScalarVars = _templateEngine.GetBareScalarVariables(template);
+            var externalVariablesForStep = new HashSet<string>(availableFromPreviousSteps, StringComparer.Ordinal);
             foreach (var scalarVar in _templateEngine.ExtractVariables(template))
             {
-                if (!configuredVarNames.Contains(scalarVar.Name) &&
-                    !availableFromPreviousSteps.Contains(scalarVar.Name) &&
-                    availableListsFromPreviousSteps.Contains(scalarVar.Name))
+                if (bareScalarVars.Contains(scalarVar.Name))
                 {
-                    result.ValidationError =
-                        $"Étape {stepNumber} ({stepLabel}) : « {scalarVar.Name} » est extraite en liste ; utilise [[{scalarVar.Name}]] pour itérer sur ses valeurs.";
-                    return result;
+                    if (!configuredVarNames.Contains(scalarVar.Name) &&
+                        !availableFromPreviousSteps.Contains(scalarVar.Name) &&
+                        availableListsFromPreviousSteps.Contains(scalarVar.Name))
+                    {
+                        result.ValidationError =
+                            $"Étape {stepNumber} ({stepLabel}) : « {scalarVar.Name} » est extraite en liste ; utilise [[{scalarVar.Name}]] pour itérer sur ses valeurs (ou {{{{{scalarVar.Name}.champ}}}} pour un accès imbriqué).";
+                        return result;
+                    }
+                }
+                else if (availableListsFromPreviousSteps.Contains(scalarVar.Name))
+                {
+                    externalVariablesForStep.Add(scalarVar.Name);
                 }
             }
 
@@ -168,7 +199,7 @@ public sealed class ChainRunner : IChainRunner
                 step.Variables,
                 step.SelectedMode,
                 BatchRunner.HardMaxRequests,
-                availableFromPreviousSteps);
+                externalVariablesForStep);
 
             if (!string.IsNullOrEmpty(stepPlan.ValidationError))
             {
@@ -511,6 +542,7 @@ public sealed class ChainRunner : IChainRunner
                         requestWithQuery,
                         mergedVars,
                         iterStep.ListDictionary,
+                        accumulatedLists,
                         globalIndex);
 
                     ChainStepResult stepResult;
@@ -703,7 +735,17 @@ public sealed class ChainRunner : IChainRunner
                             var varName = ext.VariableName.Trim();
                             if (ext.IsList)
                             {
-                                var listOutcome = _responseExtractor.ExtractList(response, ext);
+                                var listOutcome = ext.Source == ChainExtractionSource.Variable
+                                    ? _responseExtractor.ExtractListFromVariable(
+                                        ResolveVariableSourceValues(
+                                            ext.SourceVariableName,
+                                            extractedListsThisIteration,
+                                            extractedThisIteration,
+                                            accumulatedLists,
+                                            mergedVars,
+                                            iterStep.ListDictionary),
+                                        ext)
+                                    : _responseExtractor.ExtractList(response, ext);
                                 if (listOutcome.IsSuccess)
                                 {
                                     extractedListsThisIteration[varName] = listOutcome.Values;
@@ -735,7 +777,17 @@ public sealed class ChainRunner : IChainRunner
                                 continue;
                             }
 
-                            var outcome = _responseExtractor.Extract(response, ext);
+                            var outcome = ext.Source == ChainExtractionSource.Variable
+                                ? _responseExtractor.ExtractFromVariable(
+                                    ResolveVariableSourceValues(
+                                        ext.SourceVariableName,
+                                        extractedListsThisIteration,
+                                        extractedThisIteration,
+                                        accumulatedLists,
+                                        mergedVars,
+                                        iterStep.ListDictionary),
+                                    ext)
+                                : _responseExtractor.Extract(response, ext);
 
                             if (outcome.IsSuccess)
                             {
@@ -1000,14 +1052,22 @@ public sealed class ChainRunner : IChainRunner
         {
             if (VariablePathHelper.TrySplit(listName, out var rootName, out var jsonPath) && jsonPath is not null)
             {
-                if (!scalarVariables.TryGetValue(rootName, out var rootJson))
+                ListExtractionOutcome outcome;
+                if (scalarVariables.TryGetValue(rootName, out var rootJson))
                 {
-                    errOut ??= $"Variable « {rootName} » introuvable pour [[{listName}]].";
+                    outcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, jsonPath);
+                }
+                else if (accumulatedLists.TryGetValue(rootName, out var sourceList))
+                {
+                    outcome = ResponseExtractor.ExtractListJsonPathFromValues(sourceList, jsonPath);
+                }
+                else
+                {
+                    errOut ??= $"Variable ou liste « {rootName} » introuvable pour [[{listName}]].";
                     values = [];
                     return false;
                 }
 
-                var outcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, jsonPath);
                 if (outcome.IsSuccess && outcome.Values.Count > 0)
                 {
                     values = outcome.Values;
@@ -1111,6 +1171,48 @@ public sealed class ChainRunner : IChainRunner
                 accumulatedVariables[name] = fallback;
             }
         }
+    }
+
+    private static IReadOnlyList<string> ResolveVariableSourceValues(
+        string? sourceVariableName,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> extractedListsThisIteration,
+        IReadOnlyDictionary<string, string> extractedThisIteration,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> accumulatedLists,
+        IReadOnlyDictionary<string, string> mergedVars,
+        IReadOnlyDictionary<string, string> activeListItems)
+    {
+        var key = sourceVariableName?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(key))
+        {
+            return [];
+        }
+
+        if (extractedListsThisIteration.TryGetValue(key, out var currentList))
+        {
+            return currentList;
+        }
+
+        if (extractedThisIteration.TryGetValue(key, out var currentScalar))
+        {
+            return [currentScalar];
+        }
+
+        if (activeListItems.TryGetValue(key, out var activeListItem))
+        {
+            return [activeListItem];
+        }
+
+        if (accumulatedLists.TryGetValue(key, out var prevList))
+        {
+            return prevList;
+        }
+
+        if (mergedVars.TryGetValue(key, out var scalar))
+        {
+            return [scalar];
+        }
+
+        return [];
     }
 
     private static ChainStepResult CreateSkippedResult(int globalIndex, int stepNumber, string stepName) => new()

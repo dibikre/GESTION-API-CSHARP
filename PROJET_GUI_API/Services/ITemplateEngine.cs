@@ -38,6 +38,8 @@ public interface ITemplateEngine
 
     IReadOnlyList<ExtractedVariable> ExtractListVariables(RequestModel template);
 
+    IReadOnlySet<string> GetBareScalarVariables(RequestModel template);
+
     RequestModel Apply(RequestModel template, IReadOnlyDictionary<string, string> values, int index);
 
     TemplateApplyResult ApplyDetailed(RequestModel template, IReadOnlyDictionary<string, string> values, int index);
@@ -46,6 +48,13 @@ public interface ITemplateEngine
         RequestModel template,
         IReadOnlyDictionary<string, string> values,
         IReadOnlyDictionary<string, string>? listValues,
+        int index);
+
+    TemplateApplyResult ApplyDetailed(
+        RequestModel template,
+        IReadOnlyDictionary<string, string> values,
+        IReadOnlyDictionary<string, string>? listValues,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? allLists,
         int index);
 
     bool IsValidJson(string? json);

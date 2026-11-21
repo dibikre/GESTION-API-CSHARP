@@ -320,9 +320,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
 
                 foreach (var prop in element.EnumerateObject())
                 {
-                    var childPath = string.IsNullOrEmpty(jsonPath)
-                        ? prop.Name
-                        : $"{jsonPath}.{prop.Name}";
+                    var childPath = RealtimeExtractionCatalog.FormatJsonPathChild(jsonPath, prop.Name);
                     node.Children.Add(BuildJsonNode(prop.Value, prop.Name, childPath, depth + 1));
                 }
 

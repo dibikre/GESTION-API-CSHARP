@@ -128,6 +128,7 @@ internal static class PythonChainCliEmitter
                 sb.AppendLine($"                \"expression\": {EscapeString(ext.Expression)},");
                 sb.AppendLine($"                \"regex_group\": {ext.RegexGroup},");
                 sb.AppendLine($"                \"header_name\": {EscapeString(ext.HeaderName)},");
+                sb.AppendLine($"                \"source_variable\": {EscapeString(ext.SourceVariableName)},");
                 sb.AppendLine($"                \"required\": {FormatBool(ext.IsRequired)},");
                 sb.AppendLine($"                \"default\": {EscapeString(ext.DefaultValueIfMissing)},");
                 sb.AppendLine($"                \"is_list\": {FormatBool(ext.IsList)},");
@@ -239,9 +240,12 @@ def build_iterations(axes: list[dict], mode: str, accumulated_lists: dict[str, l
         if a["kind"] == "list":
             root, jp = split_var_path(a["name"])
             if jp is not None:
-                if root not in scalar_vars:
-                    return [], None, f"Variable « {root} » introuvable pour [[{a['name']}]]."
-                ok, res = extract_json_path_list(scalar_vars[root], jp)
+                if root in scalar_vars:
+                    ok, res = extract_json_path_list(scalar_vars[root], jp)
+                elif root in accumulated_lists:
+                    ok, res = extract_json_path_list_from_values(accumulated_lists[root], jp)
+                else:
+                    return [], None, f"Variable ou liste « {root} » introuvable pour [[{a['name']}]]."
                 if ok and isinstance(res, list) and res:
                     lst = res
                 elif isinstance(res, str) and "est vide" in res.lower():
@@ -268,17 +272,23 @@ def build_iterations(axes: list[dict], mode: str, accumulated_lists: dict[str, l
     return list(itertools.product(*axis_lists)), None, None
 
 
-def resolve_marker(match: re.Match[str], variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
+def resolve_marker(match: re.Match[str], variables: dict[str, str], list_vars: dict[str, str], accumulated_lists: dict[str, list[str]] | None, global_index: int, req_guid: str, req_ts: str) -> str:
     list_name = match.group(2)
     if list_name is not None:
         if list_name in list_vars:
             return list_vars[list_name]
         root, jp = split_var_path(list_name)
-        if jp is not None and root in variables:
-            ok, res = extract_json_path_list(variables[root], jp)
-            if ok and isinstance(res, list) and res:
-                return res[0]
-            raise KeyError(f"[[{list_name}]] : {res}")
+        if jp is not None:
+            if root in variables:
+                ok, res = extract_json_path_list(variables[root], jp)
+                if ok and isinstance(res, list) and res:
+                    return res[0]
+                raise KeyError(f"[[{list_name}]] : {res}")
+            if accumulated_lists is not None and root in accumulated_lists:
+                ok, res = extract_json_path_list_from_values(accumulated_lists[root], jp)
+                if ok and isinstance(res, list) and res:
+                    return res[0]
+                raise KeyError(f"[[{list_name}]] : {res}")
         raise KeyError(f"Liste inconnue ou non définie : [[{list_name}]]")
     name = match.group(1)
     if name in variables:
@@ -291,16 +301,21 @@ def resolve_marker(match: re.Match[str], variables: dict[str, str], list_vars: d
         return req_ts
     root, jp = split_var_path(name)
     if jp is not None:
-        if root not in variables:
-            raise KeyError(f"Variable inconnue ou non définie : {{{{{root}}}}} (pour {{{{{name}}}}})")
-        ok, res = extract_json_path(variables[root], jp)
-        if not ok:
-            raise KeyError(f"{{{{{name}}}}} : {res}")
-        return res
+        if root in variables:
+            ok, res = extract_json_path(variables[root], jp)
+            if not ok:
+                raise KeyError(f"{{{{{name}}}}} : {res}")
+            return res
+        if accumulated_lists is not None and root in accumulated_lists:
+            ok, res = extract_json_path_from_values(accumulated_lists[root], jp)
+            if not ok:
+                raise KeyError(f"{{{{{name}}}}} : {res}")
+            return res
+        raise KeyError(f"Variable inconnue ou non définie : {{{{{root}}}}} (pour {{{{{name}}}}})")
     raise KeyError(f"Variable inconnue ou non définie : {{{{{name}}}}}")
 
 
-def substitute_url(text: str, variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
+def substitute_url(text: str, variables: dict[str, str], list_vars: dict[str, str], accumulated_lists: dict[str, list[str]] | None, global_index: int, req_guid: str, req_ts: str) -> str:
     if not text:
         return ""
     matches = list(MARKER_RE.finditer(text))
@@ -311,7 +326,7 @@ def substitute_url(text: str, variables: dict[str, str], list_vars: dict[str, st
     for match in matches:
         out.append(text[last_idx:match.start()])
         prefix = "".join(out)
-        val = resolve_marker(match, variables, list_vars, global_index, req_guid, req_ts)
+        val = resolve_marker(match, variables, list_vars, accumulated_lists, global_index, req_guid, req_ts)
         if _is_in_query_value_context(prefix):
             out.append(urllib.parse.quote(val, safe=""))
         else:
@@ -321,18 +336,18 @@ def substitute_url(text: str, variables: dict[str, str], list_vars: dict[str, st
     return "".join(out)
 
 
-def substitute_simple(text: str, variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str, url_encode: bool = False) -> str:
+def substitute_simple(text: str, variables: dict[str, str], list_vars: dict[str, str], accumulated_lists: dict[str, list[str]] | None, global_index: int, req_guid: str, req_ts: str, url_encode: bool = False) -> str:
     if not text:
         return ""
 
     def repl(match: re.Match[str]) -> str:
-        val = resolve_marker(match, variables, list_vars, global_index, req_guid, req_ts)
+        val = resolve_marker(match, variables, list_vars, accumulated_lists, global_index, req_guid, req_ts)
         return urllib.parse.quote(val, safe="") if url_encode else val
 
     return MARKER_RE.sub(repl, text)
 
 
-def substitute_json_body(text: str, variables: dict[str, str], list_vars: dict[str, str], global_index: int, req_guid: str, req_ts: str) -> str:
+def substitute_json_body(text: str, variables: dict[str, str], list_vars: dict[str, str], accumulated_lists: dict[str, list[str]] | None, global_index: int, req_guid: str, req_ts: str) -> str:
     if not text:
         return ""
     out: list[str] = []
@@ -355,7 +370,7 @@ def substitute_json_body(text: str, variables: dict[str, str], list_vars: dict[s
                 escaped = False
 
         out.append(text[last_scanned:match.start()])
-        val = resolve_marker(match, variables, list_vars, global_index, req_guid, req_ts)
+        val = resolve_marker(match, variables, list_vars, accumulated_lists, global_index, req_guid, req_ts)
         out.append(json.dumps(val, ensure_ascii=False)[1:-1] if in_string else val)
         last_scanned = match.end()
 
@@ -405,30 +420,66 @@ def parse_json_path(raw_path: str) -> list[tuple[str | None, int | None, bool]]:
     if not path.strip():
         raise ValueError("Chemin JSONPath vide.")
     steps: list[tuple[str | None, int | None, bool]] = []
-    for part in path.split("."):
-        if not part:
-            raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
-        bracket = part.find("[")
-        if bracket < 0:
-            steps.append((part, None, False))
+    pos = 0
+    length = len(path)
+    while pos < length:
+        if path[pos] == ".":
+            if pos == 0 or pos + 1 >= length or path[pos + 1] == ".":
+                raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
+            pos += 1
             continue
-        prop = part[:bracket] if bracket > 0 else None
-        pos = bracket
-        first = True
-        while pos < len(part):
-            if part[pos] != "[":
+        if path[pos] == "[":
+            while pos < length and path[pos] == "[":
+                cursor = pos + 1
+                while cursor < length and path[cursor].isspace():
+                    cursor += 1
+                if cursor < length and path[cursor] in ("\"", "'"):
+                    q = path[cursor]
+                    cursor += 1
+                    key_chars: list[str] = []
+                    closed_quote = False
+                    while cursor < length:
+                        ch = path[cursor]
+                        cursor += 1
+                        if ch == "\\" and cursor < length:
+                            esc = path[cursor]
+                            cursor += 1
+                            key_chars.append({"\\": "\\", "\"": "\"", "'": "'", "n": "\n", "r": "\r", "t": "\t"}.get(esc, esc))
+                            continue
+                        if ch == q:
+                            closed_quote = True
+                            break
+                        key_chars.append(ch)
+                    if not closed_quote:
+                        raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
+                    while cursor < length and path[cursor].isspace():
+                        cursor += 1
+                    if cursor >= length or path[cursor] != "]":
+                        raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
+                    steps.append(("".join(key_chars), None, False))
+                    pos = cursor + 1
+                    continue
+                close = path.find("]", pos + 1)
+                if close < 0:
+                    raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
+                idx_str = path[pos + 1:close].strip()
+                if idx_str in ("*", "", "++") or re.fullmatch(r"(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)", idx_str):
+                    steps.append((None, None, True))
+                else:
+                    steps.append((None, int(idx_str), False))
+                pos = close + 1
+            if pos < length and path[pos] != ".":
                 raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
-            close = part.find("]", pos + 1)
-            if close < 0:
-                raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
-            idx_str = part[pos + 1:close].strip()
-            if idx_str in ("*", "", "++") or re.fullmatch(r"(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)", idx_str):
-                steps.append((prop if first else None, None, True))
-            else:
-                idx = int(idx_str)
-                steps.append((prop if first else None, idx, False))
-            first = False
-            pos = close + 1
+            continue
+        seg_start = pos
+        while pos < length and path[pos] not in (".", "[", "]"):
+            pos += 1
+        if pos < length and path[pos] == "]":
+            raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
+        prop = path[seg_start:pos]
+        if not prop:
+            raise ValueError(f"Chemin JSONPath invalide : {raw_path}")
+        steps.append((prop, None, False))
     return steps
 
 
@@ -444,51 +495,139 @@ def format_json_value(current) -> str:
     return str(current)
 
 
-def extract_json_path(body: str, raw_path: str) -> tuple[bool, str]:
+def _unwrap_json_string(val):
+    if not isinstance(val, str):
+        return val
+    trimmed = val.lstrip("\ufeff \t\r\n")
+    if not trimmed.startswith(("{", "[")):
+        return val
     try:
-        steps = parse_json_path(raw_path)
-        if any(is_wild for _, _, is_wild in steps):
-            return False, "Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]]."
+        return json.loads(trimmed)
+    except Exception:
+        return val
+
+
+def _get_max_contiguous_prop_idx(steps: list[tuple[str | None, int | None, bool]], start_idx: int) -> int:
+    end = start_idx
+    while end + 1 < len(steps):
+        nxt = steps[end + 1]
+        if nxt[0] is None or nxt[1] is not None or nxt[2]:
+            break
+        curr = steps[end]
+        if curr[1] is not None or curr[2]:
+            break
+        end += 1
+    return end
+
+
+def _looks_like_json_array(raw: str | None) -> bool:
+    if not raw:
+        return False
+    return raw.lstrip("\ufeff \t\r\n").startswith("[")
+
+
+def _extract_json_path_steps(body: str, steps: list[tuple[str | None, int | None, bool]], start_idx: int = 0) -> tuple[bool, str]:
+    try:
+        if not body or not body.strip():
+            return False, "Le corps est vide (JSON attendu)."
         current = json.loads(body.lstrip("\ufeff"))
-        for prop, arr_idx, _ in steps:
+        i = start_idx
+        while i < len(steps):
+            prop, arr_idx, _ = steps[i]
             if prop is not None:
-                if not isinstance(current, dict) or prop not in current:
+                current = _unwrap_json_string(current)
+                if not isinstance(current, dict):
                     return False, f"Propriété JSON introuvable : {prop}"
-                current = current[prop]
+                if prop in current:
+                    current = current[prop]
+                else:
+                    matched_dotted = False
+                    max_end = _get_max_contiguous_prop_idx(steps, i)
+                    for end_idx in range(max_end, i, -1):
+                        joined = ".".join(steps[k][0] or "" for k in range(i, end_idx + 1))
+                        if joined in current:
+                            current = current[joined]
+                            i = end_idx
+                            matched_dotted = True
+                            break
+                    if not matched_dotted:
+                        return False, f"Propriété JSON introuvable : {prop}"
             if arr_idx is not None:
+                current = _unwrap_json_string(current)
                 if not isinstance(current, list):
                     return False, f"Index [{arr_idx}] inapplicable"
                 resolved = len(current) + arr_idx if arr_idx < 0 else arr_idx
                 if resolved < 0 or resolved >= len(current):
                     return False, f"Index [{arr_idx}] hors limites"
                 current = current[resolved]
+            i += 1
         return True, format_json_value(current)
     except Exception as exc:
         return False, str(exc)
 
 
-def extract_json_path_list(body: str, raw_path: str) -> tuple[bool, list[str] | str]:
+def extract_json_path(body: str, raw_path: str) -> tuple[bool, str]:
     try:
         steps = parse_json_path(raw_path)
+        if any(is_wild for _, _, is_wild in steps):
+            return False, "Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]]."
+        return _extract_json_path_steps(body, steps, 0)
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _extract_json_path_list_steps(body: str, steps: list[tuple[str | None, int | None, bool]], start_idx: int = 0) -> tuple[bool, list[str] | str]:
+    try:
+        if not body or not body.strip():
+            return False, "Le corps est vide (JSON attendu)."
         current_elements = [json.loads(body.lstrip("\ufeff"))]
         has_wildcard = False
-        for prop, arr_idx, is_wildcard in steps:
+        i = start_idx
+        while i < len(steps):
+            prop, arr_idx, is_wildcard = steps[i]
             if prop is not None:
-                next_elements = []
-                for el in current_elements:
+                exact_matches = []
+                all_exact = True
+                for raw_el in current_elements:
+                    el = _unwrap_json_string(raw_el)
                     if not isinstance(el, dict) or prop not in el:
-                        if not has_wildcard:
-                            return False, f"Propriété JSON introuvable : {prop}"
+                        all_exact = False
                         continue
-                    next_elements.append(el[prop])
-                if not next_elements:
-                    return False, f"Propriété JSON introuvable : {prop}"
-                current_elements = next_elements
+                    exact_matches.append(el[prop])
+
+                if exact_matches and (all_exact or has_wildcard):
+                    current_elements = exact_matches
+                else:
+                    matched_joined = False
+                    max_end = _get_max_contiguous_prop_idx(steps, i)
+                    for end_idx in range(max_end, i, -1):
+                        joined = ".".join(steps[k][0] or "" for k in range(i, end_idx + 1))
+                        j_matches = []
+                        all_j = True
+                        for raw_el in current_elements:
+                            el = _unwrap_json_string(raw_el)
+                            if not isinstance(el, dict) or joined not in el:
+                                all_j = False
+                                continue
+                            j_matches.append(el[joined])
+                        if j_matches and (all_j or has_wildcard):
+                            current_elements = j_matches
+                            i = end_idx
+                            prop, arr_idx, is_wildcard = steps[i]
+                            matched_joined = True
+                            break
+                    if not matched_joined:
+                        if exact_matches:
+                            current_elements = exact_matches
+                        else:
+                            return False, f"Propriété JSON introuvable : {prop}"
+
             if is_wildcard:
                 was_wildcard = has_wildcard
                 has_wildcard = True
                 next_elements = []
-                for el in current_elements:
+                for raw_el in current_elements:
+                    el = _unwrap_json_string(raw_el)
                     if not isinstance(el, list):
                         if not was_wildcard:
                             return False, "Le sélecteur [*] est inapplicable sur cet élément"
@@ -499,7 +638,8 @@ def extract_json_path_list(body: str, raw_path: str) -> tuple[bool, list[str] | 
                 current_elements = next_elements
             elif arr_idx is not None:
                 next_elements = []
-                for el in current_elements:
+                for raw_el in current_elements:
+                    el = _unwrap_json_string(raw_el)
                     if not isinstance(el, list):
                         if not has_wildcard:
                             return False, f"Index [{arr_idx}] inapplicable"
@@ -513,6 +653,7 @@ def extract_json_path_list(body: str, raw_path: str) -> tuple[bool, list[str] | 
                 if not next_elements:
                     return False, f"Aucune valeur trouvée pour l'index [{arr_idx}]"
                 current_elements = next_elements
+            i += 1
 
         if not has_wildcard and len(current_elements) == 1 and isinstance(current_elements[0], list):
             if not current_elements[0]:
@@ -524,6 +665,85 @@ def extract_json_path_list(body: str, raw_path: str) -> tuple[bool, list[str] | 
         return True, [format_json_value(el) for el in current_elements]
     except Exception as exc:
         return False, str(exc)
+
+
+def extract_json_path_list(body: str, raw_path: str) -> tuple[bool, list[str] | str]:
+    try:
+        steps = parse_json_path(raw_path)
+        return _extract_json_path_list_steps(body, steps, 0)
+    except Exception as exc:
+        return False, str(exc)
+
+
+def extract_json_path_from_values(source_values: list[str], raw_path: str) -> tuple[bool, str]:
+    if not source_values:
+        return False, "La liste source est vide."
+    try:
+        steps = parse_json_path(raw_path)
+    except ValueError as exc:
+        return False, str(exc)
+    if any(w for _, _, w in steps):
+        return False, "Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]]."
+    if not steps:
+        return True, (source_values[0] if len(source_values) == 1 else json.dumps(source_values, ensure_ascii=False))
+    if steps[0][0] is None and steps[0][1] is not None and (len(source_values) > 1 or not _looks_like_json_array(source_values[0])):
+        idx = steps[0][1]
+        resolved = len(source_values) + idx if idx < 0 else idx
+        if resolved < 0 or resolved >= len(source_values):
+            return False, f"Index [{idx}] hors limites (taille : {len(source_values)})"
+        chosen = source_values[resolved]
+        if len(steps) == 1:
+            return True, chosen
+        return _extract_json_path_steps(chosen, steps, 1)
+    last_err = "Aucune correspondance JSONPath dans la variable source."
+    for item in source_values:
+        ok, res = _extract_json_path_steps(item, steps, 0)
+        if ok:
+            return True, res
+        last_err = res
+    return False, last_err
+
+
+def extract_json_path_list_from_values(source_values: list[str], raw_path: str) -> tuple[bool, list[str] | str]:
+    if not source_values:
+        return False, "La liste source est vide."
+    try:
+        steps = parse_json_path(raw_path)
+    except ValueError as exc:
+        return False, str(exc)
+    if not steps:
+        return True, list(source_values)
+    if steps[0][0] is None and (steps[0][2] or steps[0][1] is not None) and (len(source_values) > 1 or not _looks_like_json_array(source_values[0])):
+        if steps[0][2]:
+            if len(steps) == 1:
+                return True, list(source_values)
+            collected: list[str] = []
+            last_err: str | None = None
+            for item in source_values:
+                ok, res = _extract_json_path_list_steps(item, steps, 1)
+                if ok and isinstance(res, list):
+                    collected.extend(res)
+                elif isinstance(res, str):
+                    last_err = res
+            return (True, collected) if collected else (False, last_err or "Aucune valeur extraite pour l'expression JSONPath.")
+        idx = steps[0][1]
+        assert idx is not None
+        resolved = len(source_values) + idx if idx < 0 else idx
+        if resolved < 0 or resolved >= len(source_values):
+            return False, f"Index [{idx}] hors limites (taille : {len(source_values)})"
+        chosen = source_values[resolved]
+        if len(steps) == 1:
+            return True, [chosen]
+        return _extract_json_path_list_steps(chosen, steps, 1)
+    aggregated: list[str] = []
+    last_err_str: str | None = None
+    for item in source_values:
+        ok, res = _extract_json_path_list_steps(item, steps, 0)
+        if ok and isinstance(res, list):
+            aggregated.extend(res)
+        elif isinstance(res, str):
+            last_err_str = res
+    return (True, aggregated) if aggregated else (False, last_err_str or "Aucune valeur extraite pour l'expression JSONPath.")
 
 
 def extract_regex(text: str, pattern: str, group_idx: int) -> tuple[bool, str]:
@@ -923,8 +1143,53 @@ def apply_extraction_conditions(raw_values: list[str], ext: dict) -> tuple[bool,
     return True, out
 
 
-def run_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]]) -> tuple[bool, str]:
-    if ext["source"] == "header":
+def resolve_variable_source_values(
+    source_var_name: str,
+    local_lists: dict[str, list[str]],
+    local_extracted: dict[str, str],
+    accumulated_lists: dict[str, list[str]],
+    merged_vars: dict[str, str],
+    list_vars: dict[str, str],
+) -> list[str]:
+    key = (source_var_name or "").strip()
+    if not key:
+        return []
+    if key in local_lists:
+        return list(local_lists[key])
+    if key in local_extracted:
+        return [local_extracted[key]]
+    if key in list_vars:
+        return [list_vars[key]]
+    if key in accumulated_lists:
+        return list(accumulated_lists[key])
+    if key in merged_vars:
+        return [merged_vars[key]]
+    return []
+
+
+def run_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]], source_values: list[str] | None = None) -> tuple[bool, str]:
+    if ext["source"] == "variable":
+        src_name = ext.get("source_variable", "")
+        if not src_name:
+            return False, "Nom de variable source vide."
+        if not source_values:
+            return False, f"Variable source « {src_name} » vide ou introuvable."
+        if ext["kind"] == "full_response":
+            res = source_values[0] if len(source_values) == 1 else json.dumps(source_values, ensure_ascii=False)
+        elif ext["kind"] == "jsonpath":
+            ok, res = extract_json_path_from_values(source_values, ext["expression"])
+            if not ok:
+                return False, res
+        else:
+            ok = False
+            res = "Aucune correspondance"
+            for item in source_values:
+                ok, res = extract_regex(item, ext["expression"], ext["regex_group"])
+                if ok:
+                    break
+            if not ok:
+                return False, res
+    elif ext["source"] == "header":
         target_name = ext["header_name"].lower()
         matching = [v for k, v in resp_headers if k.lower() == target_name]
         if not matching:
@@ -964,13 +1229,36 @@ def run_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]
     return False, cond_res if isinstance(cond_res, str) else "La valeur extraite ne satisfait pas les conditions."
 
 
-def run_list_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]]) -> tuple[bool, list[str] | str]:
-    if ext["source"] == "header":
+def run_list_extraction(ext: dict, resp_body: str, resp_headers: list[tuple[str, str]], source_values: list[str] | None = None) -> tuple[bool, list[str] | str]:
+    if ext["source"] == "variable":
+        src_name = ext.get("source_variable", "")
+        if not src_name:
+            return False, "Nom de variable source vide."
+        if not source_values:
+            return False, f"Variable source « {src_name} » vide ou introuvable."
+        if ext["kind"] == "jsonpath":
+            ok, res = extract_json_path_list_from_values(source_values, ext["expression"])
+            if not ok or not isinstance(res, list):
+                return False, res
+            raw_values = res
+        else:
+            collected: list[str] = []
+            last_err = "Aucune correspondance"
+            for item in source_values:
+                ok, res = extract_regex_list(item, ext["expression"], ext["regex_group"])
+                if ok and isinstance(res, list):
+                    collected.extend(res)
+                elif isinstance(res, str):
+                    last_err = res
+            if not collected:
+                return False, last_err
+            raw_values = collected
+    elif ext["source"] == "header":
         target_name = ext["header_name"].lower()
         matching = [v for k, v in resp_headers if k.lower() == target_name]
         if not matching:
             return False, f"En-tête « {ext['header_name']} » absent"
-        collected: list[str] = []
+        collected = []
         last_err = "Aucune correspondance"
         for header_val in matching:
             ok, res = extract_regex_list(header_val, ext["expression"], ext["regex_group"])
@@ -1078,23 +1366,43 @@ def resolve_return_identifier(name: str, force_scalar: bool, force_list: bool, s
                 if ok and isinstance(res, list):
                     return res
                 raise KeyError(f"[[{name}]] : {res}")
-            raise KeyError(f"Variable inconnue ou non définie : {root} (pour [[{name}]])")
-        if root not in scalars:
-            raise KeyError(f"Variable inconnue ou non définie : {root} (pour {name})")
-        if not force_scalar:
-            try:
-                steps = parse_json_path(jp)
-                if any(w for _, _, w in steps):
-                    ok, res = extract_json_path_list(scalars[root], jp)
-                    if ok and isinstance(res, list):
-                        return res
-                    raise KeyError(f"{name} : {res}")
-            except ValueError as exc:
-                raise KeyError(f"{name} : {exc}")
-        ok, res = extract_json_path(scalars[root], jp)
-        if ok:
-            return res
-        raise KeyError(f"{name} : {res}")
+            if root in accumulated_lists:
+                ok, res = extract_json_path_list_from_values(accumulated_lists[root], jp)
+                if ok and isinstance(res, list):
+                    return res
+                raise KeyError(f"[[{name}]] : {res}")
+            raise KeyError(f"Variable ou liste inconnue : {root} (pour [[{name}]])")
+        if root in scalars:
+            if not force_scalar:
+                try:
+                    steps = parse_json_path(jp)
+                    if any(w for _, _, w in steps):
+                        ok, res = extract_json_path_list(scalars[root], jp)
+                        if ok and isinstance(res, list):
+                            return res
+                        raise KeyError(f"{name} : {res}")
+                except ValueError as exc:
+                    raise KeyError(f"{name} : {exc}")
+            ok, res = extract_json_path(scalars[root], jp)
+            if ok:
+                return res
+            raise KeyError(f"{name} : {res}")
+        if root in accumulated_lists:
+            if not force_scalar:
+                try:
+                    steps = parse_json_path(jp)
+                    if any(w for _, _, w in steps):
+                        ok, res = extract_json_path_list_from_values(accumulated_lists[root], jp)
+                        if ok and isinstance(res, list):
+                            return res
+                        raise KeyError(f"{name} : {res}")
+                except ValueError as exc:
+                    raise KeyError(f"{name} : {exc}")
+            ok, res = extract_json_path_from_values(accumulated_lists[root], jp)
+            if ok:
+                return res
+            raise KeyError(f"{name} : {res}")
+        raise KeyError(f"Variable ou liste inconnue : {root} (pour {name})")
     if force_list:
         if name in list_vars:
             return list_vars[name]
@@ -1274,27 +1582,27 @@ def main() -> int:
                 continue
 
             try:
-                final_base_url = substitute_url(step["url"], merged_vars, list_vars, global_index, req_guid, req_ts)
+                final_base_url = substitute_url(step["url"], merged_vars, list_vars, accumulated_lists, global_index, req_guid, req_ts)
                 query_items = []
                 for qp in step["query_params"]:
                     if qp["axis_index"] is not None:
                         query_items.append((qp["key"], axis_values[qp["axis_index"]]))
                     else:
-                        query_items.append((qp["key"], substitute_simple(qp["value"], merged_vars, list_vars, global_index, req_guid, req_ts)))
+                        query_items.append((qp["key"], substitute_simple(qp["value"], merged_vars, list_vars, accumulated_lists, global_index, req_guid, req_ts)))
                 final_url = build_final_url(final_base_url, query_items)
                 final_headers = [
-                    (k, substitute_simple(v, merged_vars, list_vars, global_index, req_guid, req_ts))
+                    (k, substitute_simple(v, merged_vars, list_vars, accumulated_lists, global_index, req_guid, req_ts))
                     for k, v in step["headers"]
                 ]
 
                 body_bytes: bytes | None = None
                 if step["body_type"] == "json":
-                    body_bytes = substitute_json_body(step["body"], merged_vars, list_vars, global_index, req_guid, req_ts).encode("utf-8")
+                    body_bytes = substitute_json_body(step["body"], merged_vars, list_vars, accumulated_lists, global_index, req_guid, req_ts).encode("utf-8")
                 elif step["body_type"] == "text":
-                    body_bytes = substitute_simple(step["body"], merged_vars, list_vars, global_index, req_guid, req_ts).encode("utf-8")
+                    body_bytes = substitute_simple(step["body"], merged_vars, list_vars, accumulated_lists, global_index, req_guid, req_ts).encode("utf-8")
                 elif step["body_type"] == "form":
                     pairs = [
-                        (k, substitute_simple(v, merged_vars, list_vars, global_index, req_guid, req_ts))
+                        (k, substitute_simple(v, merged_vars, list_vars, accumulated_lists, global_index, req_guid, req_ts))
                         for k, v in step["form_fields"]
                     ]
                     body_bytes = urllib.parse.urlencode(pairs).encode("utf-8")
@@ -1314,22 +1622,38 @@ def main() -> int:
             http_failed = net_err is not None or status >= 400
             extraction_failed = False
             local_extracted: dict[str, str] = {}
+            local_lists: dict[str, list[str]] = {}
 
             for ext in step["extractions"]:
+                src_values = (
+                    resolve_variable_source_values(
+                        ext.get("source_variable", ""),
+                        local_lists,
+                        local_extracted,
+                        accumulated_lists,
+                        merged_vars,
+                        list_vars,
+                    )
+                    if ext["source"] == "variable"
+                    else None
+                )
                 if ext.get("is_list"):
-                    ok, values_or_err = run_list_extraction(ext, resp_body, resp_headers)
+                    ok, values_or_err = run_list_extraction(ext, resp_body, resp_headers, src_values)
                     if ok and isinstance(values_or_err, list):
                         accumulated_lists[ext["variable"]] = values_or_err
+                        local_lists[ext["variable"]] = values_or_err
                         if args.verbose:
                             print(f"  -> [[{ext['variable']}]] = {len(values_or_err)} élément(s)")
                     else:
-                        accumulated_lists[ext["variable"]] = [ext["default"]] if ext["default"] else []
+                        fallback_list = [ext["default"]] if ext["default"] else []
+                        accumulated_lists[ext["variable"]] = fallback_list
+                        local_lists[ext["variable"]] = fallback_list
                         if ext["required"]:
                             extraction_failed = True
                             print(f"  [EXTRACTION] [[{ext['variable']}]] : {values_or_err}", file=sys.stderr)
                     continue
 
-                ok, value_or_err = run_extraction(ext, resp_body, resp_headers)
+                ok, value_or_err = run_extraction(ext, resp_body, resp_headers, src_values)
                 if ok:
                     accumulated_vars[ext["variable"]] = value_or_err
                     local_extracted[ext["variable"]] = value_or_err

@@ -54,6 +54,7 @@ internal sealed record CliExtractionSpec(
     string Expression,
     int RegexGroup,
     string HeaderName,
+    string SourceVariableName,
     bool IsRequired,
     string DefaultValueIfMissing,
     bool IsList,
@@ -464,7 +465,12 @@ public sealed class ChainCliGenerator : IChainCliGenerator
 
             result.Add(new CliExtractionSpec(
                 ext.VariableName.Trim(),
-                ext.Source == ChainExtractionSource.Header ? "header" : "body",
+                ext.Source switch
+                {
+                    ChainExtractionSource.Header => "header",
+                    ChainExtractionSource.Variable => "variable",
+                    _ => "body"
+                },
                 ext.Kind switch
                 {
                     ExtractionKind.Regex => "regex",
@@ -474,6 +480,7 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                 ext.Expression?.Trim() ?? string.Empty,
                 Math.Max(0, ext.RegexGroup),
                 ext.HeaderName?.Trim() ?? string.Empty,
+                ext.SourceVariableName?.Trim() ?? string.Empty,
                 ext.IsRequired,
                 ext.DefaultValueIfMissing ?? string.Empty,
                 ext.IsList,

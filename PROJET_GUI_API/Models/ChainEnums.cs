@@ -10,7 +10,8 @@ public enum ExtractionKind
 public enum ChainExtractionSource
 {
     Body,
-    Header
+    Header,
+    Variable
 }
 
 public enum ChainStepStatus

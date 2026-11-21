@@ -255,19 +255,25 @@ internal static class ChainDeclaredVariableBuilder
     private static string BuildPendingDescription(ChainExtraction extraction)
     {
         string desc;
-        if (extraction.Kind == ExtractionKind.FullResponse && extraction.Source == ChainExtractionSource.Body)
+        if (extraction.Kind == ExtractionKind.FullResponse && extraction.Source != ChainExtractionSource.Header)
         {
             var varName = string.IsNullOrWhiteSpace(extraction.VariableName)
                 ? "variable"
                 : extraction.VariableName.Trim();
-            desc = $"En attente d'exécution (Réponse complète sur Corps ; ex. {{{{{varName}.champ}}}})";
+            var sourceDesc = extraction.Source == ChainExtractionSource.Variable
+                ? $"Variable « {extraction.SourceVariableName?.Trim()} »"
+                : "Corps";
+            desc = $"En attente d'exécution (Valeur complète sur {sourceDesc} ; ex. {{{{{varName}.champ}}}})";
         }
         else
         {
             var kind = extraction.Kind == ExtractionKind.Regex ? "Regex" : "JSONPath";
-            var source = extraction.Source == ChainExtractionSource.Header
-                ? $"En-tête « {extraction.HeaderName?.Trim()} »"
-                : "Corps";
+            var source = extraction.Source switch
+            {
+                ChainExtractionSource.Header => $"En-tête « {extraction.HeaderName?.Trim()} »",
+                ChainExtractionSource.Variable => $"Variable « {extraction.SourceVariableName?.Trim()} »",
+                _ => "Corps"
+            };
             var expr = string.IsNullOrWhiteSpace(extraction.Expression)
                 ? "(expression vide)"
                 : extraction.Expression.Trim();

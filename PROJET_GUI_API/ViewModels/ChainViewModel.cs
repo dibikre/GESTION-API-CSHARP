@@ -35,6 +35,8 @@ public partial class ChainViewModel : ViewModelBase
     private Dictionary<string, string> _lastAccumulatedVariables = new(StringComparer.Ordinal);
     private Dictionary<string, IReadOnlyList<string>> _lastAccumulatedLists = new(StringComparer.Ordinal);
     private readonly List<ChainStepResult> _rawResults = [];
+    private string? _cachedSyntheticSuggestionKey;
+    private ResponseModel? _cachedSyntheticSuggestionResponse;
     private bool _isBulkUpdating;
     private bool _isSortingResults;
     private string? _lastPipelineDirectory;
@@ -106,6 +108,12 @@ public partial class ChainViewModel : ViewModelBase
     public bool HasSteps => Steps.Count > 0;
 
     public IExtractionSuggester ExtractionSuggester => _extractionSuggester;
+
+    public Func<ChainExtraction, IReadOnlyList<RealtimeExtractionSuggestion>> GetSourceVariableSuggestionsFunc =>
+        GetAvailableSourceVariables;
+
+    public Func<ChainExtraction, ResponseModel?> GetSuggestionResponseFunc =>
+        GetSuggestionResponse;
 
     public RateLimitPolicy GlobalRateLimitPolicy => _sharedRateLimitPolicy;
 
@@ -884,6 +892,12 @@ public partial class ChainViewModel : ViewModelBase
             return;
         }
 
+        if (extraction.IsVariableSource)
+        {
+            EvaluateVariableSourceExtraction(SelectedStep, extraction, allowEmptyVariablePreview);
+            return;
+        }
+
         var response = SelectedStep.LastResponse;
         if (response is null)
         {
@@ -911,56 +925,117 @@ public partial class ChainViewModel : ViewModelBase
         if (extraction.IsList)
         {
             var rawOutcome = _responseExtractor.ExtractRawList(response, targetForEvaluation);
-            if (!rawOutcome.IsSuccess)
-            {
-                extraction.LastRawExtractedList = null;
-                extraction.LastExtractedList = null;
-                extraction.LastExtractedValue = null;
-                extraction.ErrorText = rawOutcome.ErrorMessage;
-                RefreshDeclaredVariables();
-                return;
-            }
+            ApplyListEvaluationOutcome(extraction, rawOutcome);
+            return;
+        }
 
-            extraction.LastRawExtractedList = rawOutcome.Values;
-            var finalValues = rawOutcome.Values;
-            if (extraction.HasConditions)
-            {
-                var filteredOutcome = ExtractionConditionEngine.ApplyToList(
-                    rawOutcome.Values,
-                    extraction.Conditions,
-                    extraction.ConditionMatchMode,
-                    extraction.DeduplicateList,
-                    failWhenEmpty: true);
-                if (!filteredOutcome.IsSuccess)
-                {
-                    extraction.LastExtractedList = null;
-                    extraction.LastExtractedValue = null;
-                    extraction.ErrorText = filteredOutcome.ErrorMessage;
-                    RefreshDeclaredVariables();
-                    return;
-                }
+        ApplyScalarEvaluationOutcome(extraction, _responseExtractor.Extract(response, targetForEvaluation));
+    }
 
-                finalValues = filteredOutcome.Values;
-            }
+    private void EvaluateVariableSourceExtraction(
+        ChainStep step,
+        ChainExtraction extraction,
+        bool allowEmptyVariablePreview)
+    {
+        if (allowEmptyVariablePreview &&
+            (string.IsNullOrWhiteSpace(extraction.SourceVariableName) ||
+             (extraction.Kind != ExtractionKind.FullResponse && string.IsNullOrWhiteSpace(extraction.Expression))))
+        {
+            extraction.ClearPreviewState();
+            return;
+        }
 
-            extraction.LastExtractedList = finalValues;
-            if (BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
-            {
-                extraction.LastExtractedValue = $"[{finalValues.Count} éléments] ***";
-            }
-            else
-            {
-                var preview = BatchExecutionHelper.TruncateForDisplay(string.Join(", ", finalValues.Take(5)));
-                extraction.LastExtractedValue = $"[{finalValues.Count} éléments] {preview}";
-            }
-            extraction.ErrorText = null;
+        if (string.IsNullOrWhiteSpace(extraction.SourceVariableName))
+        {
+            extraction.LastRawExtractedList = null;
+            extraction.LastExtractedList = null;
+            extraction.LastExtractedValue = null;
+            extraction.ErrorText = "Saisis d'abord le nom de la variable source.";
             RefreshDeclaredVariables();
             return;
         }
 
+        var sourceValues = ResolvePreviewSourceVariableValues(step, extraction, extraction.SourceVariableName);
+        if (sourceValues.Count == 0)
+        {
+            extraction.LastRawExtractedList = null;
+            extraction.LastExtractedList = null;
+            extraction.LastExtractedValue = null;
+            extraction.ErrorText =
+                $"Aucune valeur disponible pour la variable source « {extraction.SourceVariableName.Trim()} » (exécute ou teste d'abord son extraction).";
+            RefreshDeclaredVariables();
+            return;
+        }
+
+        var targetForEvaluation = extraction;
+        if (allowEmptyVariablePreview && string.IsNullOrWhiteSpace(extraction.VariableName))
+        {
+            targetForEvaluation = extraction.Clone();
+            targetForEvaluation.VariableName = "preview";
+        }
+
+        if (extraction.IsList)
+        {
+            var rawOutcome = _responseExtractor.ExtractRawListFromVariable(sourceValues, targetForEvaluation);
+            ApplyListEvaluationOutcome(extraction, rawOutcome);
+            return;
+        }
+
+        ApplyScalarEvaluationOutcome(extraction, _responseExtractor.ExtractFromVariable(sourceValues, targetForEvaluation));
+    }
+
+    private void ApplyListEvaluationOutcome(ChainExtraction extraction, ListExtractionOutcome rawOutcome)
+    {
+        if (!rawOutcome.IsSuccess)
+        {
+            extraction.LastRawExtractedList = null;
+            extraction.LastExtractedList = null;
+            extraction.LastExtractedValue = null;
+            extraction.ErrorText = rawOutcome.ErrorMessage;
+            RefreshDeclaredVariables();
+            return;
+        }
+
+        extraction.LastRawExtractedList = rawOutcome.Values;
+        var finalValues = rawOutcome.Values;
+        if (extraction.HasConditions)
+        {
+            var filteredOutcome = ExtractionConditionEngine.ApplyToList(
+                rawOutcome.Values,
+                extraction.Conditions,
+                extraction.ConditionMatchMode,
+                extraction.DeduplicateList,
+                failWhenEmpty: true);
+            if (!filteredOutcome.IsSuccess)
+            {
+                extraction.LastExtractedList = null;
+                extraction.LastExtractedValue = null;
+                extraction.ErrorText = filteredOutcome.ErrorMessage;
+                RefreshDeclaredVariables();
+                return;
+            }
+
+            finalValues = filteredOutcome.Values;
+        }
+
+        extraction.LastExtractedList = finalValues;
+        if (BatchExecutionHelper.IsSensitiveName(extraction.VariableName))
+        {
+            extraction.LastExtractedValue = $"[{finalValues.Count} éléments] ***";
+        }
+        else
+        {
+            var preview = BatchExecutionHelper.TruncateForDisplay(string.Join(", ", finalValues.Take(5)));
+            extraction.LastExtractedValue = $"[{finalValues.Count} éléments] {preview}";
+        }
+        extraction.ErrorText = null;
+        RefreshDeclaredVariables();
+    }
+
+    private void ApplyScalarEvaluationOutcome(ChainExtraction extraction, ExtractionOutcome outcome)
+    {
         extraction.LastRawExtractedList = null;
         extraction.LastExtractedList = null;
-        var outcome = _responseExtractor.Extract(response, targetForEvaluation);
         if (outcome.IsSuccess)
         {
             extraction.LastExtractedValue = outcome.Value;
@@ -975,11 +1050,454 @@ public partial class ChainViewModel : ViewModelBase
         RefreshDeclaredVariables();
     }
 
+    public IReadOnlyList<RealtimeExtractionSuggestion> GetAvailableSourceVariables(ChainExtraction? targetExtraction)
+    {
+        if (SelectedStep is null || targetExtraction is null)
+        {
+            return [];
+        }
+
+        var result = new List<RealtimeExtractionSuggestion>();
+        var indexByName = new Dictionary<string, int>(StringComparer.Ordinal);
+        var currentStepIdx = Steps.IndexOf(SelectedStep);
+        if (currentStepIdx < 0)
+        {
+            currentStepIdx = Steps.Count;
+        }
+
+        void AddOrUpdateCandidate(string name, bool isList, IReadOnlyList<string> values, string detailText)
+        {
+            var previewText = string.Empty;
+            var badgeText = isList ? "liste" : "var";
+            if (values.Count > 0)
+            {
+                if (BatchExecutionHelper.IsSensitiveName(name))
+                {
+                    previewText = "***";
+                }
+                else if (isList || values.Count > 1)
+                {
+                    var sample = BatchExecutionHelper.TruncateForDisplay(string.Join(", ", values.Take(3)), 64);
+                    previewText = $"[{values.Count} élém.] {sample}";
+                }
+                else
+                {
+                    previewText = BatchExecutionHelper.TruncateForDisplay(values[0] ?? string.Empty, 64);
+                }
+
+                if (isList || values.Count > 1)
+                {
+                    badgeText = $"liste ({values.Count})";
+                }
+            }
+
+            var suggestion = new RealtimeExtractionSuggestion(
+                Expression: name,
+                SuggestedVariableName: string.Empty,
+                PreviewValue: previewText,
+                BadgeText: badgeText,
+                DetailText: detailText,
+                SuggestsList: false,
+                MatchCount: values.Count);
+
+            if (indexByName.TryGetValue(name, out var existingIdx))
+            {
+                result[existingIdx] = suggestion;
+            }
+            else
+            {
+                indexByName[name] = result.Count;
+                result.Add(suggestion);
+            }
+        }
+
+        for (var s = 0; s < currentStepIdx; s++)
+        {
+            var prevStep = Steps[s];
+            foreach (var ext in prevStep.Extractions)
+            {
+                if (string.IsNullOrWhiteSpace(ext.VariableName))
+                {
+                    continue;
+                }
+
+                var varName = ext.VariableName.Trim();
+                var values = ResolveExtractionPreviewValues(prevStep, ext, []);
+                AddOrUpdateCandidate(
+                    varName,
+                    ext.IsList,
+                    values,
+                    $"Étape {s + 1} · {GetKindShortLabel(ext.Kind)}");
+            }
+        }
+
+        foreach (var v in SelectedStep.Variables)
+        {
+            if (!v.IsConfigured || v.HasError || string.IsNullOrWhiteSpace(v.Name))
+            {
+                continue;
+            }
+
+            var localValues = GetConfiguredVariablePreviewValues(v);
+            AddOrUpdateCandidate(
+                v.Name.Trim(),
+                v.IsVarying && v.ValueCount > 1,
+                localValues,
+                "Variable locale de l'étape");
+        }
+
+        foreach (var ext in SelectedStep.Extractions)
+        {
+            if (ReferenceEquals(ext, targetExtraction))
+            {
+                break;
+            }
+
+            if (string.IsNullOrWhiteSpace(ext.VariableName))
+            {
+                continue;
+            }
+
+            var varName = ext.VariableName.Trim();
+            var values = ResolveExtractionPreviewValues(SelectedStep, ext, []);
+            AddOrUpdateCandidate(
+                varName,
+                ext.IsList,
+                values,
+                $"Même étape · {GetKindShortLabel(ext.Kind)}");
+        }
+
+        return result;
+    }
+
+    public ResponseModel? GetSuggestionResponse(ChainExtraction? extraction)
+    {
+        if (SelectedStep is null || extraction is null)
+        {
+            return null;
+        }
+
+        if (!extraction.IsVariableSource)
+        {
+            return SelectedStep.LastResponse;
+        }
+
+        var sourceVar = extraction.SourceVariableName?.Trim();
+        if (string.IsNullOrEmpty(sourceVar))
+        {
+            return null;
+        }
+
+        var values = ResolvePreviewSourceVariableValues(SelectedStep, extraction, sourceVar);
+        if (values.Count == 0)
+        {
+            return null;
+        }
+
+        string body;
+        string contentType;
+        if (values.Count == 1)
+        {
+            body = values[0] ?? string.Empty;
+            contentType = DetectSyntheticContentType(body);
+        }
+        else if (TryBuildSyntheticJsonArray(values, out var jsonArray))
+        {
+            body = jsonArray;
+            contentType = "application/json; charset=utf-8";
+        }
+        else
+        {
+            body = string.Join(Environment.NewLine, values);
+            contentType = DetectSyntheticContentType(body);
+        }
+
+        var cacheKey = $"{sourceVar}\u0000{contentType}\u0000{body.Length}\u0000{body}";
+        if (string.Equals(_cachedSyntheticSuggestionKey, cacheKey, StringComparison.Ordinal) &&
+            _cachedSyntheticSuggestionResponse is not null)
+        {
+            return _cachedSyntheticSuggestionResponse;
+        }
+
+        var synthetic = new ResponseModel
+        {
+            StatusCode = 200,
+            ReasonPhrase = "Variable",
+            IsSuccess = true,
+            ContentType = contentType,
+            Body = body,
+            SizeBytes = System.Text.Encoding.UTF8.GetByteCount(body)
+        };
+
+        _cachedSyntheticSuggestionKey = cacheKey;
+        _cachedSyntheticSuggestionResponse = synthetic;
+        return synthetic;
+    }
+
+    private IReadOnlyList<string> ResolvePreviewSourceVariableValues(
+        ChainStep currentStep,
+        ChainExtraction targetExtraction,
+        string? sourceVariableName,
+        HashSet<string>? visited = null)
+    {
+        var key = sourceVariableName?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(key))
+        {
+            return [];
+        }
+
+        visited ??= new HashSet<string>(StringComparer.Ordinal);
+        if (!visited.Add(key))
+        {
+            return [];
+        }
+
+        try
+        {
+            // 1. Extractions situées strictement avant la règle cible dans la même étape (la dernière gagne).
+            ChainExtraction? sameStepMatch = null;
+            foreach (var ext in currentStep.Extractions)
+            {
+                if (ReferenceEquals(ext, targetExtraction))
+                {
+                    break;
+                }
+
+                if (!string.IsNullOrWhiteSpace(ext.VariableName) &&
+                    string.Equals(ext.VariableName.Trim(), key, StringComparison.Ordinal))
+                {
+                    sameStepMatch = ext;
+                }
+            }
+
+            if (sameStepMatch is not null)
+            {
+                return ResolveExtractionPreviewValues(currentStep, sameStepMatch, visited);
+            }
+
+            // 2. Variable locale configurée sur l'étape courante.
+            var localVar = currentStep.Variables.FirstOrDefault(v =>
+                v.IsConfigured && !v.HasError && string.Equals(v.Name?.Trim(), key, StringComparison.Ordinal));
+            if (localVar is not null)
+            {
+                return GetConfiguredVariablePreviewValues(localVar);
+            }
+
+            // 3. Extractions des étapes précédentes (en remontant pour privilégier la plus récente).
+            var currentStepIdx = Steps.IndexOf(currentStep);
+            var limitIdx = currentStepIdx >= 0 ? currentStepIdx : Steps.Count;
+            for (var s = limitIdx - 1; s >= 0; s--)
+            {
+                var prevStep = Steps[s];
+                for (var e = prevStep.Extractions.Count - 1; e >= 0; e--)
+                {
+                    var prevExt = prevStep.Extractions[e];
+                    if (!string.IsNullOrWhiteSpace(prevExt.VariableName) &&
+                        string.Equals(prevExt.VariableName.Trim(), key, StringComparison.Ordinal))
+                    {
+                        var directValues = ResolveExtractionPreviewValues(prevStep, prevExt, visited);
+                        if (directValues.Count > 0)
+                        {
+                            return directValues;
+                        }
+                    }
+                }
+            }
+
+            // 4. Dernières valeurs accumulées lors d'une exécution complète de la chaîne.
+            if (_lastAccumulatedLists.TryGetValue(key, out var accList) && accList.Count > 0)
+            {
+                return accList;
+            }
+
+            if (_lastAccumulatedVariables.TryGetValue(key, out var accScalar))
+            {
+                return [accScalar];
+            }
+
+            return [];
+        }
+        finally
+        {
+            visited.Remove(key);
+        }
+    }
+
+    private IReadOnlyList<string> ResolveExtractionPreviewValues(
+        ChainStep ownerStep,
+        ChainExtraction ext,
+        HashSet<string> visited)
+    {
+        if (ext.IsList)
+        {
+            if (ext.LastExtractedList is { Count: > 0 } cachedList)
+            {
+                return cachedList;
+            }
+
+            var evalTarget = string.IsNullOrWhiteSpace(ext.VariableName) ? CloneWithPreviewName(ext) : ext;
+            if (ext.IsVariableSource)
+            {
+                var parentValues = ResolvePreviewSourceVariableValues(ownerStep, ext, ext.SourceVariableName, visited);
+                if (parentValues.Count > 0)
+                {
+                    var outcome = _responseExtractor.ExtractListFromVariable(parentValues, evalTarget);
+                    if (outcome.IsSuccess && outcome.Values.Count > 0)
+                    {
+                        return outcome.Values;
+                    }
+                }
+            }
+            else if (ownerStep.LastResponse is not null)
+            {
+                var outcome = _responseExtractor.ExtractList(ownerStep.LastResponse, evalTarget);
+                if (outcome.IsSuccess && outcome.Values.Count > 0)
+                {
+                    return outcome.Values;
+                }
+            }
+
+            return [];
+        }
+
+        if (ext.LastExtractedValue is not null)
+        {
+            return [ext.LastExtractedValue];
+        }
+
+        var scalarTarget = string.IsNullOrWhiteSpace(ext.VariableName) ? CloneWithPreviewName(ext) : ext;
+        if (ext.IsVariableSource)
+        {
+            var parentValues = ResolvePreviewSourceVariableValues(ownerStep, ext, ext.SourceVariableName, visited);
+            if (parentValues.Count > 0)
+            {
+                var outcome = _responseExtractor.ExtractFromVariable(parentValues, scalarTarget);
+                if (outcome.IsSuccess)
+                {
+                    return [outcome.Value];
+                }
+            }
+        }
+        else if (ownerStep.LastResponse is not null)
+        {
+            var outcome = _responseExtractor.Extract(ownerStep.LastResponse, scalarTarget);
+            if (outcome.IsSuccess)
+            {
+                return [outcome.Value];
+            }
+        }
+
+        return [];
+    }
+
+    private static ChainExtraction CloneWithPreviewName(ChainExtraction ext)
+    {
+        var copy = ext.Clone();
+        copy.VariableName = "preview";
+        return copy;
+    }
+
+    private static IReadOnlyList<string> GetConfiguredVariablePreviewValues(BatchVariable variable)
+    {
+        if (!variable.IsVarying)
+        {
+            return [variable.FixedValue ?? string.Empty];
+        }
+
+        if (variable.Mode == VariableMode.List)
+        {
+            return BatchVariable.ParseListValues(variable.ListText);
+        }
+
+        if (variable.ValueCount > 0)
+        {
+            try
+            {
+                var axis = BatchAxis.FromVariable(variable);
+                var count = (int)Math.Min(axis.ValueCount, 10);
+                var preview = new List<string>(count);
+                for (var i = 0; i < count; i++)
+                {
+                    preview.Add(axis.GetValue(i));
+                }
+                return preview;
+            }
+            catch (Exception)
+            {
+                // Ignorer si la plage n'est pas encore valide.
+            }
+        }
+
+        return [];
+    }
+
+    private static string GetKindShortLabel(ExtractionKind kind) => kind switch
+    {
+        ExtractionKind.JsonPath => "JSONPath",
+        ExtractionKind.Regex => "Regex",
+        ExtractionKind.FullResponse => "Réponse complète",
+        _ => kind.ToString()
+    };
+
+    private static string DetectSyntheticContentType(string body)
+    {
+        var trimmed = body.TrimStart('\uFEFF').TrimStart();
+        if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
+        {
+            return "application/json; charset=utf-8";
+        }
+
+        if (trimmed.StartsWith('<'))
+        {
+            return trimmed.Contains("<html", StringComparison.OrdinalIgnoreCase) ||
+                   trimmed.Contains("<!DOCTYPE", StringComparison.OrdinalIgnoreCase)
+                ? "text/html; charset=utf-8"
+                : "application/xml; charset=utf-8";
+        }
+
+        return "text/plain; charset=utf-8";
+    }
+
+    private static bool TryBuildSyntheticJsonArray(IReadOnlyList<string> values, out string jsonArray)
+    {
+        var jsonItems = new List<string>(Math.Min(values.Count, 20));
+        var limit = Math.Min(values.Count, 20);
+        for (var i = 0; i < limit; i++)
+        {
+            var trimmed = (values[i] ?? string.Empty).TrimStart('\uFEFF').Trim();
+            if (!trimmed.StartsWith('{') && !trimmed.StartsWith('['))
+            {
+                jsonArray = string.Empty;
+                return false;
+            }
+
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(trimmed);
+                jsonItems.Add(trimmed);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                jsonArray = string.Empty;
+                return false;
+            }
+        }
+
+        if (jsonItems.Count == 0)
+        {
+            jsonArray = string.Empty;
+            return false;
+        }
+
+        jsonArray = $"[{string.Join(",", jsonItems)}]";
+        return true;
+    }
+
     private async void ScheduleLiveExtractionTest(ChainExtraction extraction)
     {
         CancelPendingLiveExtractionTest();
 
-        if (SelectedStep?.LastResponse is null)
+        if (SelectedStep is null || (!extraction.IsVariableSource && SelectedStep.LastResponse is null))
         {
             return;
         }
@@ -996,7 +1514,7 @@ public partial class ChainViewModel : ViewModelBase
             if (token.IsCancellationRequested ||
                 !ReferenceEquals(_liveExtractionTestCts, cts) ||
                 !ReferenceEquals(SelectedStep, expectedStep) ||
-                expectedStep.LastResponse is null ||
+                (!extraction.IsVariableSource && expectedStep.LastResponse is null) ||
                 !expectedStep.Extractions.Contains(extraction))
             {
                 return;
@@ -1066,7 +1584,20 @@ public partial class ChainViewModel : ViewModelBase
         IReadOnlyList<string>? rawItems = extraction.LastRawExtractedList;
         if (rawItems is null || rawItems.Count == 0)
         {
-            if (SelectedStep?.LastResponse is not null)
+            if (extraction.IsVariableSource && SelectedStep is not null)
+            {
+                var sourceValues = ResolvePreviewSourceVariableValues(SelectedStep, extraction, extraction.SourceVariableName);
+                if (sourceValues.Count > 0)
+                {
+                    var rawOutcome = _responseExtractor.ExtractRawListFromVariable(sourceValues, extraction);
+                    if (rawOutcome.IsSuccess && rawOutcome.Values.Count > 0)
+                    {
+                        extraction.LastRawExtractedList = rawOutcome.Values;
+                        rawItems = rawOutcome.Values;
+                    }
+                }
+            }
+            else if (SelectedStep?.LastResponse is not null)
             {
                 var rawOutcome = _responseExtractor.ExtractRawList(SelectedStep.LastResponse, extraction);
                 if (rawOutcome.IsSuccess && rawOutcome.Values.Count > 0)
@@ -1129,7 +1660,7 @@ public partial class ChainViewModel : ViewModelBase
             _isBulkUpdating = false;
         }
 
-        if (SelectedStep?.LastResponse is not null)
+        if (SelectedStep?.LastResponse is not null || extraction.IsVariableSource)
         {
             TestExtraction(extraction);
         }
@@ -1825,11 +2356,13 @@ public partial class ChainViewModel : ViewModelBase
             return;
         }
 
-        if (SelectedStep?.LastResponse is null)
+        if (SelectedStep is null || (!extraction.IsVariableSource && SelectedStep.LastResponse is null))
         {
             if (e.PropertyName is nameof(ChainExtraction.Expression)
                 or nameof(ChainExtraction.HeaderName)
-                or nameof(ChainExtraction.RegexGroup))
+                or nameof(ChainExtraction.SourceVariableName)
+                or nameof(ChainExtraction.RegexGroup)
+                or nameof(ChainExtraction.Source))
             {
                 extraction.ClearPreviewState();
             }
@@ -1840,7 +2373,16 @@ public partial class ChainViewModel : ViewModelBase
             or nameof(ChainExtraction.Kind)
             or nameof(ChainExtraction.Source))
         {
-            if (extraction.Kind == ExtractionKind.FullResponse ||
+            if (extraction.IsVariableSource)
+            {
+                if (!string.IsNullOrWhiteSpace(extraction.SourceVariableName) &&
+                    (extraction.Kind == ExtractionKind.FullResponse || !string.IsNullOrWhiteSpace(extraction.Expression)))
+                {
+                    CancelPendingLiveExtractionTest();
+                    EvaluateExtraction(extraction, allowEmptyVariablePreview: true);
+                }
+            }
+            else if (extraction.Kind == ExtractionKind.FullResponse ||
                 !string.IsNullOrWhiteSpace(extraction.Expression))
             {
                 CancelPendingLiveExtractionTest();
@@ -1851,6 +2393,7 @@ public partial class ChainViewModel : ViewModelBase
 
         if (e.PropertyName is nameof(ChainExtraction.Expression)
             or nameof(ChainExtraction.HeaderName)
+            or nameof(ChainExtraction.SourceVariableName)
             or nameof(ChainExtraction.RegexGroup)
             or nameof(ChainExtraction.VariableName))
         {
@@ -1962,7 +2505,23 @@ public partial class ChainViewModel : ViewModelBase
         var template = step.BuildTemplateRequest();
         var extracted = _templateEngine.ExtractVariables(template);
         var extractedLists = _templateEngine.ExtractListVariables(template);
+        var bareScalarVars = _templateEngine.GetBareScalarVariables(template);
         var extractedByName = extracted.ToDictionary(v => v.Name, StringComparer.Ordinal);
+
+        string ResolveAutoUsedIn(TemplateVariableInfo info)
+        {
+            if (availableScalars.Contains(info.Name))
+            {
+                return $"{info.LocationsDisplay} · extraite";
+            }
+
+            if (availableLists.Contains(info.Name) && !bareScalarVars.Contains(info.Name))
+            {
+                return $"{info.LocationsDisplay} · liste (accès imbriqué)";
+            }
+
+            return info.LocationsDisplay;
+        }
 
         var existingByName = new Dictionary<string, BatchVariable>(StringComparer.Ordinal);
         for (var i = step.Variables.Count - 1; i >= 0; i--)
@@ -1970,8 +2529,8 @@ public partial class ChainViewModel : ViewModelBase
             var existing = step.Variables[i];
             if (extractedByName.TryGetValue(existing.Name, out var info))
             {
-                existing.UsedIn = availableScalars.Contains(existing.Name) && !existing.IsConfigured
-                    ? $"{info.LocationsDisplay} · extraite"
+                existing.UsedIn = !existing.IsConfigured
+                    ? ResolveAutoUsedIn(info)
                     : info.LocationsDisplay;
                 existing.IsUsed = true;
                 existingByName[existing.Name] = existing;
@@ -1999,9 +2558,7 @@ public partial class ChainViewModel : ViewModelBase
             var created = new BatchVariable
             {
                 Name = item.Name,
-                UsedIn = availableScalars.Contains(item.Name)
-                    ? $"{item.LocationsDisplay} · extraite"
-                    : item.LocationsDisplay,
+                UsedIn = ResolveAutoUsedIn(item),
                 IsUsed = true
             };
             created.PropertyChanged += OnStepVariablePropertyChanged;
@@ -2026,11 +2583,9 @@ public partial class ChainViewModel : ViewModelBase
                 listJsonPath is not null)
             {
                 var hasRootInStep = step.Variables.Any(v => v.Name == listRoot && v.IsConfigured && !v.HasError);
-                if (!availableScalars.Contains(listRoot) && !hasRootInStep)
+                if (!availableScalars.Contains(listRoot) && !availableLists.Contains(listRoot) && !hasRootInStep)
                 {
-                    errors.Add(availableLists.Contains(listRoot)
-                        ? $"[[{listExt.Name}]] : « {listRoot} » est une liste simple ; utilise [[{listRoot}]] ou extrais la réponse complète."
-                        : $"[[{listExt.Name}]] : aucune étape précédente n'extrait la variable « {listRoot} ».");
+                    errors.Add($"[[{listExt.Name}]] : aucune étape précédente n'extrait la variable « {listRoot} ».");
                 }
                 continue;
             }
@@ -2054,9 +2609,17 @@ public partial class ChainViewModel : ViewModelBase
             {
                 if (!availableScalars.Contains(ext.Name))
                 {
-                    errors.Add(availableLists.Contains(ext.Name)
-                        ? $"{{{{{ext.Name}}}}} : extraite en liste ; utilise [[{ext.Name}]] pour itérer sur ses valeurs."
-                        : $"{{{{{ext.Name}}}}} : saisis une valeur ou coche « Faire varier ».");
+                    if (availableLists.Contains(ext.Name))
+                    {
+                        if (bareScalarVars.Contains(ext.Name))
+                        {
+                            errors.Add($"{{{{{ext.Name}}}}} : extraite en liste ; utilise [[{ext.Name}]] pour itérer sur ses valeurs (ou {{{{{ext.Name}.champ}}}} pour un accès imbriqué).");
+                        }
+                    }
+                    else
+                    {
+                        errors.Add($"{{{{{ext.Name}}}}} : saisis une valeur ou coche « Faire varier ».");
+                    }
                 }
             }
             else if (variable.HasError)

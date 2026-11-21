@@ -119,6 +119,57 @@ public sealed class TemplateEngine : ITemplateEngine
     public IReadOnlyList<ExtractedVariable> ExtractListVariables(RequestModel template) =>
         ExtractMarkers(template, ListMarkerRegex, isList: true);
 
+    public IReadOnlySet<string> GetBareScalarVariables(RequestModel template)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+
+        var bare = new HashSet<string>(StringComparer.Ordinal);
+        void Scan(string? text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            foreach (Match match in MarkerRegex.Matches(text))
+            {
+                var rawName = match.Groups[1].Value;
+                if (rawName.StartsWith('$'))
+                {
+                    continue;
+                }
+
+                if (!VariablePathHelper.TrySplit(rawName, out _, out var path) || path is null)
+                {
+                    bare.Add(rawName.Trim());
+                }
+            }
+        }
+
+        Scan(template.Url);
+        foreach (var param in template.QueryParams)
+        {
+            if (param.IsEnabled) Scan(param.Value);
+        }
+        foreach (var header in template.Headers)
+        {
+            if (header.IsEnabled) Scan(header.Value);
+        }
+        if (template.BodyType != BodyType.FormUrlEncoded)
+        {
+            Scan(template.Body);
+        }
+        else
+        {
+            foreach (var field in template.FormFields)
+            {
+                if (field.IsEnabled) Scan(field.Value);
+            }
+        }
+
+        return bare;
+    }
+
     private static IReadOnlyList<ExtractedVariable> ExtractMarkers(
         RequestModel template,
         Regex regex,
@@ -215,12 +266,20 @@ public sealed class TemplateEngine : ITemplateEngine
     }
 
     public TemplateApplyResult ApplyDetailed(RequestModel template, IReadOnlyDictionary<string, string> values, int index) =>
-        ApplyDetailed(template, values, listValues: null, index);
+        ApplyDetailed(template, values, listValues: null, allLists: null, index);
 
     public TemplateApplyResult ApplyDetailed(
         RequestModel template,
         IReadOnlyDictionary<string, string> values,
         IReadOnlyDictionary<string, string>? listValues,
+        int index) =>
+        ApplyDetailed(template, values, listValues, allLists: null, index);
+
+    public TemplateApplyResult ApplyDetailed(
+        RequestModel template,
+        IReadOnlyDictionary<string, string> values,
+        IReadOnlyDictionary<string, string>? listValues,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? allLists,
         int index)
     {
         ArgumentNullException.ThrowIfNull(template);
@@ -247,20 +306,37 @@ public sealed class TemplateEngine : ITemplateEngine
                 }
 
                 if (VariablePathHelper.TrySplit(name, out var listRoot, out var listJsonPath) &&
-                    listJsonPath is not null &&
-                    values.TryGetValue(listRoot, out var rootJson))
+                    listJsonPath is not null)
                 {
-                    var listOutcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, listJsonPath);
-                    if (listOutcome.IsSuccess && listOutcome.Values.Count > 0)
+                    if (values.TryGetValue(listRoot, out var rootJson))
                     {
-                        resolvedValue = listOutcome.Values[0] ?? string.Empty;
-                        error = null;
-                        return true;
+                        var listOutcome = ResponseExtractor.ExtractListJsonPathFromBody(rootJson, listJsonPath);
+                        if (listOutcome.IsSuccess && listOutcome.Values.Count > 0)
+                        {
+                            resolvedValue = listOutcome.Values[0] ?? string.Empty;
+                            error = null;
+                            return true;
+                        }
+
+                        resolvedValue = string.Empty;
+                        error = $"[[{name}]] : {listOutcome.ErrorMessage ?? "aucune valeur extraite."}";
+                        return false;
                     }
 
-                    resolvedValue = string.Empty;
-                    error = $"[[{name}]] : {listOutcome.ErrorMessage ?? "aucune valeur extraite."}";
-                    return false;
+                    if (allLists is not null && allLists.TryGetValue(listRoot, out var listSource))
+                    {
+                        var listOutcome = ResponseExtractor.ExtractListJsonPathFromValues(listSource, listJsonPath);
+                        if (listOutcome.IsSuccess && listOutcome.Values.Count > 0)
+                        {
+                            resolvedValue = listOutcome.Values[0] ?? string.Empty;
+                            error = null;
+                            return true;
+                        }
+
+                        resolvedValue = string.Empty;
+                        error = $"[[{name}]] : {listOutcome.ErrorMessage ?? "aucune valeur extraite."}";
+                        return false;
+                    }
                 }
 
                 resolvedValue = string.Empty;
@@ -293,24 +369,39 @@ public sealed class TemplateEngine : ITemplateEngine
 
             if (VariablePathHelper.TrySplit(name, out var rootName, out var jsonPath) && jsonPath is not null)
             {
-                if (!values.TryGetValue(rootName, out var rootJson))
+                if (values.TryGetValue(rootName, out var rootJson))
                 {
-                    resolvedValue = string.Empty;
-                    error = $"Variable inconnue ou non définie : {{{{{rootName}}}}} (pour {{{{{name}}}}}).";
-                    return false;
+                    var jpOutcome = ResponseExtractor.ExtractJsonPathFromBody(rootJson, jsonPath);
+                    if (!jpOutcome.IsSuccess)
+                    {
+                        resolvedValue = string.Empty;
+                        error = $"{{{{{name}}}}} : {jpOutcome.ErrorMessage}";
+                        return false;
+                    }
+
+                    resolvedValue = jpOutcome.Value;
+                    error = null;
+                    return true;
                 }
 
-                var jpOutcome = ResponseExtractor.ExtractJsonPathFromBody(rootJson, jsonPath);
-                if (!jpOutcome.IsSuccess)
+                if (allLists is not null && allLists.TryGetValue(rootName, out var listSource))
                 {
-                    resolvedValue = string.Empty;
-                    error = $"{{{{{name}}}}} : {jpOutcome.ErrorMessage}";
-                    return false;
+                    var jpOutcome = ResponseExtractor.ExtractJsonPathFromValues(listSource, jsonPath);
+                    if (!jpOutcome.IsSuccess)
+                    {
+                        resolvedValue = string.Empty;
+                        error = $"{{{{{name}}}}} : {jpOutcome.ErrorMessage}";
+                        return false;
+                    }
+
+                    resolvedValue = jpOutcome.Value;
+                    error = null;
+                    return true;
                 }
 
-                resolvedValue = jpOutcome.Value;
-                error = null;
-                return true;
+                resolvedValue = string.Empty;
+                error = $"Variable inconnue ou non définie : {{{{{rootName}}}}} (pour {{{{{name}}}}}).";
+                return false;
             }
 
             resolvedValue = string.Empty;

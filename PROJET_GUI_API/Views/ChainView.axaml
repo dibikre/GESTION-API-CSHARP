@@ -587,7 +587,9 @@
                                                              HasLastResponse="{Binding HasLastResponse}"
                                                              LastResponseSummary="{Binding LastResponseSummary}"
                                                              LastResponse="{Binding LastResponse}"
-                                                             ExtractionSuggester="{Binding #ChainRoot.ViewModel.ExtractionSuggester}" />
+                                                             ExtractionSuggester="{Binding #ChainRoot.ViewModel.ExtractionSuggester}"
+                                                             SourceVariablesProvider="{Binding #ChainRoot.ViewModel.GetSourceVariableSuggestionsFunc}"
+                                                             SuggestionResponseResolver="{Binding #ChainRoot.ViewModel.GetSuggestionResponseFunc}" />
                             </TabItem>
 
                             <TabItem>

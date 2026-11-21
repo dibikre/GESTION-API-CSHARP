@@ -118,6 +118,7 @@ internal static class JavaScriptChainCliEmitter
                 sb.AppendLine($"        expression: {EscapeString(ext.Expression)},");
                 sb.AppendLine($"        regexGroup: {ext.RegexGroup},");
                 sb.AppendLine($"        headerName: {EscapeString(ext.HeaderName)},");
+                sb.AppendLine($"        sourceVariable: {EscapeString(ext.SourceVariableName)},");
                 sb.AppendLine($"        required: {FormatBool(ext.IsRequired)},");
                 sb.AppendLine($"        defaultValue: {EscapeString(ext.DefaultValueIfMissing)},");
                 sb.AppendLine($"        isList: {FormatBool(ext.IsList)},");
@@ -233,10 +234,14 @@ function buildIterations(axes, mode, accumulatedLists, scalarVars) {
     if (a.kind === "list") {
       const { root, jsonPath } = splitVarPath(a.name);
       if (jsonPath !== null) {
-        if (!Object.prototype.hasOwnProperty.call(scalarVars, root)) {
-          return { iterations: [], emptyListName: null, error: `Variable « ${root} » introuvable pour [[${a.name}]].` };
+        let jpRes;
+        if (Object.prototype.hasOwnProperty.call(scalarVars, root)) {
+          jpRes = extractJsonPathList(scalarVars[root], jsonPath);
+        } else if (Object.prototype.hasOwnProperty.call(accumulatedLists, root)) {
+          jpRes = extractJsonPathListFromValues(accumulatedLists[root], jsonPath);
+        } else {
+          return { iterations: [], emptyListName: null, error: `Variable ou liste « ${root} » introuvable pour [[${a.name}]].` };
         }
-        const jpRes = extractJsonPathList(scalarVars[root], jsonPath);
         if (jpRes.ok && Array.isArray(jpRes.values) && jpRes.values.length > 0) {
           lst = jpRes.values;
         } else if (typeof jpRes.error === "string" && jpRes.error.toLowerCase().includes("est vide")) {
@@ -280,18 +285,27 @@ function buildIterations(axes, mode, accumulatedLists, scalarVars) {
   return { iterations: acc, emptyListName: null, error: null };
 }
 
-function resolveMarker(scalarName, listName, variables, listVars, globalIndex, reqGuid, reqTs) {
+function resolveMarker(scalarName, listName, variables, listVars, accumulatedLists, globalIndex, reqGuid, reqTs) {
   if (listName !== undefined && listName !== null) {
     if (Object.prototype.hasOwnProperty.call(listVars, listName)) {
       return listVars[listName];
     }
     const { root, jsonPath } = splitVarPath(listName);
-    if (jsonPath !== null && Object.prototype.hasOwnProperty.call(variables, root)) {
-      const jpList = extractJsonPathList(variables[root], jsonPath);
-      if (jpList.ok && Array.isArray(jpList.values) && jpList.values.length > 0) {
-        return jpList.values[0];
+    if (jsonPath !== null) {
+      if (Object.prototype.hasOwnProperty.call(variables, root)) {
+        const jpList = extractJsonPathList(variables[root], jsonPath);
+        if (jpList.ok && Array.isArray(jpList.values) && jpList.values.length > 0) {
+          return jpList.values[0];
+        }
+        throw new Error(`[[${listName}]] : ${jpList.error}`);
       }
-      throw new Error(`[[${listName}]] : ${jpList.error}`);
+      if (accumulatedLists && Object.prototype.hasOwnProperty.call(accumulatedLists, root)) {
+        const jpList = extractJsonPathListFromValues(accumulatedLists[root], jsonPath);
+        if (jpList.ok && Array.isArray(jpList.values) && jpList.values.length > 0) {
+          return jpList.values[0];
+        }
+        throw new Error(`[[${listName}]] : ${jpList.error}`);
+      }
     }
     throw new Error(`Liste inconnue ou non définie : [[${listName}]]`);
   }
@@ -303,19 +317,26 @@ function resolveMarker(scalarName, listName, variables, listVars, globalIndex, r
   if (scalarName === "$timestamp") return reqTs;
   const { root, jsonPath } = splitVarPath(scalarName);
   if (jsonPath !== null) {
-    if (!Object.prototype.hasOwnProperty.call(variables, root)) {
-      throw new Error(`Variable inconnue ou non définie : {{${root}}} (pour {{${scalarName}}})`);
+    if (Object.prototype.hasOwnProperty.call(variables, root)) {
+      const jpRes = extractJsonPath(variables[root], jsonPath);
+      if (!jpRes.ok) {
+        throw new Error(`{{${scalarName}}} : ${jpRes.value}`);
+      }
+      return jpRes.value;
     }
-    const jpRes = extractJsonPath(variables[root], jsonPath);
-    if (!jpRes.ok) {
-      throw new Error(`{{${scalarName}}} : ${jpRes.value}`);
+    if (accumulatedLists && Object.prototype.hasOwnProperty.call(accumulatedLists, root)) {
+      const jpRes = extractJsonPathFromValues(accumulatedLists[root], jsonPath);
+      if (!jpRes.ok) {
+        throw new Error(`{{${scalarName}}} : ${jpRes.value}`);
+      }
+      return jpRes.value;
     }
-    return jpRes.value;
+    throw new Error(`Variable inconnue ou non définie : {{${root}}} (pour {{${scalarName}}})`);
   }
   throw new Error(`Variable inconnue ou non définie : {{${scalarName}}}`);
 }
 
-function substituteUrl(text, variables, listVars, globalIndex, reqGuid, reqTs) {
+function substituteUrl(text, variables, listVars, accumulatedLists, globalIndex, reqGuid, reqTs) {
   if (!text) return "";
   const matches = Array.from(text.matchAll(MARKER_RE));
   if (matches.length === 0) return text;
@@ -324,7 +345,7 @@ function substituteUrl(text, variables, listVars, globalIndex, reqGuid, reqTs) {
   for (const match of matches) {
     const matchStart = match.index ?? 0;
     out += text.slice(lastIdx, matchStart);
-    const val = resolveMarker(match[1], match[2], variables, listVars, globalIndex, reqGuid, reqTs);
+    const val = resolveMarker(match[1], match[2], variables, listVars, accumulatedLists, globalIndex, reqGuid, reqTs);
     if (isInQueryValueContext(out)) {
       out += encodeURIComponent(val);
     } else {
@@ -337,15 +358,15 @@ function substituteUrl(text, variables, listVars, globalIndex, reqGuid, reqTs) {
   return out;
 }
 
-function substituteSimple(text, variables, listVars, globalIndex, reqGuid, reqTs, urlEncode = false) {
+function substituteSimple(text, variables, listVars, accumulatedLists, globalIndex, reqGuid, reqTs, urlEncode = false) {
   if (!text) return "";
   return text.replace(MARKER_RE, (_, scalarName, listName) => {
-    const val = resolveMarker(scalarName, listName, variables, listVars, globalIndex, reqGuid, reqTs);
+    const val = resolveMarker(scalarName, listName, variables, listVars, accumulatedLists, globalIndex, reqGuid, reqTs);
     return urlEncode ? encodeURIComponent(val) : val;
   });
 }
 
-function substituteJsonBody(text, variables, listVars, globalIndex, reqGuid, reqTs) {
+function substituteJsonBody(text, variables, listVars, accumulatedLists, globalIndex, reqGuid, reqTs) {
   if (!text) return "";
   const matches = Array.from(text.matchAll(MARKER_RE));
   if (matches.length === 0) return text;
@@ -374,7 +395,7 @@ function substituteJsonBody(text, variables, listVars, globalIndex, reqGuid, req
     }
 
     out += text.slice(lastScanned, matchStart);
-    const val = resolveMarker(match[1], match[2], variables, listVars, globalIndex, reqGuid, reqTs);
+    const val = resolveMarker(match[1], match[2], variables, listVars, accumulatedLists, globalIndex, reqGuid, reqTs);
     out += inString ? JSON.stringify(val).slice(1, -1) : val;
     lastScanned = matchStart + match[0].length;
   }
@@ -408,31 +429,67 @@ function parseJsonPath(rawPath) {
   if (!path.trim()) throw new Error("Chemin JSONPath vide.");
 
   const steps = [];
-  for (const part of path.split(".")) {
-    if (!part) throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
-    const bracket = part.indexOf("[");
-    if (bracket < 0) {
-      steps.push({ prop: part, arrIdx: null, isWildcard: false });
+  let pos = 0;
+  const len = path.length;
+  while (pos < len) {
+    if (path[pos] === ".") {
+      if (pos === 0 || pos + 1 >= len || path[pos + 1] === ".") {
+        throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
+      }
+      pos++;
       continue;
     }
-    const prop = bracket > 0 ? part.slice(0, bracket) : null;
-    let pos = bracket;
-    let first = true;
-    while (pos < part.length) {
-      if (part[pos] !== "[") throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
-      const close = part.indexOf("]", pos + 1);
-      if (close < 0) throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
-      const idxText = part.slice(pos + 1, close).trim();
-      if (idxText === "*" || idxText === "" || idxText === "++" || /^(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)$/.test(idxText)) {
-        steps.push({ prop: first ? prop : null, arrIdx: null, isWildcard: true });
-      } else {
-        const idx = Number.parseInt(idxText, 10);
-        if (Number.isNaN(idx)) throw new Error(`Index invalide dans ${rawPath}`);
-        steps.push({ prop: first ? prop : null, arrIdx: idx, isWildcard: false });
+    if (path[pos] === "[") {
+      while (pos < len && path[pos] === "[") {
+        let cursor = pos + 1;
+        while (cursor < len && /\s/.test(path[cursor])) cursor++;
+        if (cursor < len && (path[cursor] === "\"" || path[cursor] === "'")) {
+          const q = path[cursor++];
+          let key = "";
+          let closedQuote = false;
+          while (cursor < len) {
+            const ch = path[cursor++];
+            if (ch === "\\" && cursor < len) {
+              const esc = path[cursor++];
+              key += ({ "\\": "\\", "\"": "\"", "'": "'", n: "\n", r: "\r", t: "\t" }[esc] ?? esc);
+              continue;
+            }
+            if (ch === q) {
+              closedQuote = true;
+              break;
+            }
+            key += ch;
+          }
+          if (!closedQuote) throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
+          while (cursor < len && /\s/.test(path[cursor])) cursor++;
+          if (cursor >= len || path[cursor] !== "]") throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
+          steps.push({ prop: key, arrIdx: null, isWildcard: false });
+          pos = cursor + 1;
+          continue;
+        }
+        const close = path.indexOf("]", pos + 1);
+        if (close < 0) throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
+        const idxText = path.slice(pos + 1, close).trim();
+        if (idxText === "*" || idxText === "" || idxText === "++" || /^(?:[A-Za-z_]\w*\+\+|\+\+[A-Za-z_]\w*)$/.test(idxText)) {
+          steps.push({ prop: null, arrIdx: null, isWildcard: true });
+        } else if (/^-?\d+$/.test(idxText)) {
+          steps.push({ prop: null, arrIdx: Number.parseInt(idxText, 10), isWildcard: false });
+        } else {
+          throw new Error(`Index invalide dans ${rawPath}`);
+        }
+        pos = close + 1;
       }
-      first = false;
-      pos = close + 1;
+      if (pos < len && path[pos] !== ".") {
+        throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
+      }
+      continue;
     }
+    const segStart = pos;
+    while (pos < len && path[pos] !== "." && path[pos] !== "[" && path[pos] !== "]") pos++;
+    if (pos < len && path[pos] === "]") throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
+    const prop = path.slice(segStart, pos);
+    if (!prop) throw new Error(`Chemin JSONPath invalide : ${rawPath}`);
+    steps.push({ prop, arrIdx: null, isWildcard: false });
   }
   return steps;
 }
@@ -441,21 +498,68 @@ function formatJsonValue(current) {
   return typeof current === "string" ? current : JSON.stringify(current);
 }
 
-function extractJsonPath(body, rawPath) {
+function unwrapJsonString(val) {
+  if (typeof val !== "string") return val;
+  const trimmed = val.replace(/^[\uFEFF\s]+/, "");
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return val;
   try {
-    const steps = parseJsonPath(rawPath);
-    if (steps.some((s) => s.isWildcard)) {
-      return { ok: false, value: "Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]]." };
+    return JSON.parse(trimmed);
+  } catch {
+    return val;
+  }
+}
+
+function getMaxContiguousPropIdx(steps, startIdx) {
+  let end = startIdx;
+  while (end + 1 < steps.length) {
+    const nxt = steps[end + 1];
+    if (nxt.prop === null || nxt.arrIdx !== null || nxt.isWildcard) break;
+    const curr = steps[end];
+    if (curr.arrIdx !== null || curr.isWildcard) break;
+    end++;
+  }
+  return end;
+}
+
+function looksLikeJsonArray(raw) {
+  if (!raw) return false;
+  return String(raw).replace(/^[\uFEFF\s]+/, "").startsWith("[");
+}
+
+function extractJsonPathSteps(body, steps, startIdx = 0) {
+  try {
+    if (!body || !String(body).trim()) {
+      return { ok: false, value: "Le corps est vide (JSON attendu)." };
     }
-    let current = JSON.parse(body.replace(/^\uFEFF/, ""));
-    for (const step of steps) {
+    let current = JSON.parse(String(body).replace(/^\uFEFF/, ""));
+    for (let i = startIdx; i < steps.length; i++) {
+      const step = steps[i];
       if (step.prop !== null) {
-        if (current === null || typeof current !== "object" || Array.isArray(current) || !(step.prop in current)) {
+        current = unwrapJsonString(current);
+        if (current === null || typeof current !== "object" || Array.isArray(current)) {
           return { ok: false, value: `Propriété JSON introuvable : ${step.prop}` };
         }
-        current = current[step.prop];
+        if (Object.prototype.hasOwnProperty.call(current, step.prop)) {
+          current = current[step.prop];
+        } else {
+          let matched = false;
+          const maxEnd = getMaxContiguousPropIdx(steps, i);
+          for (let endIdx = maxEnd; endIdx > i; endIdx--) {
+            const joined = steps.slice(i, endIdx + 1).map((s) => s.prop).join(".");
+            if (Object.prototype.hasOwnProperty.call(current, joined)) {
+              current = current[joined];
+              i = endIdx;
+              matched = true;
+              break;
+            }
+          }
+          if (!matched) {
+            return { ok: false, value: `Propriété JSON introuvable : ${step.prop}` };
+          }
+        }
       }
       if (step.arrIdx !== null) {
+        current = unwrapJsonString(current);
         if (!Array.isArray(current)) {
           return { ok: false, value: `Index [${step.arrIdx}] inapplicable` };
         }
@@ -472,35 +576,80 @@ function extractJsonPath(body, rawPath) {
   }
 }
 
-function extractJsonPathList(body, rawPath) {
+function extractJsonPath(body, rawPath) {
   try {
     const steps = parseJsonPath(rawPath);
-    let currentElements = [JSON.parse(body.replace(/^\uFEFF/, ""))];
+    if (steps.some((s) => s.isWildcard)) {
+      return { ok: false, value: "Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]]." };
+    }
+    return extractJsonPathSteps(body, steps, 0);
+  } catch (err) {
+    return { ok: false, value: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function extractJsonPathListSteps(body, steps, startIdx = 0) {
+  try {
+    if (!body || !String(body).trim()) {
+      return { ok: false, error: "Le corps est vide (JSON attendu)." };
+    }
+    let currentElements = [JSON.parse(String(body).replace(/^\uFEFF/, ""))];
     let hasWildcard = false;
 
-    for (const step of steps) {
+    for (let i = startIdx; i < steps.length; i++) {
+      let step = steps[i];
       if (step.prop !== null) {
-        const nextElements = [];
-        for (const el of currentElements) {
-          if (el === null || typeof el !== "object" || Array.isArray(el) || !(step.prop in el)) {
-            if (!hasWildcard) {
-              return { ok: false, error: `Propriété JSON introuvable : ${step.prop}` };
-            }
+        const exactMatches = [];
+        let allExact = true;
+        for (const rawEl of currentElements) {
+          const el = unwrapJsonString(rawEl);
+          if (el === null || typeof el !== "object" || Array.isArray(el) || !Object.prototype.hasOwnProperty.call(el, step.prop)) {
+            allExact = false;
             continue;
           }
-          nextElements.push(el[step.prop]);
+          exactMatches.push(el[step.prop]);
         }
-        if (nextElements.length === 0) {
-          return { ok: false, error: `Propriété JSON introuvable : ${step.prop}` };
+        if (exactMatches.length > 0 && (allExact || hasWildcard)) {
+          currentElements = exactMatches;
+        } else {
+          let matchedJoined = false;
+          const maxEnd = getMaxContiguousPropIdx(steps, i);
+          for (let endIdx = maxEnd; endIdx > i; endIdx--) {
+            const joined = steps.slice(i, endIdx + 1).map((s) => s.prop).join(".");
+            const jMatches = [];
+            let allJ = true;
+            for (const rawEl of currentElements) {
+              const el = unwrapJsonString(rawEl);
+              if (el === null || typeof el !== "object" || Array.isArray(el) || !Object.prototype.hasOwnProperty.call(el, joined)) {
+                allJ = false;
+                continue;
+              }
+              jMatches.push(el[joined]);
+            }
+            if (jMatches.length > 0 && (allJ || hasWildcard)) {
+              currentElements = jMatches;
+              i = endIdx;
+              step = steps[i];
+              matchedJoined = true;
+              break;
+            }
+          }
+          if (!matchedJoined) {
+            if (exactMatches.length > 0) {
+              currentElements = exactMatches;
+            } else {
+              return { ok: false, error: `Propriété JSON introuvable : ${step.prop}` };
+            }
+          }
         }
-        currentElements = nextElements;
       }
 
       if (step.isWildcard) {
         const wasWildcard = hasWildcard;
         hasWildcard = true;
         const nextElements = [];
-        for (const el of currentElements) {
+        for (const rawEl of currentElements) {
+          const el = unwrapJsonString(rawEl);
           if (!Array.isArray(el)) {
             if (!wasWildcard) {
               return { ok: false, error: "Le sélecteur [*] est inapplicable sur cet élément" };
@@ -515,7 +664,8 @@ function extractJsonPathList(body, rawPath) {
         currentElements = nextElements;
       } else if (step.arrIdx !== null) {
         const nextElements = [];
-        for (const el of currentElements) {
+        for (const rawEl of currentElements) {
+          const el = unwrapJsonString(rawEl);
           if (!Array.isArray(el)) {
             if (!hasWildcard) {
               return { ok: false, error: `Index [${step.arrIdx}] inapplicable` };
@@ -552,6 +702,94 @@ function extractJsonPathList(body, rawPath) {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+function extractJsonPathList(body, rawPath) {
+  try {
+    const steps = parseJsonPath(rawPath);
+    return extractJsonPathListSteps(body, steps, 0);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function extractJsonPathFromValues(sourceValues, rawPath) {
+  if (!Array.isArray(sourceValues) || sourceValues.length === 0) {
+    return { ok: false, value: "La liste source est vide." };
+  }
+  let steps;
+  try {
+    steps = parseJsonPath(rawPath);
+  } catch (err) {
+    return { ok: false, value: err instanceof Error ? err.message : String(err) };
+  }
+  if (steps.some((s) => s.isWildcard)) {
+    return { ok: false, value: "Le sélecteur [*] ou [] extrait plusieurs valeurs : utilise une extraction en liste [[...]]." };
+  }
+  if (steps.length === 0) {
+    return { ok: true, value: sourceValues.length === 1 ? (sourceValues[0] ?? "") : JSON.stringify(sourceValues) };
+  }
+  if (steps[0].prop === null && steps[0].arrIdx !== null && (sourceValues.length > 1 || !looksLikeJsonArray(sourceValues[0]))) {
+    const idx = steps[0].arrIdx;
+    const resolved = idx < 0 ? sourceValues.length + idx : idx;
+    if (resolved < 0 || resolved >= sourceValues.length) {
+      return { ok: false, value: `Index [${idx}] hors limites (taille : ${sourceValues.length})` };
+    }
+    const chosen = sourceValues[resolved] ?? "";
+    if (steps.length === 1) return { ok: true, value: chosen };
+    return extractJsonPathSteps(chosen, steps, 1);
+  }
+  let lastErr = "Aucune correspondance JSONPath dans la variable source.";
+  for (const item of sourceValues) {
+    const res = extractJsonPathSteps(item ?? "", steps, 0);
+    if (res.ok) return res;
+    lastErr = res.value;
+  }
+  return { ok: false, value: lastErr };
+}
+
+function extractJsonPathListFromValues(sourceValues, rawPath) {
+  if (!Array.isArray(sourceValues) || sourceValues.length === 0) {
+    return { ok: false, error: "La liste source est vide." };
+  }
+  let steps;
+  try {
+    steps = parseJsonPath(rawPath);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (steps.length === 0) {
+    return { ok: true, values: [...sourceValues] };
+  }
+  if (steps[0].prop === null && (steps[0].isWildcard || steps[0].arrIdx !== null) && (sourceValues.length > 1 || !looksLikeJsonArray(sourceValues[0]))) {
+    if (steps[0].isWildcard) {
+      if (steps.length === 1) return { ok: true, values: [...sourceValues] };
+      const collected = [];
+      let lastErr = null;
+      for (const item of sourceValues) {
+        const res = extractJsonPathListSteps(item ?? "", steps, 1);
+        if (res.ok) collected.push(...res.values);
+        else lastErr = res.error;
+      }
+      return collected.length > 0 ? { ok: true, values: collected } : { ok: false, error: lastErr || "Aucune valeur extraite pour l'expression JSONPath." };
+    }
+    const idx = steps[0].arrIdx;
+    const resolved = idx < 0 ? sourceValues.length + idx : idx;
+    if (resolved < 0 || resolved >= sourceValues.length) {
+      return { ok: false, error: `Index [${idx}] hors limites (taille : ${sourceValues.length})` };
+    }
+    const chosen = sourceValues[resolved] ?? "";
+    if (steps.length === 1) return { ok: true, values: [chosen] };
+    return extractJsonPathListSteps(chosen, steps, 1);
+  }
+  const aggregated = [];
+  let lastErr = null;
+  for (const item of sourceValues) {
+    const res = extractJsonPathListSteps(item ?? "", steps, 0);
+    if (res.ok) aggregated.push(...res.values);
+    else lastErr = res.error;
+  }
+  return aggregated.length > 0 ? { ok: true, values: aggregated } : { ok: false, error: lastErr || "Aucune valeur extraite pour l'expression JSONPath." };
 }
 
 function extractRegex(text, pattern, groupIdx) {
@@ -954,9 +1192,43 @@ function applyExtractionConditions(rawValues, ext) {
   return { ok: true, values: out };
 }
 
-function runExtraction(ext, respBody, respHeaders) {
+function resolveVariableSourceValues(sourceVarName, localLists, localExtracted, accumulatedLists, mergedVars, listVars) {
+  const key = String(sourceVarName || "").trim();
+  if (!key) return [];
+  if (Object.prototype.hasOwnProperty.call(localLists, key)) return [...localLists[key]];
+  if (Object.prototype.hasOwnProperty.call(localExtracted, key)) return [localExtracted[key]];
+  if (Object.prototype.hasOwnProperty.call(listVars, key)) return [listVars[key]];
+  if (Object.prototype.hasOwnProperty.call(accumulatedLists, key)) return [...accumulatedLists[key]];
+  if (Object.prototype.hasOwnProperty.call(mergedVars, key)) return [mergedVars[key]];
+  return [];
+}
+
+function runExtraction(ext, respBody, respHeaders, sourceValues = null) {
   let rawOutcome;
-  if (ext.source === "header") {
+  if (ext.source === "variable") {
+    const srcName = ext.sourceVariable || "";
+    if (!srcName) {
+      return { ok: false, value: "Nom de variable source vide." };
+    }
+    if (!Array.isArray(sourceValues) || sourceValues.length === 0) {
+      return { ok: false, value: `Variable source « ${srcName} » vide ou introuvable.` };
+    }
+    if (ext.kind === "full_response") {
+      rawOutcome = { ok: true, value: sourceValues.length === 1 ? (sourceValues[0] ?? "") : JSON.stringify(sourceValues) };
+    } else if (ext.kind === "jsonpath") {
+      rawOutcome = extractJsonPathFromValues(sourceValues, ext.expression);
+    } else {
+      rawOutcome = { ok: false, value: "Aucune correspondance" };
+      for (const item of sourceValues) {
+        const res = extractRegex(item ?? "", ext.expression, ext.regexGroup);
+        if (res.ok) {
+          rawOutcome = res;
+          break;
+        }
+        rawOutcome = res;
+      }
+    }
+  } else if (ext.source === "header") {
     const targetName = ext.headerName.toLowerCase();
     const matching = respHeaders.filter(([k]) => k.toLowerCase() === targetName).map(([, v]) => v);
     if (!matching.length) {
@@ -992,9 +1264,34 @@ function runExtraction(ext, respBody, respHeaders) {
   return { ok: false, value: filtered.error || "La valeur extraite ne satisfait pas les conditions." };
 }
 
-function runListExtraction(ext, respBody, respHeaders) {
+function runListExtraction(ext, respBody, respHeaders, sourceValues = null) {
   let rawValues;
-  if (ext.source === "header") {
+  if (ext.source === "variable") {
+    const srcName = ext.sourceVariable || "";
+    if (!srcName) {
+      return { ok: false, error: "Nom de variable source vide." };
+    }
+    if (!Array.isArray(sourceValues) || sourceValues.length === 0) {
+      return { ok: false, error: `Variable source « ${srcName} » vide ou introuvable.` };
+    }
+    if (ext.kind === "jsonpath") {
+      const res = extractJsonPathListFromValues(sourceValues, ext.expression);
+      if (!res.ok) return res;
+      rawValues = res.values;
+    } else {
+      const collected = [];
+      let lastErr = "Aucune correspondance";
+      for (const item of sourceValues) {
+        const res = extractRegexList(item ?? "", ext.expression, ext.regexGroup);
+        if (res.ok) collected.push(...res.values);
+        else lastErr = res.error;
+      }
+      if (collected.length === 0) {
+        return { ok: false, error: lastErr };
+      }
+      rawValues = collected;
+    }
+  } else if (ext.source === "header") {
     const targetName = ext.headerName.toLowerCase();
     const matching = respHeaders.filter(([k]) => k.toLowerCase() === targetName).map(([, v]) => v);
     if (!matching.length) {
@@ -1099,22 +1396,40 @@ function resolveReturnIdentifier(name, forceScalar, forceList, scalars, listVars
         if (jpList.ok && Array.isArray(jpList.values)) return jpList.values;
         throw new Error(`[[${name}]] : ${jpList.error}`);
       }
-      throw new Error(`Variable inconnue ou non définie : ${root} (pour [[${name}]])`);
-    }
-    if (!Object.prototype.hasOwnProperty.call(scalars, root)) {
-      throw new Error(`Variable inconnue ou non définie : ${root} (pour ${name})`);
-    }
-    if (!forceScalar) {
-      const steps = parseJsonPath(jsonPath);
-      if (steps.some((s) => s.isWildcard)) {
-        const jpList = extractJsonPathList(scalars[root], jsonPath);
+      if (Object.prototype.hasOwnProperty.call(accumulatedLists, root)) {
+        const jpList = extractJsonPathListFromValues(accumulatedLists[root], jsonPath);
         if (jpList.ok && Array.isArray(jpList.values)) return jpList.values;
-        throw new Error(`${name} : ${jpList.error}`);
+        throw new Error(`[[${name}]] : ${jpList.error}`);
       }
+      throw new Error(`Variable ou liste inconnue : ${root} (pour [[${name}]])`);
     }
-    const jpRes = extractJsonPath(scalars[root], jsonPath);
-    if (jpRes.ok) return jpRes.value;
-    throw new Error(`${name} : ${jpRes.value}`);
+    if (Object.prototype.hasOwnProperty.call(scalars, root)) {
+      if (!forceScalar) {
+        const steps = parseJsonPath(jsonPath);
+        if (steps.some((s) => s.isWildcard)) {
+          const jpList = extractJsonPathList(scalars[root], jsonPath);
+          if (jpList.ok && Array.isArray(jpList.values)) return jpList.values;
+          throw new Error(`${name} : ${jpList.error}`);
+        }
+      }
+      const jpRes = extractJsonPath(scalars[root], jsonPath);
+      if (jpRes.ok) return jpRes.value;
+      throw new Error(`${name} : ${jpRes.value}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(accumulatedLists, root)) {
+      if (!forceScalar) {
+        const steps = parseJsonPath(jsonPath);
+        if (steps.some((s) => s.isWildcard)) {
+          const jpList = extractJsonPathListFromValues(accumulatedLists[root], jsonPath);
+          if (jpList.ok && Array.isArray(jpList.values)) return jpList.values;
+          throw new Error(`${name} : ${jpList.error}`);
+        }
+      }
+      const jpRes = extractJsonPathFromValues(accumulatedLists[root], jsonPath);
+      if (jpRes.ok) return jpRes.value;
+      throw new Error(`${name} : ${jpRes.value}`);
+    }
+    throw new Error(`Variable ou liste inconnue : ${root} (pour ${name})`);
   }
 
   if (forceList) {
@@ -1291,28 +1606,28 @@ async function main() {
       let finalHeaders;
       let bodyToSend;
       try {
-        const finalBaseUrl = substituteUrl(step.url, mergedVars, listVars, globalIndex, reqGuid, reqTs);
+        const finalBaseUrl = substituteUrl(step.url, mergedVars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs);
         const queryItems = step.queryParams.map((qp) =>
           qp.axisIndex !== null
             ? [qp.key, axisValues[qp.axisIndex]]
-            : [qp.key, substituteSimple(qp.value, mergedVars, listVars, globalIndex, reqGuid, reqTs)]
+            : [qp.key, substituteSimple(qp.value, mergedVars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs)]
         );
         finalUrl = buildFinalUrl(finalBaseUrl, queryItems);
 
         finalHeaders = new Headers();
         for (const [k, v] of step.headers) {
-          finalHeaders.append(k, substituteSimple(v, mergedVars, listVars, globalIndex, reqGuid, reqTs));
+          finalHeaders.append(k, substituteSimple(v, mergedVars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs));
         }
 
         if (step.method !== "GET" && step.method !== "HEAD") {
           if (step.bodyType === "json") {
-            bodyToSend = substituteJsonBody(step.body, mergedVars, listVars, globalIndex, reqGuid, reqTs);
+            bodyToSend = substituteJsonBody(step.body, mergedVars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs);
           } else if (step.bodyType === "text") {
-            bodyToSend = substituteSimple(step.body, mergedVars, listVars, globalIndex, reqGuid, reqTs);
+            bodyToSend = substituteSimple(step.body, mergedVars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs);
           } else if (step.bodyType === "form") {
             const params = new URLSearchParams();
             for (const [fk, fv] of step.formFields) {
-              params.append(fk, substituteSimple(fv, mergedVars, listVars, globalIndex, reqGuid, reqTs));
+              params.append(fk, substituteSimple(fv, mergedVars, listVars, accumulatedLists, globalIndex, reqGuid, reqTs));
             }
             bodyToSend = params.toString();
           }
@@ -1348,15 +1663,22 @@ async function main() {
       const httpFailed = netErr !== null || status >= 400;
       let extractionFailed = false;
       const localExtracted = {};
+      const localLists = {};
 
       for (const ext of step.extractions) {
+        const srcValues = ext.source === "variable"
+          ? resolveVariableSourceValues(ext.sourceVariable || "", localLists, localExtracted, accumulatedLists, mergedVars, listVars)
+          : null;
         if (ext.isList) {
-          const listRes = runListExtraction(ext, respBody, respHeaders);
+          const listRes = runListExtraction(ext, respBody, respHeaders, srcValues);
           if (listRes.ok) {
             accumulatedLists[ext.variable] = listRes.values;
+            localLists[ext.variable] = listRes.values;
             if (verbose) console.log(`  -> [[${ext.variable}]] = ${listRes.values.length} élément(s)`);
           } else {
-            accumulatedLists[ext.variable] = ext.defaultValue ? [ext.defaultValue] : [];
+            const fallbackList = ext.defaultValue ? [ext.defaultValue] : [];
+            accumulatedLists[ext.variable] = fallbackList;
+            localLists[ext.variable] = fallbackList;
             if (ext.required) {
               extractionFailed = true;
               console.error(`  [EXTRACTION] [[${ext.variable}]] : ${listRes.error}`);
@@ -1365,7 +1687,7 @@ async function main() {
           continue;
         }
 
-        const res = runExtraction(ext, respBody, respHeaders);
+        const res = runExtraction(ext, respBody, respHeaders, srcValues);
         if (res.ok) {
           accumulatedVars[ext.variable] = res.value;
           localExtracted[ext.variable] = res.value;

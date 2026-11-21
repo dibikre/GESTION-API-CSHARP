@@ -146,6 +146,7 @@ public sealed class ChainPipelineExtractionDto
     public int RegexGroup { get; set; } = 1;
     public ChainExtractionSource Source { get; set; } = ChainExtractionSource.Body;
     public string HeaderName { get; set; } = string.Empty;
+    public string SourceVariableName { get; set; } = string.Empty;
     public bool IsRequired { get; set; } = true;
     public bool IsList { get; set; }
     public string DefaultValueIfMissing { get; set; } = string.Empty;
