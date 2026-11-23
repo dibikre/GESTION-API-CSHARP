@@ -1,0 +1,488 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ApiTester.ViewModels"
+             xmlns:models="using:ApiTester.Models"
+             xmlns:conv="using:ApiTester.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="980" d:DesignHeight="620"
+             x:Class="ApiTester.Views.HarImportView"
+             x:Name="HarImportRoot"
+             x:DataType="vm:HarImportViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="Border.harStatusPill">
+            <Setter Property="Background" Value="{DynamicResource SurfaceAltBrush}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource BadgeCornerRadius}" />
+            <Setter Property="Padding" Value="5,1" />
+        </Style>
+        <Style Selector="Border.harStatusPill TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        </Style>
+        <Style Selector="Border.harStatusPill.success">
+            <Setter Property="Background" Value="{DynamicResource SuccessSoftBrush}" />
+        </Style>
+        <Style Selector="Border.harStatusPill.success TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+        </Style>
+        <Style Selector="Border.harStatusPill.redirect">
+            <Setter Property="Background" Value="{DynamicResource WarningBadgeSoftBrush}" />
+        </Style>
+        <Style Selector="Border.harStatusPill.redirect TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+        </Style>
+        <Style Selector="Border.harStatusPill.error">
+            <Setter Property="Background" Value="{DynamicResource DangerBadgeSoftBrush}" />
+        </Style>
+        <Style Selector="Border.harStatusPill.error TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
+        <!-- En-tête : titre + nom du fichier + compteur + fermer -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+            <StackPanel Grid.Column="0"
+                        Orientation="Horizontal"
+                        Spacing="8"
+                        VerticalAlignment="Center">
+                <TextBlock Text="Importer des requêtes HAR"
+                           FontSize="{DynamicResource FontSizeBase}"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextBrush}"
+                           VerticalAlignment="Center" />
+
+                <Border Background="{DynamicResource SurfaceAltBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource BadgeCornerRadius}"
+                        Padding="7,2"
+                        VerticalAlignment="Center">
+                    <TextBlock Text="{Binding FileName}"
+                               FontFamily="{DynamicResource MonoFontFamily}"
+                               FontSize="{DynamicResource FontSizeCaption}"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               MaxWidth="260"
+                               TextTrimming="CharacterEllipsis" />
+                </Border>
+
+                <Border IsVisible="{Binding HasEntries}"
+                        Background="{DynamicResource AccentSoftBrush}"
+                        CornerRadius="{DynamicResource BadgeCornerRadius}"
+                        Padding="7,2"
+                        VerticalAlignment="Center">
+                    <TextBlock Text="{Binding SelectionCountText}"
+                               FontSize="{DynamicResource FontSizeCaption}"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource AccentBrush}" />
+                </Border>
+
+                <TextBlock IsVisible="{Binding HasFilterCount}"
+                           Text="{Binding FilterCountText}"
+                           FontSize="{DynamicResource FontSizeCaption}"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <Button Grid.Column="1"
+                    Classes="icon"
+                    Command="{Binding CloseCommand}"
+                    ToolTip.Tip="Fermer (Échap)"
+                    AutomationProperties.Name="Fermer l'import HAR">
+                <Path Classes="iconStroke" Data="{StaticResource IconClose}" />
+            </Button>
+        </Grid>
+
+        <!-- Barre de filtre et sélection en masse -->
+        <Grid Grid.Row="1"
+              IsVisible="{Binding HasEntries}"
+              ColumnDefinitions="*,Auto,Auto,Auto"
+              ColumnSpacing="8">
+            <TextBox x:Name="HarSearchTextBox"
+                     Grid.Column="0"
+                     Text="{Binding SearchText, Mode=TwoWay}"
+                     PlaceholderText="Filtrer par URL ou méthode (ex. /api/, POST, token)..."
+                     AutomationProperties.Name="Filtrer les requêtes HAR par URL ou méthode" />
+
+            <CheckBox Grid.Column="1"
+                      IsChecked="{Binding HideStaticAssets}"
+                      Content="Masquer assets statiques"
+                      ToolTip.Tip="Masquer CSS, JS, images, polices et vidéos"
+                      VerticalAlignment="Center"
+                      Margin="4,0"
+                      AutomationProperties.Name="Masquer les ressources statiques" />
+
+            <Button Grid.Column="2"
+                    Classes="secondary"
+                    Content="Tout cocher"
+                    Command="{Binding SelectAllVisibleCommand}"
+                    ToolTip.Tip="Cocher toutes les requêtes affichées"
+                    AutomationProperties.Name="Cocher toutes les requêtes affichées" />
+
+            <Button Grid.Column="3"
+                    Classes="secondary"
+                    Content="Tout décocher"
+                    Command="{Binding DeselectAllVisibleCommand}"
+                    ToolTip.Tip="Décocher toutes les requêtes affichées"
+                    AutomationProperties.Name="Décocher toutes les requêtes affichées" />
+        </Grid>
+
+        <!-- Corps : erreur ou liste des requêtes + aperçu détaillé -->
+        <Panel Grid.Row="2">
+            <!-- Erreur de parsing HAR -->
+            <Border IsVisible="{Binding HasError}"
+                    Background="{DynamicResource DangerSoftBrush}"
+                    BorderBrush="{DynamicResource DangerBorderSoftBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    Padding="16"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    MaxWidth="560">
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Path Classes="iconStroke"
+                              Data="{StaticResource IconWarning}"
+                              Stroke="{DynamicResource DangerBrush}" />
+                        <TextBlock Text="Impossible d'importer ce fichier HAR"
+                                   FontSize="{DynamicResource FontSizeBase}"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource DangerBrush}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding ErrorMessage}"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource TextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Liste + Aperçu -->
+            <Grid IsVisible="{Binding HasEntries}"
+                  RowDefinitions="Auto,*"
+                  RowSpacing="8">
+                <Border Grid.Row="0"
+                        IsVisible="{Binding HasInfoBanner}"
+                        Background="{DynamicResource SurfaceAltBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                        Padding="8,5">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Path Classes="iconStroke" Data="{StaticResource IconInfo}" />
+                        <TextBlock Text="{Binding InfoBannerText}"
+                                   FontSize="{DynamicResource FontSizeCaption}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="1" ColumnSpacing="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.35*" MinWidth="360" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="0.95*" MinWidth="260" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Liste gauche des requêtes cochables par URL -->
+                    <Border Grid.Column="0"
+                            Background="{DynamicResource SurfaceAltBrush}"
+                            BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource ControlCornerRadius}"
+                            Padding="4">
+                        <Panel>
+                            <TextBlock IsVisible="{Binding !HasFilteredEntries}"
+                                       Text="Aucune requête ne correspond au filtre actuel."
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+
+                            <ListBox IsVisible="{Binding HasFilteredEntries}"
+                                     ItemsSource="{Binding FilteredEntries}"
+                                     SelectedItem="{Binding SelectedPreviewItem}"
+                                     ScrollViewer.AllowAutoHide="False"
+                                     AutomationProperties.Name="Liste des requêtes du fichier HAR">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:HarEntryItem">
+                                        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto"
+                                              ColumnSpacing="8"
+                                              Margin="0,4">
+                                            <CheckBox Grid.Column="0"
+                                                      IsChecked="{Binding IsSelected}"
+                                                      VerticalAlignment="Center"
+                                                      AutomationProperties.Name="{Binding FullUrl}" />
+
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding IndexLabel}"
+                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextFaintBrush}"
+                                                       VerticalAlignment="Center" />
+
+                                            <Border Grid.Column="2"
+                                                    Background="{DynamicResource SurfaceBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                    Padding="5,1"
+                                                    MinWidth="52"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding OriginalMethod}"
+                                                           HorizontalAlignment="Center"
+                                                           Classes="httpMethod"
+                                                           Classes.get="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsGet}}"
+                                                           Classes.post="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPost}}"
+                                                           Classes.put="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsPutOrPatch}}"
+                                                           Classes.delete="{Binding Method, Converter={x:Static conv:HttpMethodConverters.IsDelete}}" />
+                                            </Border>
+
+                                            <TextBlock Grid.Column="3"
+                                                       Text="{Binding FullUrl}"
+                                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                                       FontSize="{DynamicResource FontSizeSmall}"
+                                                       Foreground="{DynamicResource TextBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding FullUrl}"
+                                                       VerticalAlignment="Center" />
+
+                                            <TextBlock Grid.Column="4"
+                                                       Text="{Binding DetailsSummaryText}"
+                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       VerticalAlignment="Center" />
+
+                                            <Border Grid.Column="5"
+                                                    IsVisible="{Binding HasResponseStatus}"
+                                                    Classes="harStatusPill"
+                                                    Classes.success="{Binding IsSuccessStatus}"
+                                                    Classes.redirect="{Binding IsRedirectStatus}"
+                                                    Classes.error="{Binding IsErrorStatus}"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding StatusText}"
+                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           FontWeight="SemiBold" />
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Panel>
+                    </Border>
+
+                    <GridSplitter Grid.Column="1"
+                                  Classes="vertical"
+                                  ResizeDirection="Columns" />
+
+                    <!-- Panneau droit : aperçu des paramètres, en-têtes et corps -->
+                    <Border Grid.Column="2"
+                            Background="{DynamicResource SurfaceAltBrush}"
+                            BorderBrush="{DynamicResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource ControlCornerRadius}"
+                            Padding="10">
+                        <Panel>
+                            <TextBlock IsVisible="{Binding !HasPreviewItem}"
+                                       Text="Sélectionne une requête à gauche pour inspecter ses paramètres, en-têtes et corps."
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+
+                            <Panel IsVisible="{Binding HasPreviewItem}">
+                                <Panel DataContext="{Binding SelectedPreviewItem}">
+                                    <ScrollViewer x:DataType="models:HarEntryItem"
+                                                  AllowAutoHide="False"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled">
+                                        <StackPanel Spacing="10" Margin="0,0,8,0">
+                                            <!-- URL complète -->
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Text="URL"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextMutedBrush}" />
+                                                <TextBox Classes="mono"
+                                                         Text="{Binding FullUrl, Mode=OneWay}"
+                                                         IsReadOnly="True"
+                                                         AcceptsReturn="False"
+                                                         TextWrapping="Wrap"
+                                                         FontSize="{DynamicResource FontSizeCaption}" />
+                                            </StackPanel>
+
+                                            <!-- Avertissements éventuels -->
+                                            <Border IsVisible="{Binding HasWarnings}"
+                                                    Background="{DynamicResource WarningSoftBrush}"
+                                                    BorderBrush="{DynamicResource WarningBorderSoftBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                                                    Padding="8,6">
+                                                <ItemsControl ItemsSource="{Binding Warnings}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="x:String">
+                                                            <TextBlock Text="{Binding}"
+                                                                       FontSize="{DynamicResource FontSizeCaption}"
+                                                                       Foreground="{DynamicResource WarningBrush}"
+                                                                       TextWrapping="Wrap" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Border>
+
+                                            <!-- Paramètres d'URL -->
+                                            <StackPanel IsVisible="{Binding HasQueryParams}" Spacing="4">
+                                                <TextBlock Text="{Binding QueryParamsHeaderText}"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextMutedBrush}" />
+                                                <Border Background="{DynamicResource SurfaceBrush}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                                                        Padding="8,4">
+                                                    <ItemsControl ItemsSource="{Binding QueryParams}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate x:DataType="models:KeyValueItem">
+                                                                <Grid ColumnDefinitions="*,1.4*" ColumnSpacing="8" Margin="0,2">
+                                                                    <TextBlock Grid.Column="0"
+                                                                               Text="{Binding Key}"
+                                                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                                               Foreground="{DynamicResource AccentBrush}"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               ToolTip.Tip="{Binding Key}" />
+                                                                    <TextBlock Grid.Column="1"
+                                                                               Text="{Binding Value}"
+                                                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                                               Foreground="{DynamicResource TextBrush}"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               ToolTip.Tip="{Binding Value}" />
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </Border>
+                                            </StackPanel>
+
+                                            <!-- En-têtes -->
+                                            <StackPanel IsVisible="{Binding HasHeaders}" Spacing="4">
+                                                <TextBlock Text="{Binding HeadersHeaderText}"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextMutedBrush}" />
+                                                <Border Background="{DynamicResource SurfaceBrush}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                                                        Padding="8,4">
+                                                    <ItemsControl ItemsSource="{Binding Headers}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate x:DataType="models:KeyValueItem">
+                                                                <Grid ColumnDefinitions="*,1.5*" ColumnSpacing="8" Margin="0,2">
+                                                                    <TextBlock Grid.Column="0"
+                                                                               Text="{Binding Key}"
+                                                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                                               Foreground="{DynamicResource TextMutedBrush}"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               ToolTip.Tip="{Binding Key}" />
+                                                                    <TextBlock Grid.Column="1"
+                                                                               Text="{Binding Value}"
+                                                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                                               Foreground="{DynamicResource TextBrush}"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               ToolTip.Tip="{Binding Value}" />
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </Border>
+                                            </StackPanel>
+
+                                            <!-- Corps (JSON / Texte ou Formulaire) -->
+                                            <StackPanel IsVisible="{Binding HasBody}" Spacing="4">
+                                                <TextBlock Text="{Binding BodyHeaderText}"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextMutedBrush}" />
+
+                                                <TextBox IsVisible="{Binding HasTextBody}"
+                                                         Classes="mono"
+                                                         Text="{Binding Body, Mode=OneWay}"
+                                                         IsReadOnly="True"
+                                                         AcceptsReturn="True"
+                                                         TextWrapping="Wrap"
+                                                         MaxHeight="180"
+                                                         FontSize="{DynamicResource FontSizeCaption}"
+                                                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+                                                <Border IsVisible="{Binding IsFormBody}"
+                                                        Background="{DynamicResource SurfaceBrush}"
+                                                        BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                                                        Padding="8,4">
+                                                    <ItemsControl ItemsSource="{Binding FormFields}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate x:DataType="models:KeyValueItem">
+                                                                <Grid ColumnDefinitions="*,1.4*" ColumnSpacing="8" Margin="0,2">
+                                                                    <TextBlock Grid.Column="0"
+                                                                               Text="{Binding Key}"
+                                                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                                               Foreground="{DynamicResource AccentBrush}"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Grid.Column="1"
+                                                                               Text="{Binding Value}"
+                                                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                                                               FontSize="{DynamicResource FontSizeCaption}"
+                                                                               Foreground="{DynamicResource TextBrush}"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </Border>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </Panel>
+                            </Panel>
+                        </Panel>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Panel>
+
+        <!-- Pied : option remplacer + Annuler / Ajouter à la chaîne -->
+        <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+            <CheckBox Grid.Column="0"
+                      IsVisible="{Binding HasEntries}"
+                      IsChecked="{Binding ReplaceExistingSteps}"
+                      Content="Remplacer les étapes existantes de la chaîne"
+                      VerticalAlignment="Center"
+                      AutomationProperties.Name="Remplacer les étapes existantes de la chaîne" />
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Spacing="8">
+                <Button Classes="secondary"
+                        Content="Annuler"
+                        Command="{Binding CloseCommand}"
+                        AutomationProperties.Name="Annuler l'import HAR" />
+                <Button Classes="primary"
+                        IsVisible="{Binding HasEntries}"
+                        Content="{Binding ImportButtonText}"
+                        Command="{Binding ImportSelectedCommand}"
+                        AutomationProperties.Name="Ajouter les requêtes cochées à l'onglet Chaîne" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+
+</UserControl>

@@ -189,6 +189,7 @@ public partial class ChainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(HasChainStats))]
     [NotifyCanExecuteChangedFor(nameof(RunCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddStepCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ImportHarCommand))]
     [NotifyCanExecuteChangedFor(nameof(DuplicateStepCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveStepCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveStepUpCommand))]
@@ -259,6 +260,8 @@ public partial class ChainViewModel : ViewModelBase
     public ResponseViewModel SelectedResponse { get; }
 
     public Action<string, string>? ExtractToLabCallback { get; set; }
+
+    public Action? ImportHarCallback { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowPerRequestOptions))]
@@ -385,6 +388,110 @@ public partial class ChainViewModel : ViewModelBase
         SelectedStep = step;
         RefreshAllStepsAndPlan();
     }
+
+    [RelayCommand(CanExecute = nameof(CanModifySteps))]
+    private void ImportHar() => ImportHarCallback?.Invoke();
+
+    public int ImportHarEntries(IReadOnlyList<HarEntryItem> entries, bool replaceExisting)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        if (entries.Count == 0 || IsRunning)
+        {
+            return 0;
+        }
+
+        _isBulkUpdating = true;
+        ChainStep? firstImported = null;
+        var addedCount = 0;
+
+        try
+        {
+            if (replaceExisting)
+            {
+                foreach (var existing in Steps)
+                {
+                    DetachStepHandlers(existing);
+                }
+
+                Steps.Clear();
+                SelectedStep = null;
+            }
+            else if (Steps.Count == 1 && IsUntouchedEmptyStep(Steps[0]))
+            {
+                var placeholder = Steps[0];
+                DetachStepHandlers(placeholder);
+                Steps.RemoveAt(0);
+                SelectedStep = null;
+            }
+
+            foreach (var entry in entries)
+            {
+                var step = new ChainStep
+                {
+                    Name = string.IsNullOrWhiteSpace(entry.StepName)
+                        ? $"Étape {Steps.Count + 1}"
+                        : entry.StepName,
+                    Method = entry.Method,
+                    Url = entry.BaseUrl,
+                    BodyType = entry.BodyType,
+                    Body = entry.Body,
+                    HasParsed = true,
+                    DelayAfterMs = 500
+                };
+
+                foreach (var param in entry.QueryParams)
+                {
+                    step.VaryingParams.Add(new VaryingParam(param.Key, param.Value, param.IsEnabled));
+                }
+
+                foreach (var header in entry.Headers)
+                {
+                    step.Headers.Add(new KeyValueItem(header.Key, header.Value, header.IsEnabled));
+                }
+
+                foreach (var field in entry.FormFields)
+                {
+                    step.FormFields.Add(new KeyValueItem(field.Key, field.Value, field.IsEnabled));
+                }
+
+                if (entry.Warnings.Count > 0)
+                {
+                    step.ParseWarnings.AddRange(entry.Warnings);
+                }
+
+                step.CurlText = CurlCommandBuilder.Build(step.BuildTemplateRequest());
+
+                AttachStepHandlers(step);
+                Steps.Add(step);
+                firstImported ??= step;
+                addedCount++;
+            }
+
+            IsConfirmed = false;
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
+
+        if (firstImported is not null)
+        {
+            SelectedStep = firstImported;
+        }
+
+        RefreshAllStepsAndPlan();
+        return addedCount;
+    }
+
+    private static bool IsUntouchedEmptyStep(ChainStep step) =>
+        !step.HasParsed &&
+        string.IsNullOrWhiteSpace(step.Url) &&
+        string.IsNullOrWhiteSpace(step.CurlText) &&
+        string.IsNullOrWhiteSpace(step.ReturnExpression) &&
+        step.Headers.Count == 0 &&
+        step.VaryingParams.Count == 0 &&
+        step.FormFields.Count == 0 &&
+        step.Extractions.Count == 0;
 
     [RelayCommand(CanExecute = nameof(CanModifySteps))]
     private void DuplicateStep(ChainStep? step)

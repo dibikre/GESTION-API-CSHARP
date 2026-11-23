@@ -1,0 +1,209 @@
+@import "tailwindcss";
+
+:root,
+[data-theme='dark'] {
+  --bg-app: #14161a;
+  --bg-surface: #1a1d23;
+  --bg-surface-alt: #20242b;
+  --bg-hover: #262b33;
+  --border: #2a2f38;
+  --border-strong: #3a404b;
+
+  --text: #e6e8ec;
+  --text-muted: #9aa1ad;
+  --text-faint: #6b7280;
+
+  --accent: #4f8cff;
+  --accent-hover: #6299ff;
+  --accent-pressed: #3b7bf2;
+
+  --success: #3fb68b;
+  --warning: #e0a030;
+  --danger: #e5484d;
+
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg-app: #f6f7f9;
+  --bg-surface: #ffffff;
+  --bg-surface-alt: #f0f2f5;
+  --bg-hover: #e8ebef;
+  --border: #e1e4e9;
+  --border-strong: #cbd0d8;
+
+  --text: #1b1f24;
+  --text-muted: #5f6773;
+  --text-faint: #8b93a0;
+
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-pressed: #1e40af;
+
+  --success: #1e9e6f;
+  --warning: #b7791f;
+  --danger: #d13438;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-app);
+  color: var(--text);
+  font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono-code {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 12.5px;
+}
+
+/* Compact desktop-like inputs & buttons */
+.api-input {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  background-color: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.api-input:focus {
+  border-color: var(--accent);
+}
+
+.api-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.api-textarea {
+  padding: 8px;
+  font-size: 12.5px;
+  background-color: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  resize: vertical;
+  transition: border-color 120ms ease;
+}
+
+.api-textarea:focus {
+  border-color: var(--accent);
+}
+
+.api-select {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  background-color: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+}
+
+.api-select:focus {
+  border-color: var(--accent);
+}
+
+.api-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  background-color: var(--bg-surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.api-btn:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.api-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.api-btn-primary {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.api-btn-primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.api-btn-primary:active:not(:disabled) {
+  background-color: var(--accent-pressed);
+}
+
+.api-btn-danger {
+  background-color: transparent;
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: var(--danger);
+}
+
+.api-btn-danger:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.api-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.api-card-alt {
+  background-color: var(--bg-surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* Subtle custom scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}

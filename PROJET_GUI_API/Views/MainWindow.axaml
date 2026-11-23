@@ -21,7 +21,7 @@
                     Command="{Binding CloseActiveOverlayCommand}" />
     </Window.KeyBindings>
 
-    <Grid>
+    <Grid x:Name="RootDropGrid" DragDrop.AllowDrop="True">
         <TabControl SelectedIndex="{Binding SelectedTabIndex}"
                     Padding="12">
             <TabItem Header="Requête">
@@ -232,6 +232,57 @@
                     <views:CookieEditorView DataContext="{Binding CookieEditor}" />
                 </Border>
             </Grid>
+        </Grid>
+        <!-- Popup d'import de fichier HAR -->
+        <Grid x:Name="HarImportScrim"
+              IsVisible="{Binding HarImport.IsOpen}"
+              Background="{DynamicResource ScrimBrush}"
+              PointerPressed="OnHarImportScrimPointerPressed">
+            <Grid RowDefinitions="*,22*,*"
+                  ColumnDefinitions="*,24*,*">
+                <Border Grid.Row="1"
+                        Grid.Column="1"
+                        Background="{DynamicResource SurfaceBrush}"
+                        BorderBrush="{DynamicResource BorderStrongBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource PanelCornerRadius}"
+                        Padding="14"
+                        PointerPressed="OnOverlayCardPointerPressed">
+                    <views:HarImportView DataContext="{Binding HarImport}" />
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- Indicateur visuel lors du glisser-déposer d'un fichier .har -->
+        <Grid x:Name="HarDropHintOverlay"
+              IsVisible="False"
+              IsHitTestVisible="False"
+              Background="{DynamicResource ScrimBrush}">
+            <Border Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource AccentBrush}"
+                    BorderThickness="2"
+                    CornerRadius="{DynamicResource PanelCornerRadius}"
+                    Padding="28,20"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                    <Path Classes="iconStroke"
+                          Width="28"
+                          Height="28"
+                          HorizontalAlignment="Center"
+                          Stroke="{DynamicResource AccentBrush}"
+                          Data="{StaticResource IconImport}" />
+                    <TextBlock Text="Dépose le fichier .har pour importer les requêtes"
+                               FontSize="{DynamicResource FontSizeBase}"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextBrush}"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="Tu pourras sélectionner tout ou partie des requêtes à ajouter dans l'onglet Chaîne."
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+            </Border>
         </Grid>
     </Grid>
 
