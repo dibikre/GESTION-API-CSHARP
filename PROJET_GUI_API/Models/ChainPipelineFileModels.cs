@@ -12,6 +12,7 @@ public sealed class ChainPipelineDocument
     public int Version { get; set; } = CurrentVersion;
     public DateTimeOffset SavedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public bool KeepBodies { get; set; } = true;
+    public bool ContinueOnError { get; set; }
     public ChainCliLanguage SelectedCliLanguage { get; set; } = ChainCliLanguage.Python;
     public ChainPipelineRateLimitPolicyDto GlobalRateLimitPolicy { get; set; } = new();
     public ChainPipelineSaveOptionsDto SaveOptions { get; set; } = new();

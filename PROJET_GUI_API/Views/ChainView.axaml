@@ -841,6 +841,14 @@
                                       VerticalAlignment="Center"
                                       AutomationProperties.Name="Conserver les corps des réponses" />
 
+                            <CheckBox IsChecked="{Binding ContinueOnError}"
+                                      IsEnabled="{Binding !IsRunning}"
+                                      Content="Continuer en cas d'erreur"
+                                      ToolTip.Tip="Exécuter les étapes suivantes même si une requête échoue (HTTP ≥ 400 ou erreur réseau)"
+                                      Margin="0,0,14,0"
+                                      VerticalAlignment="Center"
+                                      AutomationProperties.Name="Continuer la chaîne même si une étape échoue" />
+
                             <CheckBox IsChecked="{Binding GlobalRateLimitPolicy.IsEnabled}"
                                       IsEnabled="{Binding !IsRunning}"
                                       Content="Politique globale de rate limit"

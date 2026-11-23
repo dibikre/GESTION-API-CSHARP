@@ -5,5 +5,5 @@ namespace ApiTester.Services;
 
 public interface IChainCliGenerator
 {
-    string Generate(IReadOnlyList<ChainStep> steps, ChainCliLanguage language);
+    string Generate(IReadOnlyList<ChainStep> steps, ChainCliLanguage language, bool continueOnError = false);
 }

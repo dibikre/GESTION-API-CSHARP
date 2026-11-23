@@ -93,11 +93,11 @@ public sealed class ChainCliGenerator : IChainCliGenerator
         _stepReturnEvaluator = stepReturnEvaluator ?? new StepReturnEvaluator();
     }
 
-    public string Generate(IReadOnlyList<ChainStep> steps, ChainCliLanguage language)
+    public string Generate(IReadOnlyList<ChainStep> steps, ChainCliLanguage language, bool continueOnError = false)
     {
         ArgumentNullException.ThrowIfNull(steps);
 
-        var specs = BuildStepSpecs(steps);
+        var specs = BuildStepSpecs(steps, continueOnError);
         return language switch
         {
             ChainCliLanguage.Python => PythonChainCliEmitter.Emit(specs),
@@ -107,7 +107,7 @@ public sealed class ChainCliGenerator : IChainCliGenerator
         };
     }
 
-    private List<CliStepSpec> BuildStepSpecs(IReadOnlyList<ChainStep> steps)
+    private List<CliStepSpec> BuildStepSpecs(IReadOnlyList<ChainStep> steps, bool continueOnError)
     {
         var specs = new List<CliStepSpec>(steps.Count);
 
@@ -181,7 +181,7 @@ public sealed class ChainCliGenerator : IChainCliGenerator
                 url,
                 timeoutSeconds,
                 delayAfterMs,
-                step.ContinueOnError,
+                continueOnError || step.ContinueOnError,
                 mode,
                 bodyType,
                 body,

@@ -17,7 +17,8 @@ public static class ChainPipelineSerializer
         bool keepBodies,
         ChainCliLanguage selectedCliLanguage,
         RateLimitPolicy globalRateLimitPolicy,
-        BatchSaveOptions? saveOptions = null)
+        BatchSaveOptions? saveOptions = null,
+        bool continueOnError = false)
     {
         ArgumentNullException.ThrowIfNull(steps);
         ArgumentNullException.ThrowIfNull(globalRateLimitPolicy);
@@ -28,6 +29,7 @@ public static class ChainPipelineSerializer
             Version = ChainPipelineDocument.CurrentVersion,
             SavedAtUtc = DateTimeOffset.UtcNow,
             KeepBodies = keepBodies,
+            ContinueOnError = continueOnError,
             SelectedCliLanguage = selectedCliLanguage,
             GlobalRateLimitPolicy = MapRateLimitPolicy(globalRateLimitPolicy),
             SaveOptions = MapSaveOptions(saveOptions)

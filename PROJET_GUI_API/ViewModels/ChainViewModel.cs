@@ -183,6 +183,9 @@ public partial class ChainViewModel : ViewModelBase
     public partial bool KeepBodies { get; set; } = true;
 
     [ObservableProperty]
+    public partial bool ContinueOnError { get; set; }
+
+    [ObservableProperty]
     public partial ChainCliLanguage SelectedCliLanguage { get; set; } = ChainCliLanguage.Python;
 
     [ObservableProperty]
@@ -1961,7 +1964,7 @@ public partial class ChainViewModel : ViewModelBase
             return;
         }
 
-        var script = _chainCliGenerator.Generate(Steps, SelectedCliLanguage);
+        var script = _chainCliGenerator.Generate(Steps, SelectedCliLanguage, ContinueOnError);
         var languageLabel = SelectedCliLanguage switch
         {
             ChainCliLanguage.Python => "Python",
@@ -2007,7 +2010,8 @@ public partial class ChainViewModel : ViewModelBase
                 KeepBodies,
                 SelectedCliLanguage,
                 _sharedRateLimitPolicy,
-                saveOptions);
+                saveOptions,
+                ContinueOnError);
 
             var result = await _pipelineFileService.SavePipelineAsync(
                 document,
@@ -2120,6 +2124,7 @@ public partial class ChainViewModel : ViewModelBase
         var runOptions = new ChainRunOptions
         {
             KeepBodies = KeepBodies,
+            ContinueOnError = ContinueOnError,
             GlobalRateLimitPolicy = _sharedRateLimitPolicy.Clone()
         };
 

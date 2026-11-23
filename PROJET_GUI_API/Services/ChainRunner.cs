@@ -336,6 +336,7 @@ public sealed class ChainRunner : IChainRunner
                 var step = steps[sIdx];
                 var stepNumber = sIdx + 1;
                 var stepName = string.IsNullOrWhiteSpace(step.Name) ? $"Étape {stepNumber}" : step.Name.Trim();
+                var continueOnError = options.ContinueOnError || step.ContinueOnError;
 
                 if (stopChain)
                 {
@@ -417,7 +418,7 @@ public sealed class ChainRunner : IChainRunner
                         AccumulatedLists = CloneListsSnapshot(accumulatedLists)
                     });
                     finalStatus = ChainRunStatus.Failed;
-                    if (!step.ContinueOnError)
+                    if (!continueOnError)
                     {
                         stopChain = true;
                     }
@@ -489,7 +490,7 @@ public sealed class ChainRunner : IChainRunner
                         AccumulatedLists = CloneListsSnapshot(accumulatedLists)
                     });
                     finalStatus = ChainRunStatus.Failed;
-                    if (!step.ContinueOnError)
+                    if (!continueOnError)
                     {
                         stopChain = true;
                     }
@@ -693,7 +694,7 @@ public sealed class ChainRunner : IChainRunner
                             globalIndex,
                             globalTotal,
                             hasMoreRequests: globalIndex < globalTotal,
-                            stopOnFailure: !step.ContinueOnError,
+                            stopOnFailure: !continueOnError,
                             consecutiveRateLimitFailures,
                             totalRetryCount,
                             onRetryScheduled: (_, updatedTotalRetries) =>
@@ -918,7 +919,7 @@ public sealed class ChainRunner : IChainRunner
                         AccumulatedLists = CloneListsSnapshot(accumulatedLists)
                     });
 
-                    if (stepResult.Status == ChainStepStatus.Failed && !step.ContinueOnError)
+                    if (stepResult.Status == ChainStepStatus.Failed && !continueOnError)
                     {
                         Log.Warning(
                             "Chaîne interrompue à l'étape {StepNumber} ({StepName}) (ContinueOnError désactivé).",

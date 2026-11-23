@@ -20,6 +20,7 @@ public sealed class ChainPlanResult
 public sealed class ChainRunOptions
 {
     public bool KeepBodies { get; set; } = true;
+    public bool ContinueOnError { get; set; }
     public RateLimitPolicy GlobalRateLimitPolicy { get; set; } = new();
 }
 
