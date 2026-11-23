@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using ApiTester.Models;
 using ApiTester.Services;
@@ -16,19 +17,49 @@ namespace ApiTester.ViewModels;
 
 public partial class ExtractorViewModel : ViewModelBase
 {
+    public const int LargeWrapThresholdChars = 60_000;
+    public const int LargeInputCollapseThresholdChars = 150_000;
+    private const int MaxTreeSearchMatches = 5_000;
+    private const int TreeSearchDebounceMs = 130;
+    private const int MaxTrackedRegexOccurrences = 100;
+    private const int IncrementalTreeMutationThreshold = 250;
+
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
     private static readonly CultureInfo FrenchCulture = CultureInfo.GetCultureInfo("fr-FR");
     private static readonly Regex ArrayIndexRegex = new(@"\[\s*-?\d+\s*\]", RegexOptions.Compiled);
+
     private readonly IExtractionSuggester _suggester;
     private readonly IResponseExtractor _responseExtractor;
     private readonly IClipboardService? _clipboardService;
     private readonly IOverlayEditorService? _overlayEditor;
     private readonly ChainViewModel? _chainViewModel;
     private readonly ObservableCollection<ChainStep> _emptyChainSteps = [];
+
+    private readonly List<ExtractorNode> _treeSearchMatches = [];
+    private readonly HashSet<ExtractorNode> _treeFilteredVisibleSet = [];
+    private readonly List<ExtractorNode> _highlightedTreeNodes = [];
+
+    private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _treeSearchCts;
+    private CancellationTokenSource? _suggestionCts;
+    private ExtractorNode? _activeTreeSearchNode;
+
     private bool _hasCapturedSelection;
     private int _capturedStart;
     private int _capturedLength;
     private bool _suppressAutoLoad;
+
+    private sealed record SuggestionEvaluationResult(
+        string? JsonPath,
+        string? HtmlPath,
+        string? Regex,
+        int OccurrenceCount,
+        string? OccurrenceWarning,
+        string? InfoMessage,
+        LiveTestStatus TestStatus,
+        string TestStatusBadgeText,
+        string? TestResultText,
+        string? RegexTestResultText);
 
     public ExtractorViewModel(
         IExtractionSuggester suggester,
@@ -57,7 +88,11 @@ public partial class ExtractorViewModel : ViewModelBase
 
     public Action? SwitchToChainCallback { get; set; }
 
+    public Action<ExtractorNode>? ScrollToTreeNodeCallback { get; set; }
+
     public ObservableCollection<ExtractorNode> TreeNodes { get; } = [];
+
+    public BulkObservableCollection<ExtractorNode> VisibleTreeNodes { get; } = [];
 
     public ObservableCollection<ChainStep> ChainSteps => _chainViewModel?.Steps ?? _emptyChainSteps;
 
@@ -65,6 +100,13 @@ public partial class ExtractorViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(InputCharCountText))]
+    [NotifyPropertyChangedFor(nameof(IsLargeInput))]
+    [NotifyPropertyChangedFor(nameof(ShouldWrapInputText))]
+    [NotifyPropertyChangedFor(nameof(ShowTopInputEditor))]
+    [NotifyPropertyChangedFor(nameof(ShowCollapsedInputBanner))]
+    [NotifyPropertyChangedFor(nameof(ShowCollapseTopEditorButton))]
+    [NotifyPropertyChangedFor(nameof(CollapsedInputSummary))]
+    [NotifyPropertyChangedFor(nameof(ManualCodeText))]
     public partial string InputText { get; set; } = string.Empty;
 
     public string InputCharCountText
@@ -81,6 +123,30 @@ public partial class ExtractorViewModel : ViewModelBase
         }
     }
 
+    public bool IsLargeInput => (InputText?.Length ?? 0) > LargeInputCollapseThresholdChars;
+
+    public bool ShouldWrapInputText => (InputText?.Length ?? 0) <= LargeWrapThresholdChars;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowTopInputEditor))]
+    [NotifyPropertyChangedFor(nameof(ShowCollapsedInputBanner))]
+    [NotifyPropertyChangedFor(nameof(ShowCollapseTopEditorButton))]
+    public partial bool IsTopInputExpanded { get; set; } = true;
+
+    public bool ShowTopInputEditor => (!HasLoaded && !IsAnalyzing) || !IsLargeInput || IsTopInputExpanded;
+
+    public bool ShowCollapsedInputBanner => (HasLoaded || IsAnalyzing) && IsLargeInput && !IsTopInputExpanded;
+
+    public bool ShowCollapseTopEditorButton => (HasLoaded || IsAnalyzing) && IsLargeInput && IsTopInputExpanded;
+
+    public string CollapsedInputSummary =>
+        $"Réponse volumineuse en mémoire ({InputCharCountText}) — aperçu supérieur masqué pour préserver la fluidité.";
+
+    [ObservableProperty]
+    public partial bool WrapManualCodeText { get; set; } = true;
+
+    public string ManualCodeText => IsManualMode ? (InputText ?? string.Empty) : string.Empty;
+
     [ObservableProperty]
     public partial ResponseFormat Format { get; set; } = ResponseFormat.Auto;
 
@@ -94,7 +160,20 @@ public partial class ExtractorViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsJsonResult))]
+    [NotifyPropertyChangedFor(nameof(ShowEmptyPrompt))]
+    [NotifyPropertyChangedFor(nameof(ShowTopInputEditor))]
+    [NotifyPropertyChangedFor(nameof(ShowCollapsedInputBanner))]
+    [NotifyPropertyChangedFor(nameof(ShowCollapseTopEditorButton))]
     public partial bool HasLoaded { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEmptyPrompt))]
+    [NotifyPropertyChangedFor(nameof(ShowTopInputEditor))]
+    [NotifyPropertyChangedFor(nameof(ShowCollapsedInputBanner))]
+    [NotifyPropertyChangedFor(nameof(ShowCollapseTopEditorButton))]
+    public partial bool IsAnalyzing { get; set; }
+
+    public bool ShowEmptyPrompt => !HasLoaded && !IsAnalyzing;
 
     public bool IsTreeMode
     {
@@ -111,6 +190,7 @@ public partial class ExtractorViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsJsonResult))]
+    [NotifyPropertyChangedFor(nameof(ManualCodeText))]
     public partial bool IsManualMode { get; set; }
 
     public bool HasTreeNodes => TreeNodes.Count > 0;
@@ -138,6 +218,49 @@ public partial class ExtractorViewModel : ViewModelBase
     public string ToggleExpandAllTooltip => HasAnyExpandedNode
         ? "Replier tous les nœuds de l'arbre"
         : "Déplier tous les nœuds de l'arbre";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasTreeSearchQuery))]
+    [NotifyPropertyChangedFor(nameof(HasTreeSearchResultsBanner))]
+    [NotifyPropertyChangedFor(nameof(ShowNoTreeSearchMatchesMessage))]
+    [NotifyCanExecuteChangedFor(nameof(ClearTreeSearchCommand))]
+    public partial string TreeSearchText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowNoTreeSearchMatchesMessage))]
+    public partial bool FilterTreeBySearch { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanNavigateTreeSearch))]
+    [NotifyPropertyChangedFor(nameof(ShowNoTreeSearchMatchesMessage))]
+    [NotifyCanExecuteChangedFor(nameof(NavigateNextTreeMatchCommand))]
+    [NotifyCanExecuteChangedFor(nameof(NavigatePrevTreeMatchCommand))]
+    public partial int TreeSearchMatchCount { get; set; }
+
+    [ObservableProperty]
+    public partial int ActiveTreeSearchMatchIndex { get; set; } = -1;
+
+    [ObservableProperty]
+    public partial bool HasMoreTreeSearchMatches { get; set; }
+
+    [ObservableProperty]
+    public partial string TreeSearchCountText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool IsTreeSearchEmpty { get; set; }
+
+    public bool HasTreeSearchQuery => !string.IsNullOrEmpty(TreeSearchText);
+
+    public bool HasTreeSearchResultsBanner => !string.IsNullOrEmpty(TreeSearchText);
+
+    public bool CanNavigateTreeSearch => TreeSearchMatchCount > 0;
+
+    private bool IsTreeFilterActive => FilterTreeBySearch && !string.IsNullOrEmpty(TreeSearchText);
+
+    public bool ShowNoTreeSearchMatchesMessage =>
+        IsTreeMode &&
+        IsTreeFilterActive &&
+        VisibleTreeNodes.Count == 0;
 
     [ObservableProperty]
     public partial int SelectionStart { get; set; }
@@ -258,10 +381,15 @@ public partial class ExtractorViewModel : ViewModelBase
 
     public void LoadContent(string text, string? contentType)
     {
+        var safeText = text ?? string.Empty;
         _suppressAutoLoad = true;
         try
         {
-            InputText = text ?? string.Empty;
+            // Masquer l'éditeur supérieur avant d'affecter InputText sur les très gros payloads
+            // afin d'éviter une mise en page synchrone inutile sur InputResponseTextBox.
+            IsAnalyzing = true;
+            IsTopInputExpanded = safeText.Length <= LargeInputCollapseThresholdChars;
+            InputText = safeText;
             Format = DeduceFormatFromContentType(contentType);
         }
         finally
@@ -269,7 +397,7 @@ public partial class ExtractorViewModel : ViewModelBase
             _suppressAutoLoad = false;
         }
 
-        Load();
+        _ = LoadAsync();
     }
 
     partial void OnInputTextChanged(string value)
@@ -284,7 +412,7 @@ public partial class ExtractorViewModel : ViewModelBase
     {
         if (!_suppressAutoLoad && !string.IsNullOrWhiteSpace(InputText))
         {
-            Load();
+            _ = LoadAsync();
         }
     }
 
@@ -327,12 +455,45 @@ public partial class ExtractorViewModel : ViewModelBase
     {
         if (IsTreeMode && SelectedNode is not null)
         {
-            var suggestion = _suggester.SuggestForNode(InputText ?? string.Empty, SelectedNode);
-            ApplySuggestionAndTest(suggestion);
+            _ = RunNodeSuggestionAsync(SelectedNode);
         }
         else if (IsManualMode && _hasCapturedSelection)
         {
             RefreshManualSelectionIfActive();
+        }
+    }
+
+    partial void OnTreeSearchTextChanged(string value)
+    {
+        _ = RunTreeSearchAsync(immediate: string.IsNullOrEmpty(value));
+    }
+
+    partial void OnFilterTreeBySearchChanged(bool value)
+    {
+        if (!string.IsNullOrEmpty(TreeSearchText))
+        {
+            _ = RunTreeSearchAsync(immediate: true);
+        }
+        else
+        {
+            _treeFilteredVisibleSet.Clear();
+            RebuildVisibleTreeNodes();
+            OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
+        }
+    }
+
+    [RelayCommand]
+    private void ExpandTopInputEditor()
+    {
+        IsTopInputExpanded = true;
+    }
+
+    [RelayCommand]
+    private void CollapseTopInputEditor()
+    {
+        if (IsLargeInput && (HasLoaded || IsAnalyzing))
+        {
+            IsTopInputExpanded = false;
         }
     }
 
@@ -345,50 +506,124 @@ public partial class ExtractorViewModel : ViewModelBase
             IsReadOnly: false,
             OnSave: text =>
             {
-                InputText = text;
-                Load();
+                var safeText = text ?? string.Empty;
+                IsTopInputExpanded = safeText.Length <= LargeInputCollapseThresholdChars;
+                InputText = safeText;
+                _ = LoadAsync();
             }));
     }
 
-    [RelayCommand]
-    private void Load()
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private async Task LoadAsync()
     {
+        CancelPendingLoad();
+        CancelPendingTreeSearch();
+        CancelPendingSuggestion();
+
+        var cts = new CancellationTokenSource();
+        _loadCts = cts;
+        var ct = cts.Token;
+
         ResetSuggestions();
+        ClearTreeSearchState(resetQuery: false);
         TreeNodes.Clear();
+        VisibleTreeNodes.Clear();
         _hasCapturedSelection = false;
         SelectionStart = 0;
         SelectionEnd = 0;
         SelectionPreviewText = null;
         SelectedNode = null;
-
-        var sourceText = InputText ?? string.Empty;
-        var analysis = _suggester.Analyze(sourceText, Format);
-
-        HasLoaded = true;
-        DetectedFormat = analysis.DetectedFormat;
-        DetectedFormatText = $"Détecté : {FormatToDisplayLabel(analysis.DetectedFormat)}";
-        AnalysisMessage = analysis.StatusMessage;
-
-        if (analysis.FallbackToText || analysis.RootNodes.Count == 0)
-        {
-            IsTreeMode = false;
-            IsManualMode = true;
-            OnPropertyChanged(nameof(HasTreeNodes));
-            OnPropertyChanged(nameof(IsJsonResult));
-            UpdateTreeExpandState();
-            return;
-        }
-
-        foreach (var node in analysis.RootNodes)
-        {
-            TreeNodes.Add(node);
-        }
-
-        IsTreeMode = true;
-        IsManualMode = false;
         OnPropertyChanged(nameof(HasTreeNodes));
         OnPropertyChanged(nameof(IsJsonResult));
+        OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
         UpdateTreeExpandState();
+
+        var sourceText = InputText ?? string.Empty;
+        var requestedFormat = Format;
+
+        IsTopInputExpanded = sourceText.Length <= LargeInputCollapseThresholdChars;
+        WrapManualCodeText = sourceText.Length <= LargeWrapThresholdChars;
+        IsAnalyzing = true;
+        DetectedFormatText = "Analyse en cours...";
+
+        try
+        {
+            var analysis = await Task.Run(() => _suggester.Analyze(sourceText, requestedFormat, ct), ct);
+            if (ct.IsCancellationRequested || !ReferenceEquals(_loadCts, cts))
+            {
+                return;
+            }
+
+            HasLoaded = true;
+            DetectedFormat = analysis.DetectedFormat;
+            DetectedFormatText = $"Détecté : {FormatToDisplayLabel(analysis.DetectedFormat)}";
+            AnalysisMessage = analysis.StatusMessage;
+
+            if (analysis.FallbackToText || analysis.RootNodes.Count == 0)
+            {
+                IsTreeMode = false;
+                IsManualMode = true;
+                OnPropertyChanged(nameof(HasTreeNodes));
+                OnPropertyChanged(nameof(IsJsonResult));
+                UpdateTreeExpandState();
+                return;
+            }
+
+            foreach (var node in analysis.RootNodes)
+            {
+                TreeNodes.Add(node);
+            }
+
+            IsTreeMode = true;
+            IsManualMode = false;
+            OnPropertyChanged(nameof(HasTreeNodes));
+            OnPropertyChanged(nameof(IsJsonResult));
+
+            if (!string.IsNullOrEmpty(TreeSearchText))
+            {
+                await RunTreeSearchAsync(immediate: true);
+            }
+            else
+            {
+                RebuildVisibleTreeNodes();
+                UpdateTreeExpandState();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Chargement remplacé ou annulé : rien à faire.
+        }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(_loadCts, cts))
+            {
+                HasLoaded = true;
+                DetectedFormat = ResponseFormat.Text;
+                DetectedFormatText = "Erreur d'analyse";
+                AnalysisMessage = $"Impossible d'analyser la réponse ({ex.Message}) : bascule en mode texte.";
+                IsTreeMode = false;
+                IsManualMode = true;
+                OnPropertyChanged(nameof(HasTreeNodes));
+                OnPropertyChanged(nameof(IsJsonResult));
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_loadCts, cts))
+            {
+                IsAnalyzing = false;
+            }
+        }
+    }
+
+    [RelayCommand]
+    private void CancelLoad()
+    {
+        CancelPendingLoad();
+        IsAnalyzing = false;
+        DetectedFormatText = HasLoaded
+            ? $"Détecté : {FormatToDisplayLabel(DetectedFormat)}"
+            : "Analyse annulée";
     }
 
     [RelayCommand]
@@ -402,6 +637,7 @@ public partial class ExtractorViewModel : ViewModelBase
         IsTreeMode = true;
         IsManualMode = false;
         OnPropertyChanged(nameof(IsJsonResult));
+        OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
     }
 
     [RelayCommand]
@@ -415,6 +651,7 @@ public partial class ExtractorViewModel : ViewModelBase
         IsTreeMode = false;
         IsManualMode = true;
         OnPropertyChanged(nameof(IsJsonResult));
+        OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
     }
 
     [RelayCommand(CanExecute = nameof(HasExpandableNodes))]
@@ -428,7 +665,13 @@ public partial class ExtractorViewModel : ViewModelBase
 
         var expandAll = !HasAnyExpandedNode;
         SetSubtreeExpanded(TreeNodes, expandAll);
+        RebuildVisibleTreeNodes();
         UpdateTreeExpandState();
+
+        if (expandAll && _activeTreeSearchNode is not null)
+        {
+            ScrollToTreeNodeCallback?.Invoke(_activeTreeSearchNode);
+        }
     }
 
     [RelayCommand]
@@ -440,6 +683,55 @@ public partial class ExtractorViewModel : ViewModelBase
         }
 
         node.IsExpanded = !node.IsExpanded;
+
+        if (IsTreeFilterActive)
+        {
+            RebuildVisibleTreeNodes();
+            UpdateTreeExpandState();
+            return;
+        }
+
+        var index = VisibleTreeNodes.IndexOf(node);
+        if (index < 0)
+        {
+            RebuildVisibleTreeNodes();
+            UpdateTreeExpandState();
+            return;
+        }
+
+        if (node.IsExpanded)
+        {
+            var descendants = CollectVisibleDescendants(node);
+            if (descendants.Count <= IncrementalTreeMutationThreshold)
+            {
+                for (var i = 0; i < descendants.Count; i++)
+                {
+                    VisibleTreeNodes.Insert(index + 1 + i, descendants[i]);
+                }
+            }
+            else
+            {
+                RebuildVisibleTreeNodes();
+                ScrollToTreeNodeCallback?.Invoke(node);
+            }
+        }
+        else
+        {
+            var removeCount = CountVisibleDescendantsInFlatList(index, node.Depth);
+            if (removeCount <= IncrementalTreeMutationThreshold)
+            {
+                for (var i = 0; i < removeCount; i++)
+                {
+                    VisibleTreeNodes.RemoveAt(index + 1);
+                }
+            }
+            else
+            {
+                RebuildVisibleTreeNodes();
+                ScrollToTreeNodeCallback?.Invoke(node);
+            }
+        }
+
         UpdateTreeExpandState();
     }
 
@@ -455,8 +747,7 @@ public partial class ExtractorViewModel : ViewModelBase
         {
             if (node.HasChildren)
             {
-                node.IsExpanded = !node.IsExpanded;
-                UpdateTreeExpandState();
+                ToggleNodeExpand(node);
             }
             return;
         }
@@ -470,8 +761,383 @@ public partial class ExtractorViewModel : ViewModelBase
         SelectedNode = node;
         CopyFeedbackText = null;
 
-        var suggestion = _suggester.SuggestForNode(InputText ?? string.Empty, node);
-        ApplySuggestionAndTest(suggestion);
+        _ = RunNodeSuggestionAsync(node);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanNavigateTreeSearch))]
+    private void NavigateNextTreeMatch()
+    {
+        NavigateTreeMatch(1);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanNavigateTreeSearch))]
+    private void NavigatePrevTreeMatch()
+    {
+        NavigateTreeMatch(-1);
+    }
+
+    [RelayCommand(CanExecute = nameof(HasTreeSearchQuery))]
+    private void ClearTreeSearch()
+    {
+        TreeSearchText = string.Empty;
+    }
+
+    private void NavigateTreeMatch(int delta)
+    {
+        if (_treeSearchMatches.Count == 0)
+        {
+            return;
+        }
+
+        if (ActiveTreeSearchMatchIndex < 0 || ActiveTreeSearchMatchIndex >= _treeSearchMatches.Count)
+        {
+            ActiveTreeSearchMatchIndex = 0;
+        }
+        else
+        {
+            ActiveTreeSearchMatchIndex =
+                (ActiveTreeSearchMatchIndex + delta + _treeSearchMatches.Count) % _treeSearchMatches.Count;
+        }
+
+        ActivateTreeMatchAtIndex(ActiveTreeSearchMatchIndex);
+    }
+
+    private void ActivateTreeMatchAtIndex(int matchIndex)
+    {
+        if (matchIndex < 0 || matchIndex >= _treeSearchMatches.Count)
+        {
+            return;
+        }
+
+        if (_activeTreeSearchNode is not null)
+        {
+            _activeTreeSearchNode.IsActiveSearchMatch = false;
+        }
+
+        var target = _treeSearchMatches[matchIndex];
+        _activeTreeSearchNode = target;
+        target.IsActiveSearchMatch = true;
+
+        TreeSearchCountText = $"{matchIndex + 1}/{_treeSearchMatches.Count}{(HasMoreTreeSearchMatches ? "+" : string.Empty)}";
+
+        var expandedAny = ExpandAncestors(target);
+        if (expandedAny || !VisibleTreeNodes.Contains(target))
+        {
+            RebuildVisibleTreeNodes();
+            UpdateTreeExpandState();
+        }
+
+        ScrollToTreeNodeCallback?.Invoke(target);
+    }
+
+    private async Task RunTreeSearchAsync(bool immediate)
+    {
+        CancelPendingTreeSearch();
+
+        var query = TreeSearchText;
+        if (string.IsNullOrEmpty(query) || TreeNodes.Count == 0)
+        {
+            ClearTreeSearchState(resetQuery: false);
+            RebuildVisibleTreeNodes();
+            UpdateTreeExpandState();
+            OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _treeSearchCts = cts;
+        var ct = cts.Token;
+
+        try
+        {
+            if (!immediate)
+            {
+                await Task.Delay(TreeSearchDebounceMs, ct);
+            }
+
+            var rootsSnapshot = TreeNodes.ToList();
+            var filterMode = FilterTreeBySearch;
+
+            var (matches, filteredSet, hasMore) = await Task.Run(() =>
+            {
+                var foundMatches = new List<ExtractorNode>();
+                var visibleSet = filterMode ? new HashSet<ExtractorNode>() : null;
+                var more = false;
+                var visited = 0;
+
+                var stack = new Stack<ExtractorNode>();
+                for (var i = rootsSnapshot.Count - 1; i >= 0; i--)
+                {
+                    stack.Push(rootsSnapshot[i]);
+                }
+
+                while (stack.Count > 0)
+                {
+                    if ((visited++ & 127) == 0)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                    }
+
+                    var current = stack.Pop();
+                    if (NodeMatchesQuery(current, query))
+                    {
+                        if (foundMatches.Count < MaxTreeSearchMatches)
+                        {
+                            foundMatches.Add(current);
+                        }
+                        else
+                        {
+                            more = true;
+                        }
+
+                        if (visibleSet is not null)
+                        {
+                            var ancestor = current;
+                            while (ancestor is not null && visibleSet.Add(ancestor))
+                            {
+                                ancestor = ancestor.Parent;
+                            }
+                        }
+                    }
+
+                    var children = current.Children;
+                    for (var i = children.Count - 1; i >= 0; i--)
+                    {
+                        stack.Push(children[i]);
+                    }
+                }
+
+                return (foundMatches, visibleSet, more);
+            }, ct);
+
+            if (ct.IsCancellationRequested || !ReferenceEquals(_treeSearchCts, cts))
+            {
+                return;
+            }
+
+            ClearTreeSearchHighlights();
+            _treeSearchMatches.Clear();
+            _treeSearchMatches.AddRange(matches);
+
+            _treeFilteredVisibleSet.Clear();
+            if (filteredSet is not null)
+            {
+                foreach (var n in filteredSet)
+                {
+                    _treeFilteredVisibleSet.Add(n);
+                }
+            }
+
+            foreach (var match in matches)
+            {
+                match.IsSearchMatch = true;
+                _highlightedTreeNodes.Add(match);
+            }
+
+            HasMoreTreeSearchMatches = hasMore;
+            TreeSearchMatchCount = matches.Count;
+
+            if (matches.Count == 0)
+            {
+                ActiveTreeSearchMatchIndex = -1;
+                _activeTreeSearchNode = null;
+                TreeSearchCountText = "0/0";
+                IsTreeSearchEmpty = true;
+                RebuildVisibleTreeNodes();
+                UpdateTreeExpandState();
+                OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
+                return;
+            }
+
+            IsTreeSearchEmpty = false;
+            ActiveTreeSearchMatchIndex = 0;
+
+            if (filterMode)
+            {
+                // En mode filtré, déplier les ancêtres de chaque branche retenue pour révéler les résultats
+                foreach (var node in _treeFilteredVisibleSet)
+                {
+                    if (node.HasChildren && !ReferenceEquals(node, matches[0]))
+                    {
+                        var hasVisibleChild = false;
+                        foreach (var child in node.Children)
+                        {
+                            if (_treeFilteredVisibleSet.Contains(child))
+                            {
+                                hasVisibleChild = true;
+                                break;
+                            }
+                        }
+
+                        if (hasVisibleChild)
+                        {
+                            node.IsExpanded = true;
+                        }
+                    }
+                }
+            }
+
+            var firstMatch = matches[0];
+            _activeTreeSearchNode = firstMatch;
+            firstMatch.IsActiveSearchMatch = true;
+            ExpandAncestors(firstMatch);
+
+            TreeSearchCountText = $"1/{matches.Count}{(hasMore ? "+" : string.Empty)}";
+            RebuildVisibleTreeNodes();
+            UpdateTreeExpandState();
+            OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
+
+            ScrollToTreeNodeCallback?.Invoke(firstMatch);
+        }
+        catch (OperationCanceledException)
+        {
+            // Recherche annulée ou remplacée par la frappe suivante.
+        }
+    }
+
+    private static bool NodeMatchesQuery(ExtractorNode node, string query)
+    {
+        return (!string.IsNullOrEmpty(node.Label) && node.Label.Contains(query, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrEmpty(node.JsonPath) && node.JsonPath.Contains(query, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrEmpty(node.HtmlPath) && node.HtmlPath.Contains(query, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrEmpty(node.RawScalarValue) && node.RawScalarValue.Contains(query, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrEmpty(node.AnchorName) && node.AnchorName.Contains(query, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrEmpty(node.AttributeName) && node.AttributeName.Contains(query, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ExpandAncestors(ExtractorNode node)
+    {
+        var changed = false;
+        var parent = node.Parent;
+        while (parent is not null)
+        {
+            if (!parent.IsExpanded)
+            {
+                parent.IsExpanded = true;
+                changed = true;
+            }
+            parent = parent.Parent;
+        }
+        return changed;
+    }
+
+    private void ClearTreeSearchHighlights()
+    {
+        if (_activeTreeSearchNode is not null)
+        {
+            _activeTreeSearchNode.IsActiveSearchMatch = false;
+            _activeTreeSearchNode = null;
+        }
+
+        foreach (var node in _highlightedTreeNodes)
+        {
+            node.IsSearchMatch = false;
+            node.IsActiveSearchMatch = false;
+        }
+        _highlightedTreeNodes.Clear();
+    }
+
+    private void ClearTreeSearchState(bool resetQuery)
+    {
+        ClearTreeSearchHighlights();
+        _treeSearchMatches.Clear();
+        _treeFilteredVisibleSet.Clear();
+        TreeSearchMatchCount = 0;
+        ActiveTreeSearchMatchIndex = -1;
+        HasMoreTreeSearchMatches = false;
+        TreeSearchCountText = string.Empty;
+        IsTreeSearchEmpty = false;
+        if (resetQuery && !string.IsNullOrEmpty(TreeSearchText))
+        {
+            TreeSearchText = string.Empty;
+        }
+    }
+
+    private void RebuildVisibleTreeNodes()
+    {
+        if (TreeNodes.Count == 0)
+        {
+            if (VisibleTreeNodes.Count > 0)
+            {
+                VisibleTreeNodes.Clear();
+            }
+            OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
+            return;
+        }
+
+        var filterActive = IsTreeFilterActive;
+        var flat = new List<ExtractorNode>(Math.Max(64, VisibleTreeNodes.Count));
+        var stack = new Stack<ExtractorNode>();
+
+        for (var i = TreeNodes.Count - 1; i >= 0; i--)
+        {
+            var root = TreeNodes[i];
+            if (!filterActive || _treeFilteredVisibleSet.Contains(root))
+            {
+                stack.Push(root);
+            }
+        }
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            flat.Add(current);
+
+            if (current.IsExpanded && current.Children.Count > 0)
+            {
+                for (var i = current.Children.Count - 1; i >= 0; i--)
+                {
+                    var child = current.Children[i];
+                    if (!filterActive || _treeFilteredVisibleSet.Contains(child))
+                    {
+                        stack.Push(child);
+                    }
+                }
+            }
+        }
+
+        VisibleTreeNodes.ReplaceAll(flat);
+        OnPropertyChanged(nameof(ShowNoTreeSearchMatchesMessage));
+    }
+
+    private static List<ExtractorNode> CollectVisibleDescendants(ExtractorNode parent)
+    {
+        var result = new List<ExtractorNode>();
+        var stack = new Stack<ExtractorNode>();
+
+        for (var i = parent.Children.Count - 1; i >= 0; i--)
+        {
+            stack.Push(parent.Children[i]);
+        }
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            result.Add(current);
+            if (current.IsExpanded && current.Children.Count > 0)
+            {
+                for (var i = current.Children.Count - 1; i >= 0; i--)
+                {
+                    stack.Push(current.Children[i]);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private int CountVisibleDescendantsInFlatList(int parentIndex, int parentDepth)
+    {
+        var count = 0;
+        for (var i = parentIndex + 1; i < VisibleTreeNodes.Count; i++)
+        {
+            if (VisibleTreeNodes[i].Depth <= parentDepth)
+            {
+                break;
+            }
+            count++;
+        }
+        return count;
     }
 
     public void UpdateTextSelection(int start, int end, string? selectedTextFromControl)
@@ -503,6 +1169,7 @@ public partial class ExtractorViewModel : ViewModelBase
 
         if (length <= 0)
         {
+            CancelPendingSuggestion();
             _hasCapturedSelection = false;
             ResetSuggestions();
             TestStatus = LiveTestStatus.Error;
@@ -515,16 +1182,7 @@ public partial class ExtractorViewModel : ViewModelBase
         _capturedStart = start;
         _capturedLength = length;
 
-        var suggestion = _suggester.SuggestManualRegex(
-            InputText ?? string.Empty,
-            _capturedStart,
-            _capturedLength,
-            ContextLength,
-            ValueKind,
-            CustomPattern,
-            UseTrailingAnchor);
-
-        ApplySuggestionAndTest(suggestion);
+        _ = RunManualSuggestionAsync(_capturedStart, _capturedLength);
     }
 
     [RelayCommand(CanExecute = nameof(HasSuggestedJsonPath))]
@@ -612,98 +1270,186 @@ public partial class ExtractorViewModel : ViewModelBase
             return;
         }
 
-        var suggestion = _suggester.SuggestManualRegex(
-            InputText ?? string.Empty,
-            _capturedStart,
-            _capturedLength,
-            ContextLength,
-            ValueKind,
-            CustomPattern,
-            UseTrailingAnchor);
-
-        ApplySuggestionAndTest(suggestion);
+        _ = RunManualSuggestionAsync(_capturedStart, _capturedLength);
     }
 
-    private void ApplySuggestionAndTest(ExtractionSuggestion suggestion)
+    private async Task RunNodeSuggestionAsync(ExtractorNode node)
     {
+        CancelPendingSuggestion();
+        var cts = new CancellationTokenSource();
+        _suggestionCts = cts;
+        var ct = cts.Token;
+
+        var sourceText = InputText ?? string.Empty;
+        var extractAsList = ExtractAsList;
+
+        try
+        {
+            var eval = await Task.Run(() =>
+            {
+                var suggestion = _suggester.SuggestForNode(sourceText, node, ct);
+                return EvaluateSuggestionCore(suggestion, sourceText, extractAsList, ct);
+            }, ct);
+
+            if (ct.IsCancellationRequested || !ReferenceEquals(_suggestionCts, cts))
+            {
+                return;
+            }
+
+            ApplyEvaluationResult(eval);
+        }
+        catch (OperationCanceledException)
+        {
+            // Suggestion annulée par un nouveau clic ou chargement.
+        }
+    }
+
+    private async Task RunManualSuggestionAsync(int start, int length)
+    {
+        CancelPendingSuggestion();
+        var cts = new CancellationTokenSource();
+        _suggestionCts = cts;
+        var ct = cts.Token;
+
+        var sourceText = InputText ?? string.Empty;
+        var contextLength = ContextLength;
+        var valueKind = ValueKind;
+        var customPattern = CustomPattern;
+        var useTrailingAnchor = UseTrailingAnchor;
+        var extractAsList = ExtractAsList;
+
+        try
+        {
+            var eval = await Task.Run(() =>
+            {
+                var suggestion = _suggester.SuggestManualRegex(
+                    sourceText,
+                    start,
+                    length,
+                    contextLength,
+                    valueKind,
+                    customPattern,
+                    useTrailingAnchor,
+                    ct);
+                return EvaluateSuggestionCore(suggestion, sourceText, extractAsList, ct);
+            }, ct);
+
+            if (ct.IsCancellationRequested || !ReferenceEquals(_suggestionCts, cts))
+            {
+                return;
+            }
+
+            ApplyEvaluationResult(eval);
+        }
+        catch (OperationCanceledException)
+        {
+            // Suggestion annulée par une nouvelle sélection.
+        }
+    }
+
+    private SuggestionEvaluationResult EvaluateSuggestionCore(
+        ExtractionSuggestion suggestion,
+        string sourceText,
+        bool extractAsList,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
         var jsonPath = suggestion.JsonPath;
-        if (ExtractAsList && !string.IsNullOrWhiteSpace(jsonPath))
+        if (extractAsList && !string.IsNullOrWhiteSpace(jsonPath))
         {
             jsonPath = ArrayIndexRegex.Replace(jsonPath, "[*]");
         }
 
-        SuggestedJsonPath = jsonPath;
-        SuggestedHtmlPath = suggestion.HtmlPath;
-        SuggestedRegex = suggestion.Regex;
-        OccurrenceCount = suggestion.OccurrenceCount;
-        OccurrenceWarningText = ExtractAsList ? null : suggestion.OccurrenceWarning;
-        InfoMessage = suggestion.InfoMessage;
+        var htmlPath = suggestion.HtmlPath;
+        var regex = suggestion.Regex;
+        var hasJsonPath = !string.IsNullOrWhiteSpace(jsonPath);
+        var hasHtmlPath = !string.IsNullOrWhiteSpace(htmlPath);
+        var hasRegex = !string.IsNullOrWhiteSpace(regex);
+        var warning = extractAsList ? null : suggestion.OccurrenceWarning;
 
-        if (!HasSuggestedJsonPath && !HasSuggestedHtmlPath && !HasSuggestedRegex)
+        if (!hasJsonPath && !hasHtmlPath && !hasRegex)
         {
-            TestStatus = LiveTestStatus.Error;
-            TestStatusBadgeText = "Aucune correspondance";
-            TestResultText = suggestion.InfoMessage ?? "Aucune expression proposée.";
-            RegexTestResultText = null;
-            return;
+            return new SuggestionEvaluationResult(
+                jsonPath,
+                htmlPath,
+                regex,
+                suggestion.OccurrenceCount,
+                warning,
+                suggestion.InfoMessage,
+                LiveTestStatus.Error,
+                "Aucune correspondance",
+                suggestion.InfoMessage ?? "Aucune expression proposée.",
+                null);
         }
 
-        var sourceText = InputText ?? string.Empty;
         var tempResponse = new ResponseModel { Body = sourceText };
 
-        if (HasSuggestedJsonPath)
+        if (hasJsonPath)
         {
-            if (ExtractAsList)
+            if (extractAsList)
             {
                 var listOutcome = _responseExtractor.ExtractList(tempResponse, new ChainExtraction
                 {
                     VariableName = "preview",
                     Source = ChainExtractionSource.Body,
                     Kind = ExtractionKind.JsonPath,
-                    Expression = SuggestedJsonPath!,
+                    Expression = jsonPath!,
                     IsList = true
                 });
 
+                ct.ThrowIfCancellationRequested();
+
+                LiveTestStatus listStatus;
+                string listBadge;
+                string? listResult;
                 if (listOutcome.IsSuccess)
                 {
-                    TestStatus = LiveTestStatus.Success;
-                    TestStatusBadgeText = listOutcome.Values.Count <= 1
+                    listStatus = LiveTestStatus.Success;
+                    listBadge = listOutcome.Values.Count <= 1
                         ? $"{listOutcome.Values.Count} élément"
                         : $"{listOutcome.Values.Count} éléments";
                     var preview = string.Join(" | ", listOutcome.Values.Take(8));
-                    TestResultText = listOutcome.Values.Count > 8
+                    listResult = listOutcome.Values.Count > 8
                         ? $"{preview} … (+{listOutcome.Values.Count - 8})"
                         : preview;
                 }
                 else
                 {
-                    TestStatus = LiveTestStatus.Error;
-                    TestStatusBadgeText = "Aucune correspondance";
-                    TestResultText = listOutcome.ErrorMessage ?? "Échec d'extraction en liste JSONPath.";
+                    listStatus = LiveTestStatus.Error;
+                    listBadge = "Aucune correspondance";
+                    listResult = listOutcome.ErrorMessage ?? "Échec d'extraction en liste JSONPath.";
                 }
 
-                if (HasSuggestedRegex)
+                string? regexListResult = null;
+                if (hasRegex)
                 {
                     var regexListOutcome = _responseExtractor.ExtractList(tempResponse, new ChainExtraction
                     {
                         VariableName = "preview",
                         Source = ChainExtractionSource.Body,
                         Kind = ExtractionKind.Regex,
-                        Expression = SuggestedRegex!,
+                        Expression = regex!,
                         RegexGroup = 1,
                         IsList = true
                     });
 
-                    RegexTestResultText = regexListOutcome.IsSuccess
+                    regexListResult = regexListOutcome.IsSuccess
                         ? $"Test regex en liste : {regexListOutcome.Values.Count} élément(s) capturé(s)"
                         : $"Test regex : {regexListOutcome.ErrorMessage}";
                 }
-                else
-                {
-                    RegexTestResultText = null;
-                }
 
-                return;
+                return new SuggestionEvaluationResult(
+                    jsonPath,
+                    htmlPath,
+                    regex,
+                    suggestion.OccurrenceCount,
+                    warning,
+                    suggestion.InfoMessage,
+                    listStatus,
+                    listBadge,
+                    listResult,
+                    regexListResult);
             }
 
             var jsonOutcome = _responseExtractor.Extract(tempResponse, new ChainExtraction
@@ -711,103 +1457,142 @@ public partial class ExtractorViewModel : ViewModelBase
                 VariableName = "preview",
                 Source = ChainExtractionSource.Body,
                 Kind = ExtractionKind.JsonPath,
-                Expression = SuggestedJsonPath!
+                Expression = jsonPath!
             });
 
+            ct.ThrowIfCancellationRequested();
+
+            LiveTestStatus status;
+            string badge;
+            string? resultText;
             if (jsonOutcome.IsSuccess)
             {
-                TestStatus = LiveTestStatus.Success;
-                TestStatusBadgeText = "1 correspondance";
-                TestResultText = jsonOutcome.Value;
+                status = LiveTestStatus.Success;
+                badge = "1 correspondance";
+                resultText = jsonOutcome.Value;
             }
             else
             {
-                TestStatus = LiveTestStatus.Error;
-                TestStatusBadgeText = "Aucune correspondance";
-                TestResultText = jsonOutcome.ErrorMessage ?? "Échec d'extraction JSONPath.";
+                status = LiveTestStatus.Error;
+                badge = "Aucune correspondance";
+                resultText = jsonOutcome.ErrorMessage ?? "Échec d'extraction JSONPath.";
             }
 
-            if (HasSuggestedRegex)
+            string? regexResult = null;
+            if (hasRegex)
             {
                 var regexOutcome = _responseExtractor.Extract(tempResponse, new ChainExtraction
                 {
                     VariableName = "preview",
                     Source = ChainExtractionSource.Body,
                     Kind = ExtractionKind.Regex,
-                    Expression = SuggestedRegex!,
+                    Expression = regex!,
                     RegexGroup = 1
                 });
 
                 if (regexOutcome.IsSuccess)
                 {
-                    var count = CountMatchesSafe(sourceText, SuggestedRegex!);
-                    RegexTestResultText = count > 1
-                        ? $"Test regex : {count} correspondances (1re capturée : « {regexOutcome.Value} »)"
+                    var (count, hasMore) = CountMatchesBounded(sourceText, regex!, ct);
+                    var countLabel = hasMore ? $"{count}+" : count.ToString();
+                    regexResult = count > 1
+                        ? $"Test regex : {countLabel} correspondances (1re capturée : « {regexOutcome.Value} »)"
                         : $"Test regex : valeur capturée « {regexOutcome.Value} »";
                 }
                 else
                 {
-                    RegexTestResultText = $"Test regex : {regexOutcome.ErrorMessage}";
+                    regexResult = $"Test regex : {regexOutcome.ErrorMessage}";
                 }
             }
-            else
-            {
-                RegexTestResultText = null;
-            }
 
-            return;
+            return new SuggestionEvaluationResult(
+                jsonPath,
+                htmlPath,
+                regex,
+                suggestion.OccurrenceCount,
+                warning,
+                suggestion.InfoMessage,
+                status,
+                badge,
+                resultText,
+                regexResult);
         }
 
         // Mode Regex principal (XML / HTML / Texte)
-        RegexTestResultText = null;
-        if (!HasSuggestedRegex)
+        if (!hasRegex)
         {
-            if (HasSuggestedHtmlPath)
+            if (hasHtmlPath)
             {
-                TestStatus = LiveTestStatus.Success;
-                TestStatusBadgeText = "HTMLPath";
-                TestResultText = $"Chemin généré : {SuggestedHtmlPath}";
+                return new SuggestionEvaluationResult(
+                    jsonPath,
+                    htmlPath,
+                    regex,
+                    suggestion.OccurrenceCount,
+                    warning,
+                    suggestion.InfoMessage,
+                    LiveTestStatus.Success,
+                    "HTMLPath",
+                    $"Chemin généré : {htmlPath}",
+                    null);
             }
-            else
-            {
-                TestStatus = LiveTestStatus.None;
-                TestStatusBadgeText = string.Empty;
-                TestResultText = null;
-            }
-            return;
+
+            return new SuggestionEvaluationResult(
+                jsonPath,
+                htmlPath,
+                regex,
+                suggestion.OccurrenceCount,
+                warning,
+                suggestion.InfoMessage,
+                LiveTestStatus.None,
+                string.Empty,
+                null,
+                null);
         }
 
-        if (ExtractAsList)
+        if (extractAsList)
         {
             var regexListOutcome = _responseExtractor.ExtractList(tempResponse, new ChainExtraction
             {
                 VariableName = "preview",
                 Source = ChainExtractionSource.Body,
                 Kind = ExtractionKind.Regex,
-                Expression = SuggestedRegex!,
+                Expression = regex!,
                 RegexGroup = 1,
                 IsList = true
             });
 
+            ct.ThrowIfCancellationRequested();
+
             if (regexListOutcome.IsSuccess)
             {
-                TestStatus = LiveTestStatus.Success;
-                TestStatusBadgeText = regexListOutcome.Values.Count <= 1
-                    ? $"{regexListOutcome.Values.Count} élément"
-                    : $"{regexListOutcome.Values.Count} éléments";
                 var preview = string.Join(" | ", regexListOutcome.Values.Take(8));
-                TestResultText = regexListOutcome.Values.Count > 8
-                    ? $"{preview} … (+{regexListOutcome.Values.Count - 8})"
-                    : preview;
-            }
-            else
-            {
-                TestStatus = LiveTestStatus.Error;
-                TestStatusBadgeText = "Aucune correspondance";
-                TestResultText = regexListOutcome.ErrorMessage ?? "Aucune correspondance trouvée.";
+                return new SuggestionEvaluationResult(
+                    jsonPath,
+                    htmlPath,
+                    regex,
+                    suggestion.OccurrenceCount,
+                    warning,
+                    suggestion.InfoMessage,
+                    LiveTestStatus.Success,
+                    regexListOutcome.Values.Count <= 1
+                        ? $"{regexListOutcome.Values.Count} élément"
+                        : $"{regexListOutcome.Values.Count} éléments",
+                    regexListOutcome.Values.Count > 8
+                        ? $"{preview} … (+{regexListOutcome.Values.Count - 8})"
+                        : preview,
+                    null);
             }
 
-            return;
+            return new SuggestionEvaluationResult(
+                jsonPath,
+                htmlPath,
+                regex,
+                suggestion.OccurrenceCount,
+                warning,
+                suggestion.InfoMessage,
+                LiveTestStatus.Error,
+                "Aucune correspondance",
+                regexListOutcome.ErrorMessage ?? "Aucune correspondance trouvée.",
+                null);
         }
 
         var outcome = _responseExtractor.Extract(tempResponse, new ChainExtraction
@@ -815,32 +1600,69 @@ public partial class ExtractorViewModel : ViewModelBase
             VariableName = "preview",
             Source = ChainExtractionSource.Body,
             Kind = ExtractionKind.Regex,
-            Expression = SuggestedRegex!,
+            Expression = regex!,
             RegexGroup = 1
         });
 
+        ct.ThrowIfCancellationRequested();
+
         if (outcome.IsSuccess)
         {
-            var matchCount = CountMatchesSafe(sourceText, SuggestedRegex!);
+            var (matchCount, hasMoreMatches) = CountMatchesBounded(sourceText, regex!, ct);
             if (matchCount > 1)
             {
-                TestStatus = LiveTestStatus.Warning;
-                TestStatusBadgeText = $"{matchCount} correspondances";
-                TestResultText = $"{matchCount} correspondances trouvées (1re capturée : {outcome.Value})";
+                var countLabel = hasMoreMatches ? $"{matchCount}+" : matchCount.ToString();
+                return new SuggestionEvaluationResult(
+                    jsonPath,
+                    htmlPath,
+                    regex,
+                    suggestion.OccurrenceCount,
+                    warning,
+                    suggestion.InfoMessage,
+                    LiveTestStatus.Warning,
+                    $"{countLabel} correspondances",
+                    $"{countLabel} correspondances trouvées (1re capturée : {outcome.Value})",
+                    null);
             }
-            else
-            {
-                TestStatus = LiveTestStatus.Success;
-                TestStatusBadgeText = "1 correspondance";
-                TestResultText = outcome.Value;
-            }
+
+            return new SuggestionEvaluationResult(
+                jsonPath,
+                htmlPath,
+                regex,
+                suggestion.OccurrenceCount,
+                warning,
+                suggestion.InfoMessage,
+                LiveTestStatus.Success,
+                "1 correspondance",
+                outcome.Value,
+                null);
         }
-        else
-        {
-            TestStatus = LiveTestStatus.Error;
-            TestStatusBadgeText = "Aucune correspondance";
-            TestResultText = outcome.ErrorMessage ?? "Aucune correspondance trouvée.";
-        }
+
+        return new SuggestionEvaluationResult(
+            jsonPath,
+            htmlPath,
+            regex,
+            suggestion.OccurrenceCount,
+            warning,
+            suggestion.InfoMessage,
+            LiveTestStatus.Error,
+            "Aucune correspondance",
+            outcome.ErrorMessage ?? "Aucune correspondance trouvée.",
+            null);
+    }
+
+    private void ApplyEvaluationResult(SuggestionEvaluationResult eval)
+    {
+        SuggestedJsonPath = eval.JsonPath;
+        SuggestedHtmlPath = eval.HtmlPath;
+        SuggestedRegex = eval.Regex;
+        OccurrenceCount = eval.OccurrenceCount;
+        OccurrenceWarningText = eval.OccurrenceWarning;
+        InfoMessage = eval.InfoMessage;
+        TestStatus = eval.TestStatus;
+        TestStatusBadgeText = eval.TestStatusBadgeText;
+        TestResultText = eval.TestResultText;
+        RegexTestResultText = eval.RegexTestResultText;
     }
 
     private void ResetSuggestions()
@@ -856,6 +1678,36 @@ public partial class ExtractorViewModel : ViewModelBase
         TestStatusBadgeText = string.Empty;
         RegexTestResultText = null;
         CopyFeedbackText = null;
+    }
+
+    private void CancelPendingLoad()
+    {
+        if (_loadCts is not null)
+        {
+            _loadCts.Cancel();
+            _loadCts.Dispose();
+            _loadCts = null;
+        }
+    }
+
+    private void CancelPendingTreeSearch()
+    {
+        if (_treeSearchCts is not null)
+        {
+            _treeSearchCts.Cancel();
+            _treeSearchCts.Dispose();
+            _treeSearchCts = null;
+        }
+    }
+
+    private void CancelPendingSuggestion()
+    {
+        if (_suggestionCts is not null)
+        {
+            _suggestionCts.Cancel();
+            _suggestionCts.Dispose();
+            _suggestionCts = null;
+        }
     }
 
     private (int Start, int Length, string? Preview) ResolveSelectionInInputText(
@@ -974,7 +1826,7 @@ public partial class ExtractorViewModel : ViewModelBase
         var hasExpandable = false;
         var hasVisibleExpanded = false;
 
-        foreach (var node in TreeNodes)
+        foreach (var node in VisibleTreeNodes)
         {
             if (node.HasChildren)
             {
@@ -983,6 +1835,22 @@ public partial class ExtractorViewModel : ViewModelBase
                 {
                     hasVisibleExpanded = true;
                     break;
+                }
+            }
+        }
+
+        if (!hasExpandable)
+        {
+            foreach (var node in TreeNodes)
+            {
+                if (node.HasChildren)
+                {
+                    hasExpandable = true;
+                    if (node.IsExpanded)
+                    {
+                        hasVisibleExpanded = true;
+                        break;
+                    }
                 }
             }
         }
@@ -1052,20 +1920,41 @@ public partial class ExtractorViewModel : ViewModelBase
         _ => "Auto"
     };
 
-    private static int CountMatchesSafe(string input, string pattern)
+    private static (int Count, bool HasMore) CountMatchesBounded(
+        string input,
+        string pattern,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(input) || string.IsNullOrEmpty(pattern))
         {
-            return 0;
+            return (0, false);
         }
 
         try
         {
-            return Regex.Matches(input, pattern, RegexOptions.CultureInvariant, RegexTimeout).Count;
+            var regex = new Regex(pattern, RegexOptions.CultureInvariant, RegexTimeout);
+            var count = 0;
+            var match = regex.Match(input);
+            while (match.Success)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                count++;
+                if (count > MaxTrackedRegexOccurrences)
+                {
+                    return (MaxTrackedRegexOccurrences, true);
+                }
+                match = match.NextMatch();
+            }
+
+            return (count, false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception)
         {
-            return 0;
+            return (0, false);
         }
     }
 }

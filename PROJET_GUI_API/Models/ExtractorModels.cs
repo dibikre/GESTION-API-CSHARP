@@ -1,8 +1,40 @@
+using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace ApiTester.Models;
+
+public sealed class BulkObservableCollection<T> : ObservableCollection<T>
+{
+    public void ReplaceAll(IEnumerable<T> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        CheckReentrancy();
+
+        Items.Clear();
+        if (items is ICollection<T> collection && Items is List<T> list)
+        {
+            var targetCapacity = collection.Count;
+            if (list.Capacity < targetCapacity)
+            {
+                list.Capacity = targetCapacity;
+            }
+        }
+
+        foreach (var item in items)
+        {
+            Items.Add(item);
+        }
+
+        OnPropertyChanged(new PropertyChangedEventArgs("Count"));
+        OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+}
 
 public enum ResponseFormat
 {
@@ -47,6 +79,10 @@ public sealed partial class ExtractorNode : ObservableObject
 
     public ExtractorNodeKind NodeKind { get; init; }
 
+    public int Depth { get; init; }
+
+    public ExtractorNode? Parent { get; internal set; }
+
     public string? JsonPath { get; init; }
 
     public string? HtmlPath { get; init; }
@@ -84,6 +120,12 @@ public sealed partial class ExtractorNode : ObservableObject
 
     [ObservableProperty]
     public partial bool IsSelected { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsSearchMatch { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsActiveSearchMatch { get; set; }
 }
 
 public sealed record FormatAnalysisResult(
@@ -98,7 +140,8 @@ public sealed record ExtractionSuggestion(
     int OccurrenceCount,
     string? OccurrenceWarning,
     string? InfoMessage,
-    string? HtmlPath = null);
+    string? HtmlPath = null,
+    bool HasMoreOccurrences = false);
 
 public sealed record RealtimeExtractionSuggestion(
     string Expression,

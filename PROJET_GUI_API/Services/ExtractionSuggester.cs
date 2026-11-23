@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Xml;
 using System.Xml.Linq;
 using ApiTester.Models;
@@ -14,6 +15,7 @@ namespace ApiTester.Services;
 public sealed class ExtractionSuggester : IExtractionSuggester
 {
     private const int PreviewMaxChars = 72;
+    private const int MaxTrackedRegexOccurrences = 100;
     private const string HtmlFallbackMessage =
         "Ce HTML est trop irrégulier pour être analysé automatiquement : sélectionne le texte directement ci-dessous.";
 
@@ -70,8 +72,13 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         return ResponseFormat.Text;
     }
 
-    public FormatAnalysisResult Analyze(string? text, ResponseFormat requestedFormat)
+    public FormatAnalysisResult Analyze(
+        string? text,
+        ResponseFormat requestedFormat,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var content = text ?? string.Empty;
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -86,9 +93,9 @@ public sealed class ExtractionSuggester : IExtractionSuggester
 
         return targetFormat switch
         {
-            ResponseFormat.Json => AnalyzeJson(content),
-            ResponseFormat.Xml => AnalyzeXml(content),
-            ResponseFormat.Html => AnalyzeHtml(content),
+            ResponseFormat.Json => AnalyzeJson(content, cancellationToken),
+            ResponseFormat.Xml => AnalyzeXml(content, cancellationToken),
+            ResponseFormat.Html => AnalyzeHtml(content, cancellationToken),
             _ => new FormatAnalysisResult(ResponseFormat.Text, FallbackToText: true, StatusMessage: null, RootNodes: [])
         };
     }
@@ -99,17 +106,21 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         return string.IsNullOrWhiteSpace(node.JsonPath) ? null : node.JsonPath;
     }
 
-    public ExtractionSuggestion SuggestForNode(string rawText, ExtractorNode node)
+    public ExtractionSuggestion SuggestForNode(
+        string rawText,
+        ExtractorNode node,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(node);
+        cancellationToken.ThrowIfCancellationRequested();
         var text = rawText ?? string.Empty;
 
         return node.NodeKind switch
         {
             ExtractorNodeKind.JsonValue or ExtractorNodeKind.JsonObject or ExtractorNodeKind.JsonArray
-                => SuggestJsonNode(text, node),
+                => SuggestJsonNode(text, node, cancellationToken),
             ExtractorNodeKind.XmlElement or ExtractorNodeKind.XmlAttribute
-                => SuggestXmlNode(text, node),
+                => SuggestXmlNode(text, node, cancellationToken),
             _ => new ExtractionSuggestion(null, null, 0, null, "Type de nœud non pris en charge.")
         };
     }
@@ -121,8 +132,11 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         int contextLength,
         ExtractorValueKind valueKind,
         string? customPattern,
-        bool useTrailingAnchor)
+        bool useTrailingAnchor,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var text = rawText ?? string.Empty;
         if (string.IsNullOrEmpty(text))
         {
@@ -150,7 +164,8 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                 safeLength,
                 safeContextLen,
                 useTrailingAnchor,
-                htmlContext);
+                htmlContext,
+                cancellationToken);
         }
 
         var ctxStart = Math.Max(0, safeStart - safeContextLen);
@@ -202,13 +217,15 @@ public sealed class ExtractionSuggester : IExtractionSuggester
 
         if (string.IsNullOrEmpty(leadingAnchor) && string.IsNullOrEmpty(trailingAnchor))
         {
+            var (capCount, capHasMore) = CountRegexMatchesBounded(text, captureGroup, cancellationToken: cancellationToken);
             return new ExtractionSuggestion(
                 null,
                 captureGroup,
-                CountRegexMatches(text, captureGroup),
+                capCount,
                 "Aucun contexte autour de la sélection : ajoute du texte avant ou active l'ancre de fin.",
                 null,
-                htmlPath);
+                htmlPath,
+                capHasMore);
         }
 
         var finalRegex = $"{leadingAnchor}{captureGroup}{trailingAnchor}";
@@ -217,12 +234,13 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             return new ExtractionSuggestion(null, null, 0, null, "Le motif généré est invalide.", htmlPath);
         }
 
-        var occurrences = CountRegexMatches(text, finalRegex);
+        var (occurrences, hasMore) = CountRegexMatchesBounded(text, finalRegex, cancellationToken: cancellationToken);
+        var occLabel = FormatOccurrenceCount(occurrences, hasMore);
         var warning = occurrences > 1
-            ? $"Ce motif correspond à {occurrences} passages dans le texte : augmente la longueur du contexte ou active l'ancre de fin."
+            ? $"Ce motif correspond à {occLabel} passages dans le texte : augmente la longueur du contexte ou active l'ancre de fin."
             : null;
 
-        return new ExtractionSuggestion(null, finalRegex, occurrences, warning, null, htmlPath);
+        return new ExtractionSuggestion(null, finalRegex, occurrences, warning, null, htmlPath, hasMore);
     }
 
     public IReadOnlyList<RealtimeExtractionSuggestion> SuggestRealtime(
@@ -269,15 +287,20 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             maxResults);
     }
 
-    private static FormatAnalysisResult AnalyzeJson(string text)
+    private static FormatAnalysisResult AnalyzeJson(string text, CancellationToken cancellationToken)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var normalized = text.TrimStart('\uFEFF');
             using var doc = JsonDocument.Parse(normalized, JsonParseOptions);
-            var rootNode = BuildJsonNode(doc.RootElement, keyLabel: null, jsonPath: string.Empty, depth: 0);
+            var rootNode = BuildJsonNode(doc.RootElement, keyLabel: null, jsonPath: string.Empty, depth: 0, cancellationToken);
             var nodes = new ObservableCollection<ExtractorNode> { rootNode };
             return new FormatAnalysisResult(ResponseFormat.Json, FallbackToText: false, StatusMessage: null, RootNodes: nodes);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (JsonException)
         {
@@ -289,8 +312,14 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         }
     }
 
-    private static ExtractorNode BuildJsonNode(JsonElement element, string? keyLabel, string jsonPath, int depth)
+    private static ExtractorNode BuildJsonNode(
+        JsonElement element,
+        string? keyLabel,
+        string jsonPath,
+        int depth,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var prefix = keyLabel is null ? string.Empty : $"{keyLabel} : ";
 
         switch (element.ValueKind)
@@ -310,6 +339,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                         : $"{keyLabel} {{ {propCount} }}",
                     KindTag = "obj",
                     NodeKind = ExtractorNodeKind.JsonObject,
+                    Depth = depth,
                     JsonPath = string.IsNullOrEmpty(jsonPath) ? null : jsonPath,
                     AnchorName = keyLabel is not null && !keyLabel.StartsWith('[') ? keyLabel : null,
                     JsonKind = JsonValueKind.Object,
@@ -321,7 +351,9 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                 foreach (var prop in element.EnumerateObject())
                 {
                     var childPath = RealtimeExtractionCatalog.FormatJsonPathChild(jsonPath, prop.Name);
-                    node.Children.Add(BuildJsonNode(prop.Value, prop.Name, childPath, depth + 1));
+                    var childNode = BuildJsonNode(prop.Value, prop.Name, childPath, depth + 1, cancellationToken);
+                    childNode.Parent = node;
+                    node.Children.Add(childNode);
                 }
 
                 return node;
@@ -337,6 +369,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                         : $"{keyLabel} [ {len} ]",
                     KindTag = "arr",
                     NodeKind = ExtractorNodeKind.JsonArray,
+                    Depth = depth,
                     JsonPath = string.IsNullOrEmpty(jsonPath) ? null : jsonPath,
                     AnchorName = keyLabel is not null && !keyLabel.StartsWith('[') ? keyLabel : null,
                     JsonKind = JsonValueKind.Array,
@@ -349,7 +382,9 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                 foreach (var item in element.EnumerateArray())
                 {
                     var childPath = $"{jsonPath}[{idx}]";
-                    node.Children.Add(BuildJsonNode(item, $"[{idx}]", childPath, depth + 1));
+                    var childNode = BuildJsonNode(item, $"[{idx}]", childPath, depth + 1, cancellationToken);
+                    childNode.Parent = node;
+                    node.Children.Add(childNode);
                     idx++;
                 }
 
@@ -379,6 +414,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                     Label = $"{prefix}{displayVal}",
                     KindTag = kindTag,
                     NodeKind = ExtractorNodeKind.JsonValue,
+                    Depth = depth,
                     JsonPath = string.IsNullOrEmpty(jsonPath) ? null : jsonPath,
                     AnchorName = keyLabel is not null && !keyLabel.StartsWith('[') ? keyLabel : null,
                     JsonKind = element.ValueKind,
@@ -391,10 +427,11 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         }
     }
 
-    private static FormatAnalysisResult AnalyzeXml(string text)
+    private static FormatAnalysisResult AnalyzeXml(string text, CancellationToken cancellationToken)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var doc = LoadXmlDocument(text);
             if (doc.Root is null)
             {
@@ -405,9 +442,19 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                     RootNodes: []);
             }
 
-            var rootNode = BuildXmlNode(doc.Root, parentPath: string.Empty, siblings: new[] { doc.Root }, depth: 0);
+            var rootNode = BuildXmlNode(
+                doc.Root,
+                parentPath: string.Empty,
+                sameTagCount: 1,
+                sameTagIndex: 1,
+                depth: 0,
+                cancellationToken);
             var nodes = new ObservableCollection<ExtractorNode> { rootNode };
             return new FormatAnalysisResult(ResponseFormat.Xml, FallbackToText: false, StatusMessage: null, RootNodes: nodes);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -419,23 +466,31 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         }
     }
 
-    private static FormatAnalysisResult AnalyzeHtml(string text)
+    private static FormatAnalysisResult AnalyzeHtml(string text, CancellationToken cancellationToken)
     {
         try
         {
-            var parsed = HtmlDocumentParser.Parse(text);
-            var nodes = HtmlDocumentParser.BuildExtractorTree(text, parsed);
+            cancellationToken.ThrowIfCancellationRequested();
+            var parsed = HtmlDocumentParser.Parse(text, cancellationToken);
+            var nodes = HtmlDocumentParser.BuildExtractorTree(text, parsed, cancellationToken);
             if (nodes.Count > 0)
             {
                 return new FormatAnalysisResult(ResponseFormat.Html, FallbackToText: false, StatusMessage: null, RootNodes: nodes);
             }
 
             // Repli XML si fragment XML pur
+            cancellationToken.ThrowIfCancellationRequested();
             var preprocessed = PreprocessHtmlForXml(text);
             var doc = LoadXmlDocument(preprocessed);
             if (doc.Root is not null)
             {
-                var rootNode = BuildXmlNode(doc.Root, parentPath: string.Empty, siblings: new[] { doc.Root }, depth: 0);
+                var rootNode = BuildXmlNode(
+                    doc.Root,
+                    parentPath: string.Empty,
+                    sameTagCount: 1,
+                    sameTagIndex: 1,
+                    depth: 0,
+                    cancellationToken);
                 return new FormatAnalysisResult(
                     ResponseFormat.Html,
                     FallbackToText: false,
@@ -448,6 +503,10 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                 FallbackToText: true,
                 StatusMessage: HtmlFallbackMessage,
                 RootNodes: []);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -490,29 +549,19 @@ public sealed class ExtractionSuggester : IExtractionSuggester
     private static ExtractorNode BuildXmlNode(
         XElement element,
         string parentPath,
-        IReadOnlyList<XElement> siblings,
-        int depth)
+        int sameTagCount,
+        int sameTagIndex,
+        int depth,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var prefix = element.Name.Namespace != XNamespace.None
             ? element.GetPrefixOfNamespace(element.Name.Namespace)
             : null;
         var qualifiedTag = string.IsNullOrEmpty(prefix)
             ? element.Name.LocalName
             : $"{prefix}:{element.Name.LocalName}";
-
-        var sameTagCount = 0;
-        var sameTagIndex = 0;
-        foreach (var sib in siblings)
-        {
-            if (sib.Name == element.Name)
-            {
-                sameTagCount++;
-                if (ReferenceEquals(sib, element))
-                {
-                    sameTagIndex = sameTagCount;
-                }
-            }
-        }
 
         var pathSegment = sameTagCount > 1
             ? $"{element.Name.LocalName}[{sameTagIndex}]"
@@ -536,6 +585,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             Label = label,
             KindTag = "xml",
             NodeKind = ExtractorNodeKind.XmlElement,
+            Depth = depth,
             HtmlPath = elementPath,
             ElementTagName = qualifiedTag,
             IdAttribute = idAttr,
@@ -567,6 +617,8 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                 Label = $"@{qualifiedAttr} = \"{Truncate(attr.Value, PreviewMaxChars)}\"",
                 KindTag = "attr",
                 NodeKind = ExtractorNodeKind.XmlAttribute,
+                Depth = depth + 1,
+                Parent = node,
                 HtmlPath = $"{elementPath}/@{attr.Name.LocalName}",
                 ElementTagName = qualifiedTag,
                 AttributeName = qualifiedAttr,
@@ -581,16 +633,41 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             });
         }
 
-        var childElements = new List<XElement>(element.Elements());
-        foreach (var child in childElements)
+        if (hasChildElements)
         {
-            node.Children.Add(BuildXmlNode(child, elementPath, childElements, depth + 1));
+            var childElements = new List<XElement>(element.Elements());
+            var totalByName = new Dictionary<XName, int>();
+            foreach (var child in childElements)
+            {
+                totalByName[child.Name] = totalByName.GetValueOrDefault(child.Name) + 1;
+            }
+
+            var indexByName = new Dictionary<XName, int>();
+            foreach (var child in childElements)
+            {
+                var childIdx = indexByName.GetValueOrDefault(child.Name) + 1;
+                indexByName[child.Name] = childIdx;
+                var childTotal = totalByName.GetValueOrDefault(child.Name, 1);
+
+                var childNode = BuildXmlNode(
+                    child,
+                    elementPath,
+                    childTotal,
+                    childIdx,
+                    depth + 1,
+                    cancellationToken);
+                childNode.Parent = node;
+                node.Children.Add(childNode);
+            }
         }
 
         return node;
     }
 
-    private static ExtractionSuggestion SuggestJsonNode(string rawText, ExtractorNode node)
+    private static ExtractionSuggestion SuggestJsonNode(
+        string rawText,
+        ExtractorNode node,
+        CancellationToken cancellationToken)
     {
         var jsonPath = string.IsNullOrWhiteSpace(node.JsonPath) ? null : node.JsonPath;
 
@@ -624,15 +701,19 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             info = "Sélectionne une valeur feuille pour générer un regex alternatif.";
         }
 
-        var occurrences = CountRegexMatches(rawText, keyAnchor);
+        var (occurrences, hasMore) = CountRegexMatchesBounded(rawText, keyAnchor, cancellationToken: cancellationToken);
+        var occLabel = FormatOccurrenceCount(occurrences, hasMore);
         var warning = occurrences > 1 && regex is not null
-            ? $"La clé « {node.AnchorName} » apparaît {occurrences} fois dans la réponse : le regex capturera la première occurrence. Utilise JSONPath pour cibler cet élément."
+            ? $"La clé « {node.AnchorName} » apparaît {occLabel} fois dans la réponse : le regex capturera la première occurrence. Utilise JSONPath pour cibler cet élément."
             : null;
 
-        return new ExtractionSuggestion(jsonPath, regex, occurrences, warning, info);
+        return new ExtractionSuggestion(jsonPath, regex, occurrences, warning, info, HasMoreOccurrences: hasMore);
     }
 
-    private static ExtractionSuggestion SuggestXmlNode(string rawText, ExtractorNode node)
+    private static ExtractionSuggestion SuggestXmlNode(
+        string rawText,
+        ExtractorNode node,
+        CancellationToken cancellationToken)
     {
         var htmlPath = string.IsNullOrWhiteSpace(node.HtmlPath) ? null : node.HtmlPath;
         var distinguishingFilter = GetDistinguishingAttributeLookahead(node, excludeAttrName: node.AttributeName);
@@ -655,12 +736,13 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                 regex = $@"\b{attrEsc}\s*=\s*[""']([^""']*)[""']";
             }
 
-            var occurrences = CountRegexMatches(rawText, anchorPattern);
+            var (occurrences, hasMore) = CountRegexMatchesBounded(rawText, anchorPattern, cancellationToken: cancellationToken);
+            var occLabel = FormatOccurrenceCount(occurrences, hasMore);
             var warning = occurrences > 1
-                ? $"L'attribut « {node.AttributeName} » apparaît {occurrences} fois : le regex capturera la première occurrence."
+                ? $"L'attribut « {node.AttributeName} » apparaît {occLabel} fois : le regex capturera la première occurrence."
                 : null;
 
-            return new ExtractionSuggestion(null, regex, occurrences, warning, null, htmlPath);
+            return new ExtractionSuggestion(null, regex, occurrences, warning, null, htmlPath, hasMore);
         }
 
         if (!string.IsNullOrWhiteSpace(node.ElementTagName))
@@ -673,12 +755,13 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                 ? $@"<{tagEsc}(?:\s+[^>]*)?>([\s\S]*?)</{tagEsc}>"
                 : $@"<{tagEsc}\b{distinguishingFilter}[^>]*>([\s\S]*?)</{tagEsc}>";
 
-            var occurrences = CountRegexMatches(rawText, anchorPattern);
+            var (occurrences, hasMore) = CountRegexMatchesBounded(rawText, anchorPattern, cancellationToken: cancellationToken);
+            var occLabel = FormatOccurrenceCount(occurrences, hasMore);
             var warning = occurrences > 1
-                ? $"La balise <{node.ElementTagName}> apparaît {occurrences} fois : le regex capturera la première occurrence."
+                ? $"La balise <{node.ElementTagName}> apparaît {occLabel} fois : le regex capturera la première occurrence."
                 : null;
 
-            return new ExtractionSuggestion(null, regex, occurrences, warning, null, htmlPath);
+            return new ExtractionSuggestion(null, regex, occurrences, warning, null, htmlPath, hasMore);
         }
 
         return new ExtractionSuggestion(null, null, 0, null, "Impossible de générer un regex pour ce nœud XML/HTML.", htmlPath);
@@ -690,7 +773,8 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         int safeLength,
         int safeContextLen,
         bool useTrailingAnchor,
-        HtmlSelectionContext? htmlContext)
+        HtmlSelectionContext? htmlContext,
+        CancellationToken cancellationToken)
     {
         var htmlPath = htmlContext?.HtmlPath;
         var selectedText = text.Substring(safeStart, safeLength);
@@ -814,7 +898,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         var chosenRegex = smartRegex;
         if (chosenRegex is not null && IsValidRegex(chosenRegex))
         {
-            var smartInfo = InspectRegexMatches(text, chosenRegex, selectedText);
+            var smartInfo = InspectRegexMatches(text, chosenRegex, selectedText, cancellationToken);
 
             // Si l'utilisateur a élargi Contexte (>15) ou si le regex sémantique ne capture pas la sélection en 1re occurrence,
             // vérifier si le contexte littéral désambiguïse mieux tout en capturant exactement la sélection.
@@ -822,7 +906,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
                 (!string.IsNullOrEmpty(beforeLiteral) || !string.IsNullOrEmpty(afterLiteral)) &&
                 IsValidRegex(literalRegex))
             {
-                var literalInfo = InspectRegexMatches(text, literalRegex, selectedText);
+                var literalInfo = InspectRegexMatches(text, literalRegex, selectedText, cancellationToken);
                 if (literalInfo.Count > 0 &&
                     literalInfo.MatchedSelected &&
                     (literalInfo.Count < smartInfo.Count ||
@@ -847,7 +931,7 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             return new ExtractionSuggestion(null, null, 0, null, "Impossible de générer un regex valide pour cette sélection.", htmlPath);
         }
 
-        var finalInfo = InspectRegexMatches(text, chosenRegex, selectedText);
+        var finalInfo = InspectRegexMatches(text, chosenRegex, selectedText, cancellationToken);
         if (finalInfo.Count == 0)
         {
             // Ultime repli sûr avec échappement strict des délimiteurs
@@ -859,19 +943,20 @@ public sealed class ExtractionSuggester : IExtractionSuggester
             if (!string.IsNullOrEmpty(beforeLiteral) && IsValidRegex(strictRegex))
             {
                 chosenRegex = strictRegex;
-                finalInfo = InspectRegexMatches(text, chosenRegex, selectedText);
+                finalInfo = InspectRegexMatches(text, chosenRegex, selectedText, cancellationToken);
             }
         }
 
         string? warning = null;
         if (finalInfo.Count > 1)
         {
+            var occLabel = FormatOccurrenceCount(finalInfo.Count, finalInfo.HasMore);
             warning = string.Equals(finalInfo.FirstValue, selectedText, StringComparison.Ordinal)
-                ? $"Ce motif correspond à {finalInfo.Count} passages dans le texte : augmente la longueur du contexte ou active l'ancre de fin."
-                : $"Ce motif correspond à {finalInfo.Count} passages (la 1re occurrence est différente de ta sélection) : augmente le contexte ou active l'ancre de fin.";
+                ? $"Ce motif correspond à {occLabel} passages dans le texte : augmente la longueur du contexte ou active l'ancre de fin."
+                : $"Ce motif correspond à {occLabel} passages (la 1re occurrence est différente de ta sélection) : augmente le contexte ou active l'ancre de fin.";
         }
 
-        return new ExtractionSuggestion(null, chosenRegex, finalInfo.Count, warning, null, htmlPath);
+        return new ExtractionSuggestion(null, chosenRegex, finalInfo.Count, warning, null, htmlPath, finalInfo.HasMore);
     }
 
     private static string InferSmartCaptureGroup(
@@ -1026,44 +1111,54 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         return string.Empty;
     }
 
-    private static (int Count, string? FirstValue, bool MatchedSelected) InspectRegexMatches(
+    private static (int Count, string? FirstValue, bool MatchedSelected, bool HasMore) InspectRegexMatches(
         string text,
         string pattern,
-        string selectedText)
+        string selectedText,
+        CancellationToken cancellationToken)
     {
         try
         {
             var regex = new Regex(pattern, RegexOptions.CultureInvariant, RegexTimeout);
-            var matches = regex.Matches(text);
-            var count = matches.Count;
-            if (count == 0)
+            var m = regex.Match(text);
+            if (!m.Success)
             {
-                return (0, null, false);
+                return (0, null, false, false);
             }
 
             string? firstVal = null;
             var matchedSelected = false;
-            foreach (Match m in matches)
+            var count = 0;
+
+            while (m.Success)
             {
-                if (!m.Success)
-                {
-                    continue;
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                count++;
 
                 var val = m.Groups.Count > 1 && m.Groups[1].Success ? m.Groups[1].Value : m.Value;
                 firstVal ??= val;
-                if (string.Equals(val, selectedText, StringComparison.Ordinal))
+                if (!matchedSelected && string.Equals(val, selectedText, StringComparison.Ordinal))
                 {
                     matchedSelected = true;
-                    break;
                 }
+
+                if (count > MaxTrackedRegexOccurrences)
+                {
+                    return (MaxTrackedRegexOccurrences, firstVal, matchedSelected, true);
+                }
+
+                m = m.NextMatch();
             }
 
-            return (count, firstVal, matchedSelected);
+            return (count, firstVal, matchedSelected, false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception)
         {
-            return (0, null, false);
+            return (0, null, false, false);
         }
     }
 
@@ -1131,22 +1226,46 @@ public sealed class ExtractionSuggester : IExtractionSuggester
         return result.ToString();
     }
 
-    private static int CountRegexMatches(string text, string pattern)
+    private static (int Count, bool HasMore) CountRegexMatchesBounded(
+        string text,
+        string pattern,
+        int maxTracked = MaxTrackedRegexOccurrences,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(pattern))
         {
-            return 0;
+            return (0, false);
         }
 
         try
         {
-            return Regex.Matches(text, pattern, RegexOptions.CultureInvariant, RegexTimeout).Count;
+            var regex = new Regex(pattern, RegexOptions.CultureInvariant, RegexTimeout);
+            var count = 0;
+            var m = regex.Match(text);
+            while (m.Success)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                count++;
+                if (count > maxTracked)
+                {
+                    return (maxTracked, true);
+                }
+                m = m.NextMatch();
+            }
+            return (count, false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception)
         {
-            return 0;
+            return (0, false);
         }
     }
+
+    private static string FormatOccurrenceCount(int count, bool hasMore) =>
+        hasMore ? $"plus de {count}" : count.ToString();
 
     private static bool IsValidRegex(string pattern)
     {

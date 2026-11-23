@@ -11,70 +11,37 @@
              x:Name="ExtractorRoot"
              x:DataType="vm:ExtractorViewModel">
 
-    <UserControl.Resources>
-        <DataTemplate x:Key="ExtractorNodeTemplate" x:DataType="models:ExtractorNode">
-            <StackPanel Spacing="1">
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="4">
-                    <Button Grid.Column="0"
-                            Classes="icon"
-                            IsVisible="{Binding HasChildren}"
-                            Command="{Binding #ExtractorRoot.ViewModel.ToggleNodeExpandCommand}"
-                            CommandParameter="{Binding}"
-                            AutomationProperties.Name="Déplier ou replier le nœud">
-                        <Panel>
-                            <Path Classes="iconStroke"
-                                  IsVisible="{Binding !IsExpanded}"
-                                  Data="{StaticResource IconChevronRight}" />
-                            <Path Classes="iconStroke"
-                                  IsVisible="{Binding IsExpanded}"
-                                  Data="{StaticResource IconChevronDown}" />
-                        </Panel>
-                    </Button>
-                    <Border Grid.Column="0"
-                            Width="24"
-                            IsVisible="{Binding !HasChildren}" />
-
-                    <Button Grid.Column="1"
-                            Classes="ghost treeNodeButton"
-                            Classes.selected="{Binding IsSelected}"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Left"
-                            Height="26"
-                            MinHeight="26"
-                            Padding="6,0"
-                            Command="{Binding #ExtractorRoot.ViewModel.SelectNodeCommand}"
-                            CommandParameter="{Binding}">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Border Background="{DynamicResource SurfaceAltBrush}"
-                                    BorderBrush="{DynamicResource BorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
-                                    Padding="4,0"
-                                    VerticalAlignment="Center">
-                                <TextBlock Text="{Binding KindTag}"
-                                           FontFamily="{DynamicResource MonoFontFamily}"
-                                           FontSize="{DynamicResource FontSizeCaption}"
-                                           Foreground="{DynamicResource TextMutedBrush}" />
-                            </Border>
-                            <TextBlock Text="{Binding Label}"
-                                       FontFamily="{DynamicResource MonoFontFamily}"
-                                       FontSize="{DynamicResource FontSizeSmall}"
-                                       Foreground="{DynamicResource TextBrush}"
-                                       TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center" />
-                        </StackPanel>
-                    </Button>
-                </Grid>
-
-                <ItemsControl ItemsSource="{Binding Children}"
-                              ItemTemplate="{StaticResource ExtractorNodeTemplate}"
-                              IsVisible="{Binding IsExpanded}"
-                              Margin="18,0,0,0" />
-            </StackPanel>
-        </DataTemplate>
-    </UserControl.Resources>
-
     <UserControl.Styles>
+        <Style Selector="ListBox.treeList ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="26" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style Selector="ListBox.treeList ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.treeList ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.treeList ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.treeList ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <Style Selector="Button.treeNodeButton.searchMatch /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource WarningBorderSoftBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="Button.treeNodeButton.activeMatch /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource WarningBadgeSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+        </Style>
         <Style Selector="Button.treeNodeButton.selected /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
             <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
@@ -167,28 +134,64 @@
                                HorizontalAlignment="Right" />
                 </Grid>
 
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                <!-- Bandeau compact pour réponses volumineuses lorsque l'éditeur supérieur est replié -->
+                <Border IsVisible="{Binding ShowCollapsedInputBanner}"
+                        Background="{DynamicResource SurfaceAltBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource ControlCornerRadius}"
+                        Padding="10,6">
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding CollapsedInputSummary}"
+                                   FontSize="{DynamicResource FontSizeSmall}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <Button Grid.Column="1"
+                                Classes="secondary"
+                                Content="Afficher le texte"
+                                Command="{Binding ExpandTopInputEditorCommand}"
+                                AutomationProperties.Name="Afficher l'éditeur de réponse collée" />
+                        <Button Grid.Column="2"
+                                Classes="secondary"
+                                Content="Agrandir"
+                                Command="{Binding EnlargeInputTextCommand}"
+                                AutomationProperties.Name="Agrandir la réponse collée" />
+                    </Grid>
+                </Border>
+
+                <Grid IsVisible="{Binding ShowTopInputEditor}"
+                      ColumnDefinitions="*,Auto"
+                      ColumnSpacing="6">
                     <TextBox x:Name="InputResponseTextBox"
                              Grid.Column="0"
                              Classes="mono"
                              Text="{Binding InputText}"
                              AcceptsReturn="True"
-                             TextWrapping="Wrap"
+                             TextWrapping="{Binding ShouldWrapInputText, Converter={x:Static conv:BoolToTextWrappingConverter.Instance}}"
                              Height="120"
                              ScrollViewer.AllowAutoHide="False"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.HorizontalScrollBarVisibility="{Binding ShouldWrapInputText, Converter={x:Static conv:BoolToHorizontalScrollBarConverter.Instance}}"
                              PlaceholderText="Colle une réponse JSON, XML, HTML ou texte brut..."
                              AutomationProperties.Name="Texte de réponse à analyser" />
 
-                    <Button Grid.Column="1"
-                            Classes="icon"
-                            VerticalAlignment="Top"
-                            Command="{Binding EnlargeInputTextCommand}"
-                            ToolTip.Tip="Agrandir"
-                            AutomationProperties.Name="Agrandir la réponse collée">
-                        <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
-                    </Button>
+                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Top">
+                        <Button Classes="icon"
+                                Command="{Binding EnlargeInputTextCommand}"
+                                ToolTip.Tip="Agrandir"
+                                AutomationProperties.Name="Agrandir la réponse collée">
+                            <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                        </Button>
+                        <Button Classes="icon"
+                                IsVisible="{Binding ShowCollapseTopEditorButton}"
+                                Command="{Binding CollapseTopInputEditorCommand}"
+                                ToolTip.Tip="Masquer l'aperçu"
+                                AutomationProperties.Name="Masquer l'éditeur supérieur">
+                            <Path Classes="iconStroke" Data="{StaticResource IconArrowUp}" />
+                        </Button>
+                    </StackPanel>
                 </Grid>
 
                 <Border IsVisible="{Binding HasAnalysisMessage}"
@@ -220,13 +223,32 @@
                 MinHeight="180">
             <Panel>
                 <!-- État initial avant premier chargement -->
-                <TextBlock IsVisible="{Binding !HasLoaded}"
+                <TextBlock IsVisible="{Binding ShowEmptyPrompt}"
                            Text="Colle une réponse ci-dessus puis clique sur « Charger » (ou utilise « Extraire une valeur... » depuis une réponse)."
                            FontSize="{DynamicResource FontSizeSmall}"
                            Foreground="{DynamicResource TextMutedBrush}"
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
                            TextWrapping="Wrap" />
+
+                <!-- État analyse en cours (arrière-plan) -->
+                <StackPanel IsVisible="{Binding IsAnalyzing}"
+                            Spacing="10"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="Analyse de la réponse en cours..."
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               HorizontalAlignment="Center" />
+                    <ProgressBar IsIndeterminate="True"
+                                 Width="240"
+                                 HorizontalAlignment="Center" />
+                    <Button Classes="secondary"
+                            Content="Annuler"
+                            Command="{Binding CancelLoadCommand}"
+                            HorizontalAlignment="Center"
+                            AutomationProperties.Name="Annuler l'analyse" />
+                </StackPanel>
 
                 <!-- Mode Arbre (JSON / XML / HTML structuré) -->
                 <Grid IsVisible="{Binding IsTreeMode}"
@@ -256,12 +278,71 @@
                             </StackPanel>
                         </Button>
 
-                        <TextBlock Grid.Column="1"
-                                   Text="Clique sur un élément ci-dessous pour générer son extracteur :"
-                                   FontSize="{DynamicResource FontSizeSmall}"
-                                   Foreground="{DynamicResource TextMutedBrush}"
-                                   VerticalAlignment="Center"
-                                   TextWrapping="Wrap" />
+                        <StackPanel Grid.Column="1"
+                                    Orientation="Horizontal"
+                                    Spacing="10"
+                                    VerticalAlignment="Center">
+                            <Border Background="{DynamicResource SurfaceAltBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                                    Padding="6,0,2,0"
+                                    Height="28"
+                                    VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <Path Classes="iconStroke"
+                                          Data="{StaticResource IconSearch}"
+                                          VerticalAlignment="Center" />
+                                    <TextBox x:Name="TreeSearchTextBox"
+                                             Classes="borderless mono"
+                                             Text="{Binding TreeSearchText}"
+                                             Width="175"
+                                             Height="26"
+                                             MinHeight="26"
+                                             Padding="2,0"
+                                             FontSize="{DynamicResource FontSizeSmall}"
+                                             PlaceholderText="Rechercher dans l'arbre..."
+                                             VerticalAlignment="Center"
+                                             AutomationProperties.Name="Rechercher dans la vue arbre" />
+                                    <TextBlock Classes="searchCount"
+                                               Classes.empty="{Binding IsTreeSearchEmpty}"
+                                               IsVisible="{Binding HasTreeSearchResultsBanner}"
+                                               Text="{Binding TreeSearchCountText}"
+                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                               FontSize="{DynamicResource FontSizeCaption}"
+                                               Margin="2,0"
+                                               VerticalAlignment="Center" />
+                                    <Button Classes="icon"
+                                            Focusable="False"
+                                            Command="{Binding NavigatePrevTreeMatchCommand}"
+                                            ToolTip.Tip="Résultat précédent (Maj+Entrée)"
+                                            AutomationProperties.Name="Résultat précédent dans l'arbre">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconArrowUp}" />
+                                    </Button>
+                                    <Button Classes="icon"
+                                            Focusable="False"
+                                            Command="{Binding NavigateNextTreeMatchCommand}"
+                                            ToolTip.Tip="Résultat suivant (Entrée)"
+                                            AutomationProperties.Name="Résultat suivant dans l'arbre">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconArrowDown}" />
+                                    </Button>
+                                    <Button Classes="icon"
+                                            Focusable="False"
+                                            IsVisible="{Binding HasTreeSearchQuery}"
+                                            Command="{Binding ClearTreeSearchCommand}"
+                                            ToolTip.Tip="Effacer la recherche (Échap)"
+                                            AutomationProperties.Name="Effacer la recherche dans l'arbre">
+                                        <Path Classes="iconStroke" Data="{StaticResource IconClose}" />
+                                    </Button>
+                                </StackPanel>
+                            </Border>
+
+                            <CheckBox IsChecked="{Binding FilterTreeBySearch}"
+                                      Content="Filtrer"
+                                      ToolTip.Tip="Afficher uniquement les nœuds correspondants et leurs parents"
+                                      VerticalAlignment="Center"
+                                      AutomationProperties.Name="Filtrer la vue arbre selon la recherche" />
+                        </StackPanel>
 
                         <Button Grid.Column="2"
                                 Classes="secondary"
@@ -278,13 +359,91 @@
                             BorderThickness="1"
                             CornerRadius="{DynamicResource ControlCornerRadius}"
                             Padding="6">
-                        <ScrollViewer AllowAutoHide="False"
-                                      VerticalScrollBarVisibility="Auto"
-                                      HorizontalScrollBarVisibility="Auto">
-                            <ItemsControl ItemsSource="{Binding TreeNodes}"
-                                          ItemTemplate="{StaticResource ExtractorNodeTemplate}"
-                                          Margin="0,0,10,4" />
-                        </ScrollViewer>
+                        <Panel>
+                            <ListBox x:Name="TreeListBox"
+                                     Classes="treeList"
+                                     ItemsSource="{Binding VisibleTreeNodes}"
+                                     SelectionMode="Single"
+                                     ScrollViewer.AllowAutoHide="False"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     AutomationProperties.Name="Arbre de la réponse analysée">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <VirtualizingStackPanel />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:ExtractorNode">
+                                        <Grid Margin="{Binding Depth, Converter={x:Static conv:TreeDepthToMarginConverter.Instance}}"
+                                              ColumnDefinitions="Auto,*"
+                                              ColumnSpacing="4">
+                                            <Button Grid.Column="0"
+                                                    Classes="icon"
+                                                    IsVisible="{Binding HasChildren}"
+                                                    Command="{Binding #ExtractorRoot.ViewModel.ToggleNodeExpandCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    AutomationProperties.Name="Déplier ou replier le nœud">
+                                                <Panel>
+                                                    <Path Classes="iconStroke"
+                                                          IsVisible="{Binding !IsExpanded}"
+                                                          Data="{StaticResource IconChevronRight}" />
+                                                    <Path Classes="iconStroke"
+                                                          IsVisible="{Binding IsExpanded}"
+                                                          Data="{StaticResource IconChevronDown}" />
+                                                </Panel>
+                                            </Button>
+                                            <Border Grid.Column="0"
+                                                    Width="24"
+                                                    IsVisible="{Binding !HasChildren}" />
+
+                                            <Button Grid.Column="1"
+                                                    Classes="ghost treeNodeButton"
+                                                    Classes.searchMatch="{Binding IsSearchMatch}"
+                                                    Classes.activeMatch="{Binding IsActiveSearchMatch}"
+                                                    Classes.selected="{Binding IsSelected}"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Left"
+                                                    Height="26"
+                                                    MinHeight="26"
+                                                    Padding="6,0"
+                                                    ToolTip.Tip="{Binding Label}"
+                                                    Command="{Binding #ExtractorRoot.ViewModel.SelectNodeCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                                    <Border Grid.Column="0"
+                                                            Background="{DynamicResource SurfaceAltBrush}"
+                                                            BorderBrush="{DynamicResource BorderBrush}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                            Padding="4,0"
+                                                            VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding KindTag}"
+                                                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                                   Foreground="{DynamicResource TextMutedBrush}" />
+                                                    </Border>
+                                                    <TextBlock Grid.Column="1"
+                                                               Text="{Binding Label}"
+                                                               FontFamily="{DynamicResource MonoFontFamily}"
+                                                               FontSize="{DynamicResource FontSizeSmall}"
+                                                               Foreground="{DynamicResource TextBrush}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center" />
+                                                </Grid>
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <TextBlock IsVisible="{Binding ShowNoTreeSearchMatchesMessage}"
+                                       Text="Aucun nœud ne correspond à la recherche."
+                                       FontSize="{DynamicResource FontSizeSmall}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Panel>
                     </Border>
                 </Grid>
 
@@ -314,13 +473,13 @@
                     <Grid Grid.Row="1">
                         <TextBox x:Name="ManualSelectionTextBox"
                                  Classes="mono"
-                                 Text="{Binding InputText, Mode=OneWay}"
+                                 Text="{Binding ManualCodeText, Mode=OneWay}"
                                  IsReadOnly="True"
                                  AcceptsReturn="True"
-                                 TextWrapping="Wrap"
+                                 TextWrapping="{Binding WrapManualCodeText, Converter={x:Static conv:BoolToTextWrappingConverter.Instance}}"
                                  ScrollViewer.AllowAutoHide="False"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 ScrollViewer.HorizontalScrollBarVisibility="{Binding WrapManualCodeText, Converter={x:Static conv:BoolToHorizontalScrollBarConverter.Instance}}"
                                  AutomationProperties.Name="Texte analysé pour sélection manuelle" />
                         <views:TextBoxSearchHighlightOverlay x:Name="CodeSearchOverlay"
                                                              IsHitTestVisible="False"
@@ -429,6 +588,12 @@
                                   Margin="0,0,12,4"
                                   VerticalAlignment="Center"
                                   AutomationProperties.Name="Ajouter une ancre après la sélection" />
+
+                        <CheckBox IsChecked="{Binding WrapManualCodeText}"
+                                  Content="Retour à la ligne"
+                                  Margin="0,0,12,4"
+                                  VerticalAlignment="Center"
+                                  AutomationProperties.Name="Activer le retour à la ligne dans le code" />
 
                         <TextBlock IsVisible="{Binding HasSelectionPreview}"
                                    Text="{Binding SelectionPreviewText}"

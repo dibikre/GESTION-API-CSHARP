@@ -563,3 +563,53 @@ public static class ChainResultSortModeConverters
             _ => mode.ToString()
         });
 }
+
+public sealed class TreeDepthToMarginConverter : IValueConverter
+{
+    public static readonly TreeDepthToMarginConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var depth = value is int d ? Math.Clamp(d, 0, 18) : 0;
+        return new Avalonia.Thickness(depth * 16, 0, 0, 0);
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return Avalonia.Data.BindingOperations.DoNothing;
+    }
+}
+
+public sealed class BoolToTextWrappingConverter : IValueConverter
+{
+    public static readonly BoolToTextWrappingConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is true
+            ? Avalonia.Media.TextWrapping.Wrap
+            : Avalonia.Media.TextWrapping.NoWrap;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return Avalonia.Data.BindingOperations.DoNothing;
+    }
+}
+
+public sealed class BoolToHorizontalScrollBarConverter : IValueConverter
+{
+    public static readonly BoolToHorizontalScrollBarConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value is true
+            ? Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
+            : Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return Avalonia.Data.BindingOperations.DoNothing;
+    }
+}

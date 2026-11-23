@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using ApiTester.Models;
 using ApiTester.ViewModels;
 using Avalonia;
 using Avalonia.Controls;
@@ -16,11 +19,16 @@ namespace ApiTester.Views;
 public partial class ExtractorView : UserControl
 {
     private const int AutoSuggestMaxSelectionLength = 4096;
+    private const int MaxCodeSearchMatches = 5_000;
+    private const int CodeSearchDebounceMs = 140;
+    private const int ImmediateSearchThresholdChars = 30_000;
 
     public static readonly StyledProperty<ExtractorViewModel?> ViewModelProperty =
         AvaloniaProperty.Register<ExtractorView, ExtractorViewModel?>(nameof(ViewModel));
 
     private readonly List<(int Start, int Length)> _searchMatches = [];
+    private CancellationTokenSource? _codeSearchCts;
+    private bool _hasMoreCodeSearchMatches;
     private TextBox? _lastSelectionBox;
     private TextPresenter? _manualTextPresenter;
     private ScrollViewer? _manualScrollViewer;
@@ -48,7 +56,9 @@ public partial class ExtractorView : UserControl
         UseSelectionButton.AddHandler(InputElement.PointerPressedEvent, OnUseSelectionButtonPointerPressed, RoutingStrategies.Tunnel);
         UseSelectionButton.Click += OnUseSelectionButtonClick;
 
-        CodeSearchTextBox.TextChanged += (_, _) => UpdateCodeSearch(scrollToMatch: true);
+        TreeSearchTextBox.KeyDown += OnTreeSearchTextBoxKeyDown;
+
+        CodeSearchTextBox.TextChanged += (_, _) => _ = UpdateCodeSearchAsync(scrollToMatch: true);
         CodeSearchTextBox.KeyDown += OnCodeSearchTextBoxKeyDown;
         CodeSearchPrevButton.Click += (_, _) => NavigateCodeSearch(-1);
         CodeSearchNextButton.Click += (_, _) => NavigateCodeSearch(1);
@@ -71,6 +81,7 @@ public partial class ExtractorView : UserControl
         if (_subscribedViewModel is not null)
         {
             _subscribedViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _subscribedViewModel.ScrollToTreeNodeCallback = null;
             _subscribedViewModel = null;
         }
 
@@ -79,12 +90,35 @@ public partial class ExtractorView : UserControl
         {
             _subscribedViewModel = ViewModel;
             _subscribedViewModel.PropertyChanged += OnViewModelPropertyChanged;
+            _subscribedViewModel.ScrollToTreeNodeCallback = ScrollTreeToNode;
+        }
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        if (_subscribedViewModel is not null)
+        {
+            _subscribedViewModel.ScrollToTreeNodeCallback = ScrollTreeToNode;
+        }
+
+        if (_subscribedViewModel?.IsManualMode == true)
+        {
+            Dispatcher.UIThread.Post(EnsureManualTemplateParts, DispatcherPriority.Loaded);
         }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
+        CancelPendingCodeSearch();
+
+        if (_subscribedViewModel is not null)
+        {
+            _subscribedViewModel.ScrollToTreeNodeCallback = null;
+        }
+
         if (_manualScrollViewer is not null)
         {
             _manualScrollViewer.ScrollChanged -= OnManualScrollChanged;
@@ -94,6 +128,17 @@ public partial class ExtractorView : UserControl
         CodeSearchOverlay.Attach(null, null);
     }
 
+    private void ScrollTreeToNode(ExtractorNode node)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (ViewModel?.IsTreeMode == true)
+            {
+                TreeListBox.ScrollIntoView(node);
+            }
+        }, DispatcherPriority.Loaded);
+    }
+
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(ExtractorViewModel.SelectionPreviewText) &&
@@ -101,14 +146,31 @@ public partial class ExtractorView : UserControl
         {
             ClearCachedSelection();
         }
-        else if (e.PropertyName == nameof(ExtractorViewModel.IsManualMode) &&
-                 _subscribedViewModel?.IsManualMode == true)
+        else if (e.PropertyName == nameof(ExtractorViewModel.IsManualMode))
         {
-            Dispatcher.UIThread.Post(() =>
+            if (_subscribedViewModel?.IsManualMode == true)
             {
-                EnsureManualTemplateParts();
-                CodeSearchOverlay.InvalidateVisual();
-            }, DispatcherPriority.Loaded);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    EnsureManualTemplateParts();
+                    if (!string.IsNullOrEmpty(CodeSearchTextBox.Text))
+                    {
+                        _ = UpdateCodeSearchAsync(scrollToMatch: false);
+                    }
+                    else
+                    {
+                        CodeSearchOverlay.InvalidateVisual();
+                    }
+                }, DispatcherPriority.Loaded);
+            }
+            else
+            {
+                CancelPendingCodeSearch();
+                _searchMatches.Clear();
+                _hasMoreCodeSearchMatches = false;
+                _activeSearchMatchIndex = -1;
+                CodeSearchOverlay.SetSearchState(_searchMatches, -1);
+            }
         }
     }
 
@@ -179,9 +241,9 @@ public partial class ExtractorView : UserControl
                 ClearCachedSelection();
             }
 
-            if (ReferenceEquals(tb, ManualSelectionTextBox))
+            if (ReferenceEquals(tb, ManualSelectionTextBox) && ViewModel?.IsManualMode == true)
             {
-                UpdateCodeSearch(scrollToMatch: false);
+                _ = UpdateCodeSearchAsync(scrollToMatch: false);
             }
 
             return;
@@ -201,7 +263,36 @@ public partial class ExtractorView : UserControl
 
     private void OnExtractorTunnelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (ViewModel is null || !ViewModel.IsManualMode)
+        if (ViewModel is null)
+        {
+            return;
+        }
+
+        if (ViewModel.IsTreeMode)
+        {
+            if (e.Key == Key.F && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+            {
+                TreeSearchTextBox.Focus();
+                TreeSearchTextBox.SelectAll();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.F3 && ViewModel.CanNavigateTreeSearch)
+            {
+                if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+                {
+                    ViewModel.NavigatePrevTreeMatchCommand.Execute(null);
+                }
+                else
+                {
+                    ViewModel.NavigateNextTreeMatchCommand.Execute(null);
+                }
+                e.Handled = true;
+            }
+
+            return;
+        }
+
+        if (!ViewModel.IsManualMode)
         {
             return;
         }
@@ -215,6 +306,32 @@ public partial class ExtractorView : UserControl
         else if (e.Key == Key.F3 && _searchMatches.Count > 0)
         {
             NavigateCodeSearch(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : 1);
+            e.Handled = true;
+        }
+    }
+
+    private void OnTreeSearchTextBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (ViewModel is null)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter && ViewModel.CanNavigateTreeSearch)
+        {
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            {
+                ViewModel.NavigatePrevTreeMatchCommand.Execute(null);
+            }
+            else
+            {
+                ViewModel.NavigateNextTreeMatchCommand.Execute(null);
+            }
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && ViewModel.HasTreeSearchQuery)
+        {
+            ViewModel.ClearTreeSearchCommand.Execute(null);
             e.Handled = true;
         }
     }
@@ -233,13 +350,15 @@ public partial class ExtractorView : UserControl
         }
     }
 
-    private void UpdateCodeSearch(bool scrollToMatch)
+    private async Task UpdateCodeSearchAsync(bool scrollToMatch)
     {
-        var query = CodeSearchTextBox.Text ?? string.Empty;
-        _searchMatches.Clear();
+        CancelPendingCodeSearch();
 
-        if (string.IsNullOrEmpty(query))
+        var query = CodeSearchTextBox.Text ?? string.Empty;
+        if (string.IsNullOrEmpty(query) || ViewModel?.IsManualMode != true)
         {
+            _searchMatches.Clear();
+            _hasMoreCodeSearchMatches = false;
             _activeSearchMatchIndex = -1;
             CodeSearchCountText.IsVisible = false;
             CodeSearchCountText.Classes.Remove("empty");
@@ -250,21 +369,90 @@ public partial class ExtractorView : UserControl
         }
 
         var text = ManualSelectionTextBox.Text ?? string.Empty;
-        if (!string.IsNullOrEmpty(text))
+        if (string.IsNullOrEmpty(text))
         {
-            var pos = 0;
-            while (pos <= text.Length - query.Length)
-            {
-                var found = text.IndexOf(query, pos, StringComparison.OrdinalIgnoreCase);
-                if (found < 0)
-                {
-                    break;
-                }
-
-                _searchMatches.Add((found, query.Length));
-                pos = found + query.Length;
-            }
+            ApplyCodeSearchResults([], hasMore: false, scrollToMatch: false);
+            return;
         }
+
+        if (text.Length <= ImmediateSearchThresholdChars)
+        {
+            var (syncMatches, syncMore) = FindCodeMatches(text, query, MaxCodeSearchMatches, CancellationToken.None);
+            ApplyCodeSearchResults(syncMatches, syncMore, scrollToMatch);
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _codeSearchCts = cts;
+        var ct = cts.Token;
+
+        try
+        {
+            await Task.Delay(CodeSearchDebounceMs, ct);
+            var (matches, hasMore) = await Task.Run(
+                () => FindCodeMatches(text, query, MaxCodeSearchMatches, ct),
+                ct);
+
+            if (ct.IsCancellationRequested || !ReferenceEquals(_codeSearchCts, cts))
+            {
+                return;
+            }
+
+            if (ViewModel?.IsManualMode != true ||
+                !string.Equals(CodeSearchTextBox.Text ?? string.Empty, query, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            ApplyCodeSearchResults(matches, hasMore, scrollToMatch);
+        }
+        catch (OperationCanceledException)
+        {
+            // Recherche remplacée ou annulée.
+        }
+    }
+
+    private static (List<(int Start, int Length)> Matches, bool HasMore) FindCodeMatches(
+        string text,
+        string query,
+        int maxMatches,
+        CancellationToken ct)
+    {
+        var matches = new List<(int Start, int Length)>();
+        var hasMore = false;
+        var pos = 0;
+
+        while (pos <= text.Length - query.Length)
+        {
+            if ((matches.Count & 255) == 0)
+            {
+                ct.ThrowIfCancellationRequested();
+            }
+
+            var found = text.IndexOf(query, pos, StringComparison.OrdinalIgnoreCase);
+            if (found < 0)
+            {
+                break;
+            }
+
+            if (matches.Count >= maxMatches)
+            {
+                hasMore = true;
+                break;
+            }
+
+            matches.Add((found, query.Length));
+            pos = found + query.Length;
+        }
+
+        return (matches, hasMore);
+    }
+
+    private void ApplyCodeSearchResults(List<(int Start, int Length)> matches, bool hasMore, bool scrollToMatch)
+    {
+        _searchMatches.Clear();
+        _searchMatches.AddRange(matches);
+        _hasMoreCodeSearchMatches = hasMore;
 
         if (_searchMatches.Count == 0)
         {
@@ -293,7 +481,7 @@ public partial class ExtractorView : UserControl
         }
 
         _activeSearchMatchIndex = nextIndex;
-        CodeSearchCountText.Text = $"{_activeSearchMatchIndex + 1}/{_searchMatches.Count}";
+        CodeSearchCountText.Text = FormatCodeSearchCount(_activeSearchMatchIndex + 1, _searchMatches.Count, _hasMoreCodeSearchMatches);
         CodeSearchCountText.IsVisible = true;
         CodeSearchCountText.Classes.Remove("empty");
         CodeSearchPrevButton.IsEnabled = true;
@@ -324,10 +512,23 @@ public partial class ExtractorView : UserControl
             _activeSearchMatchIndex = (_activeSearchMatchIndex + delta + _searchMatches.Count) % _searchMatches.Count;
         }
 
-        CodeSearchCountText.Text = $"{_activeSearchMatchIndex + 1}/{_searchMatches.Count}";
+        CodeSearchCountText.Text = FormatCodeSearchCount(_activeSearchMatchIndex + 1, _searchMatches.Count, _hasMoreCodeSearchMatches);
         EnsureManualTemplateParts();
         CodeSearchOverlay.SetSearchState(_searchMatches, _activeSearchMatchIndex);
         ScrollToSearchMatch(_activeSearchMatchIndex, selectMatch: true);
+    }
+
+    private static string FormatCodeSearchCount(int current, int total, bool hasMore) =>
+        hasMore ? $"{current}/{total}+" : $"{current}/{total}";
+
+    private void CancelPendingCodeSearch()
+    {
+        if (_codeSearchCts is not null)
+        {
+            _codeSearchCts.Cancel();
+            _codeSearchCts.Dispose();
+            _codeSearchCts = null;
+        }
     }
 
     private void ScrollToSearchMatch(int matchIndex, bool selectMatch)

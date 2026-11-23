@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Net;
 using System.Text;
+using System.Threading;
 using System.Xml;
 using System.Xml.Linq;
 using ApiTester.Models;
@@ -90,7 +91,7 @@ internal static class HtmlDocumentParser
         "p", "pre", "section", "table", "ul"
     };
 
-    public static HtmlParseResult Parse(string html)
+    public static HtmlParseResult Parse(string html, CancellationToken cancellationToken = default)
     {
         var roots = new List<HtmlParsedElement>();
         var idCounts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -117,6 +118,11 @@ internal static class HtmlDocumentParser
 
         while (pos < len && elementCount < MaxElements)
         {
+            if ((elementCount & 63) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var lt = html.IndexOf('<', pos);
             if (lt < 0)
             {
@@ -292,7 +298,10 @@ internal static class HtmlDocumentParser
         };
     }
 
-    public static ObservableCollection<ExtractorNode> BuildExtractorTree(string html, HtmlParseResult parsed)
+    public static ObservableCollection<ExtractorNode> BuildExtractorTree(
+        string html,
+        HtmlParseResult parsed,
+        CancellationToken cancellationToken = default)
     {
         var result = new ObservableCollection<ExtractorNode>();
         if (parsed.Roots.Count == 0)
@@ -300,10 +309,25 @@ internal static class HtmlDocumentParser
             return result;
         }
 
-        // Si un élément <html> racine existe parmi des commentaires/nœuds parasites, le mettre en avant
+        var rootTotals = CountTagOccurrences(parsed.Roots);
+        var rootIndices = new Dictionary<string, int>(StringComparer.Ordinal);
+
         foreach (var root in parsed.Roots)
         {
-            result.Add(BuildExtractorNode(html, root, parsed, depth: 0));
+            cancellationToken.ThrowIfCancellationRequested();
+            var idx = rootIndices.GetValueOrDefault(root.TagName) + 1;
+            rootIndices[root.TagName] = idx;
+            var total = rootTotals.GetValueOrDefault(root.TagName, 1);
+
+            result.Add(BuildExtractorNode(
+                html,
+                root,
+                parsed,
+                parentHtmlPath: string.Empty,
+                sameTagCount: total,
+                sameTagIndex: idx,
+                depth: 0,
+                cancellationToken));
         }
 
         return result;
@@ -561,12 +585,82 @@ internal static class HtmlDocumentParser
         return string.Join(" > ", segments);
     }
 
+    private static Dictionary<string, int> CountTagOccurrences(List<HtmlParsedElement> elements)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var el in elements)
+        {
+            counts[el.TagName] = counts.GetValueOrDefault(el.TagName) + 1;
+        }
+        return counts;
+    }
+
+    private static string BuildHtmlPathIncremental(
+        HtmlParsedElement element,
+        HtmlParseResult parsed,
+        string parentHtmlPath,
+        int sameTagCount,
+        int sameTagIndex)
+    {
+        var id = element.GetAttribute("id");
+        if (!string.IsNullOrWhiteSpace(id) &&
+            parsed.IdCounts.TryGetValue(id, out var idCount) &&
+            idCount == 1)
+        {
+            return $"//{element.TagName}[@id={QuoteXPathLiteral(id)}]";
+        }
+
+        if (element.TagName.Equals("meta", StringComparison.OrdinalIgnoreCase))
+        {
+            var prop = element.GetAttribute("property");
+            if (!string.IsNullOrWhiteSpace(prop) &&
+                parsed.MetaPropertyCounts.TryGetValue(prop, out var propCount) &&
+                propCount == 1)
+            {
+                return $"//meta[@property={QuoteXPathLiteral(prop)}]";
+            }
+
+            var metaName = element.GetAttribute("name");
+            if (!string.IsNullOrWhiteSpace(metaName) &&
+                parsed.MetaNameCounts.TryGetValue(metaName, out var nameCount) &&
+                nameCount == 1)
+            {
+                return $"//meta[@name={QuoteXPathLiteral(metaName)}]";
+            }
+        }
+
+        if (element.TagName.Equals("link", StringComparison.OrdinalIgnoreCase))
+        {
+            var rel = element.GetAttribute("rel");
+            if (!string.IsNullOrWhiteSpace(rel) &&
+                parsed.LinkRelCounts.TryGetValue(rel, out var relCount) &&
+                relCount == 1)
+            {
+                return $"//link[@rel={QuoteXPathLiteral(rel)}]";
+            }
+        }
+
+        var segment = sameTagCount > 1
+            ? $"{element.TagName}[{sameTagIndex}]"
+            : element.TagName;
+
+        return string.IsNullOrEmpty(parentHtmlPath)
+            ? "/" + segment
+            : $"{parentHtmlPath}/{segment}";
+    }
+
     private static ExtractorNode BuildExtractorNode(
         string html,
         HtmlParsedElement element,
         HtmlParseResult parsed,
-        int depth)
+        string parentHtmlPath,
+        int sameTagCount,
+        int sameTagIndex,
+        int depth,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var hasChildElements = element.Children.Count > 0;
         var scalarText = !hasChildElements
             ? ExtractInnerTextPreview(html, element)
@@ -589,7 +683,7 @@ internal static class HtmlDocumentParser
             ? $"<{element.TagName}{descriptor}>{Truncate(scalarText, PreviewMaxChars)}</{element.TagName}>"
             : $"<{element.TagName}{descriptor}>";
 
-        var htmlPath = BuildHtmlPath(element, parsed);
+        var htmlPath = BuildHtmlPathIncremental(element, parsed, parentHtmlPath, sameTagCount, sameTagIndex);
         var cssSelector = BuildCssSelector(element, parsed);
 
         var node = new ExtractorNode
@@ -597,6 +691,7 @@ internal static class HtmlDocumentParser
             Label = label,
             KindTag = "html",
             NodeKind = ExtractorNodeKind.XmlElement,
+            Depth = depth,
             HtmlPath = htmlPath,
             CssSelector = cssSelector,
             ElementTagName = element.TagName,
@@ -617,6 +712,8 @@ internal static class HtmlDocumentParser
                 Label = $"@{attr.Name} = \"{Truncate(attr.Value, PreviewMaxChars)}\"",
                 KindTag = "attr",
                 NodeKind = ExtractorNodeKind.XmlAttribute,
+                Depth = depth + 1,
+                Parent = node,
                 HtmlPath = $"{htmlPath}/@{attr.Name}",
                 CssSelector = $"{cssSelector}::attr({attr.Name})",
                 ElementTagName = element.TagName,
@@ -632,9 +729,28 @@ internal static class HtmlDocumentParser
             });
         }
 
-        foreach (var child in element.Children)
+        if (element.Children.Count > 0)
         {
-            node.Children.Add(BuildExtractorNode(html, child, parsed, depth + 1));
+            var childTotals = CountTagOccurrences(element.Children);
+            var childIndices = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var child in element.Children)
+            {
+                var idx = childIndices.GetValueOrDefault(child.TagName) + 1;
+                childIndices[child.TagName] = idx;
+                var total = childTotals.GetValueOrDefault(child.TagName, 1);
+
+                var childNode = BuildExtractorNode(
+                    html,
+                    child,
+                    parsed,
+                    htmlPath,
+                    total,
+                    idx,
+                    depth + 1,
+                    cancellationToken);
+                childNode.Parent = node;
+                node.Children.Add(childNode);
+            }
         }
 
         return node;

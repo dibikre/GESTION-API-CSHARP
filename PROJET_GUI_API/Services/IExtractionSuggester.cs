@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using ApiTester.Models;
 
 namespace ApiTester.Services;
@@ -7,11 +8,17 @@ public interface IExtractionSuggester
 {
     ResponseFormat DetectFormat(string? text, ResponseFormat requestedFormat);
 
-    FormatAnalysisResult Analyze(string? text, ResponseFormat requestedFormat);
+    FormatAnalysisResult Analyze(
+        string? text,
+        ResponseFormat requestedFormat,
+        CancellationToken cancellationToken = default);
 
     string? SuggestJsonPath(ExtractorNode node);
 
-    ExtractionSuggestion SuggestForNode(string rawText, ExtractorNode node);
+    ExtractionSuggestion SuggestForNode(
+        string rawText,
+        ExtractorNode node,
+        CancellationToken cancellationToken = default);
 
     ExtractionSuggestion SuggestManualRegex(
         string rawText,
@@ -20,7 +27,8 @@ public interface IExtractionSuggester
         int contextLength,
         ExtractorValueKind valueKind,
         string? customPattern,
-        bool useTrailingAnchor);
+        bool useTrailingAnchor,
+        CancellationToken cancellationToken = default);
 
     IReadOnlyList<RealtimeExtractionSuggestion> SuggestRealtime(
         ResponseModel response,
