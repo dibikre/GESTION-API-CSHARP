@@ -13,6 +13,8 @@ public partial class HarEntryItem : ObservableObject
     public string BaseUrl { get; init; } = string.Empty;
     public string StepName { get; init; } = string.Empty;
     public int? ResponseStatus { get; init; }
+    public string ResponseMimeType { get; init; } = string.Empty;
+    public string ResponseFormatTag { get; init; } = string.Empty;
     public string ResourceType { get; init; } = string.Empty;
     public bool IsStaticAsset { get; init; }
     public IReadOnlyList<KeyValueItem> QueryParams { get; init; } = [];
@@ -31,6 +33,11 @@ public partial class HarEntryItem : ObservableObject
     public bool IsSuccessStatus => ResponseStatus is >= 200 and < 300;
     public bool IsRedirectStatus => ResponseStatus is >= 300 and < 400;
     public bool IsErrorStatus => ResponseStatus is >= 400;
+    public bool HasResponseMimeType => !string.IsNullOrWhiteSpace(ResponseMimeType);
+    public bool HasResponseFormatTag => !string.IsNullOrWhiteSpace(ResponseFormatTag);
+    public string? ResponseFormatTooltip => HasResponseMimeType
+        ? ResponseMimeType
+        : (HasResponseFormatTag ? $"Format détecté : {ResponseFormatTag}" : null);
     public bool HasResourceType => !string.IsNullOrWhiteSpace(ResourceType);
     public bool HasQueryParams => QueryParams.Count > 0;
     public bool HasHeaders => Headers.Count > 0;
@@ -135,4 +142,47 @@ public sealed class HarParseResult
         FileName = fileName,
         ErrorMessage = errorMessage
     };
+}
+
+public partial class HarFormatShortcutItem : ObservableObject
+{
+    private readonly Func<HarEntryItem, bool> _predicate;
+
+    public HarFormatShortcutItem(
+        string key,
+        string label,
+        int sortOrder,
+        int totalCount,
+        int checkedCount,
+        Func<HarEntryItem, bool> predicate)
+    {
+        Key = key;
+        Label = label;
+        SortOrder = sortOrder;
+        TotalCount = totalCount;
+        _predicate = predicate ?? throw new ArgumentNullException(nameof(predicate));
+        CheckedCount = checkedCount;
+    }
+
+    public string Key { get; }
+    public string Label { get; }
+    public int SortOrder { get; }
+    public int TotalCount { get; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCheckedItems))]
+    [NotifyPropertyChangedFor(nameof(IsAllUnchecked))]
+    [NotifyPropertyChangedFor(nameof(CountBadgeText))]
+    [NotifyPropertyChangedFor(nameof(ToolTipText))]
+    public partial int CheckedCount { get; set; }
+
+    public bool HasCheckedItems => CheckedCount > 0;
+    public bool IsAllUnchecked => CheckedCount == 0;
+    public string CountBadgeText => $"{CheckedCount}/{TotalCount}";
+
+    public string ToolTipText => HasCheckedItems
+        ? $"Décocher les {CheckedCount} requête(s) « {Label} »"
+        : $"Toutes les requêtes « {Label} » ({TotalCount}) sont décochées — cliquer pour les recocher";
+
+    public bool Matches(HarEntryItem entry) => _predicate(entry);
 }

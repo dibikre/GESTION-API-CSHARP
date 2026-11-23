@@ -47,8 +47,8 @@ public sealed class HarParserService : IHarParserService
 
     private static readonly string[] StaticExtensions =
     [
-        ".css", ".js", ".mjs", ".map",
-        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".avif", ".bmp",
+        ".css", ".js", ".mjs", ".cjs", ".map",
+        ".png", ".jpg", ".jpeg", ".jfif", ".gif", ".webp", ".svg", ".ico", ".avif", ".bmp",
         ".woff", ".woff2", ".ttf", ".otf", ".eot",
         ".mp4", ".webm", ".mp3", ".ogg", ".wav"
     ];
@@ -274,6 +274,7 @@ public sealed class HarParserService : IHarParserService
         var responseMime = ExtractResponseMimeType(entry);
         var resourceType = (GetString(entry, "_resourceType") ?? string.Empty).Trim();
         var isStaticAsset = DetectStaticAsset(resourceType, responseMime, parsedUri.AbsolutePath);
+        var responseFormatTag = DetectResponseFormatTag(responseMime, resourceType, parsedUri.AbsolutePath);
 
         return new HarEntryItem
         {
@@ -284,6 +285,8 @@ public sealed class HarParserService : IHarParserService
             BaseUrl = baseUrl,
             StepName = BuildStepName(parsedUri),
             ResponseStatus = responseStatus,
+            ResponseMimeType = responseMime,
+            ResponseFormatTag = responseFormatTag,
             ResourceType = resourceType,
             IsStaticAsset = isStaticAsset,
             QueryParams = queryParams,
@@ -705,12 +708,229 @@ public sealed class HarParserService : IHarParserService
 
     private static string ExtractResponseMimeType(JsonElement entry)
     {
-        if (TryGetProperty(entry, "response", out var respElem) &&
-            respElem.ValueKind == JsonValueKind.Object &&
-            TryGetProperty(respElem, "content", out var contentElem) &&
+        if (!TryGetProperty(entry, "response", out var respElem) ||
+            respElem.ValueKind != JsonValueKind.Object)
+        {
+            return string.Empty;
+        }
+
+        var rawMime = string.Empty;
+        if (TryGetProperty(respElem, "content", out var contentElem) &&
             contentElem.ValueKind == JsonValueKind.Object)
         {
-            return GetString(contentElem, "mimeType") ?? string.Empty;
+            rawMime = GetString(contentElem, "mimeType") ?? string.Empty;
+        }
+
+        var normalized = NormalizeMimeType(rawMime);
+        if (!string.IsNullOrEmpty(normalized) &&
+            !normalized.Equals("x-unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        if (TryGetProperty(respElem, "headers", out var headersElem) &&
+            headersElem.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var header in headersElem.EnumerateArray())
+            {
+                if (header.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var name = GetString(header, "name")?.Trim();
+                if (name is not null && name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
+                {
+                    var headerMime = NormalizeMimeType(GetString(header, "value"));
+                    if (!string.IsNullOrEmpty(headerMime))
+                    {
+                        return headerMime;
+                    }
+                }
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string NormalizeMimeType(string? rawMime)
+    {
+        if (string.IsNullOrWhiteSpace(rawMime))
+        {
+            return string.Empty;
+        }
+
+        var semicolonIndex = rawMime.IndexOf(';');
+        var baseMime = semicolonIndex >= 0 ? rawMime[..semicolonIndex] : rawMime;
+        return baseMime.Trim().ToLowerInvariant();
+    }
+
+    private static string ExtractUrlExtension(string urlPath)
+    {
+        if (string.IsNullOrWhiteSpace(urlPath))
+        {
+            return string.Empty;
+        }
+
+        var lastSlash = urlPath.LastIndexOf('/');
+        var fileName = lastSlash >= 0 ? urlPath[(lastSlash + 1)..] : urlPath;
+        var lastDot = fileName.LastIndexOf('.');
+        if (lastDot < 0 || lastDot == fileName.Length - 1)
+        {
+            return string.Empty;
+        }
+
+        return fileName[lastDot..].ToLowerInvariant();
+    }
+
+    private static string DetectResponseFormatTag(string responseMime, string resourceType, string urlPath)
+    {
+        var ext = ExtractUrlExtension(urlPath);
+        if (ext == ".map")
+        {
+            return "MAP";
+        }
+
+        if (!string.IsNullOrEmpty(responseMime))
+        {
+            if (responseMime.Contains("javascript", StringComparison.OrdinalIgnoreCase) ||
+                responseMime.Contains("ecmascript", StringComparison.OrdinalIgnoreCase))
+            {
+                return "JS";
+            }
+
+            if (responseMime == "text/css")
+            {
+                return "CSS";
+            }
+
+            if (responseMime is "image/jpeg" or "image/jpg" or "image/pjpeg")
+            {
+                return "JPG";
+            }
+
+            if (responseMime == "image/png")
+            {
+                return "PNG";
+            }
+
+            if (responseMime == "image/gif")
+            {
+                return "GIF";
+            }
+
+            if (responseMime == "image/svg+xml")
+            {
+                return "SVG";
+            }
+
+            if (responseMime is "image/webp" or "image/avif")
+            {
+                return "WEBP";
+            }
+
+            if (responseMime is "image/x-icon" or "image/vnd.microsoft.icon")
+            {
+                return "ICO";
+            }
+
+            if (responseMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                return "IMG";
+            }
+
+            if (responseMime.StartsWith("font/", StringComparison.OrdinalIgnoreCase) ||
+                responseMime.Contains("font", StringComparison.OrdinalIgnoreCase))
+            {
+                return "FONT";
+            }
+
+            if (responseMime.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
+                responseMime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+            {
+                return "MEDIA";
+            }
+
+            if (responseMime is "text/html" or "application/xhtml+xml")
+            {
+                return "HTML";
+            }
+
+            if (responseMime is "application/json" or "text/json" ||
+                responseMime.EndsWith("+json", StringComparison.OrdinalIgnoreCase))
+            {
+                return "JSON";
+            }
+
+            if (responseMime is "application/xml" or "text/xml" ||
+                responseMime.EndsWith("+xml", StringComparison.OrdinalIgnoreCase))
+            {
+                return "XML";
+            }
+
+            if (responseMime == "application/wasm")
+            {
+                return "WASM";
+            }
+
+            if (responseMime == "application/pdf")
+            {
+                return "PDF";
+            }
+
+            if (responseMime == "text/event-stream")
+            {
+                return "SSE";
+            }
+        }
+
+        if (!string.IsNullOrEmpty(ext))
+        {
+            var tagFromExtension = ext switch
+            {
+                ".js" or ".mjs" or ".cjs" => "JS",
+                ".css" or ".scss" => "CSS",
+                ".jpg" or ".jpeg" or ".jfif" => "JPG",
+                ".png" => "PNG",
+                ".gif" => "GIF",
+                ".svg" => "SVG",
+                ".webp" or ".avif" => "WEBP",
+                ".ico" => "ICO",
+                ".bmp" or ".tif" or ".tiff" => "IMG",
+                ".woff" or ".woff2" or ".ttf" or ".otf" or ".eot" => "FONT",
+                ".mp4" or ".webm" or ".mp3" or ".ogg" or ".wav" or ".m4a" or ".m3u8" => "MEDIA",
+                ".html" or ".htm" => "HTML",
+                ".json" => "JSON",
+                ".xml" => "XML",
+                ".wasm" => "WASM",
+                ".pdf" => "PDF",
+                _ => string.Empty
+            };
+
+            if (!string.IsNullOrEmpty(tagFromExtension))
+            {
+                return tagFromExtension;
+            }
+        }
+
+        if (responseMime == "text/plain")
+        {
+            return "TEXT";
+        }
+
+        if (!string.IsNullOrWhiteSpace(resourceType))
+        {
+            return resourceType.ToLowerInvariant() switch
+            {
+                "script" => "JS",
+                "stylesheet" => "CSS",
+                "image" or "imageset" => "IMG",
+                "font" => "FONT",
+                "media" => "MEDIA",
+                "document" => "HTML",
+                "manifest" => "JSON",
+                _ => string.Empty
+            };
         }
 
         return string.Empty;
@@ -741,7 +961,9 @@ public sealed class HarParserService : IHarParserService
                 responseMime.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
                 responseMime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
                 responseMime.Contains("text/css", StringComparison.OrdinalIgnoreCase) ||
-                responseMime.Contains("javascript", StringComparison.OrdinalIgnoreCase))
+                responseMime.Contains("javascript", StringComparison.OrdinalIgnoreCase) ||
+                responseMime.Contains("ecmascript", StringComparison.OrdinalIgnoreCase) ||
+                responseMime == "application/wasm")
             {
                 return true;
             }

@@ -37,6 +37,38 @@
         <Style Selector="Border.harStatusPill.error TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
         </Style>
+
+        <Style Selector="Button.harFormatChip">
+            <Setter Property="MinHeight" Value="22" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Padding" Value="7,0" />
+            <Setter Property="CornerRadius" Value="{DynamicResource BadgeCornerRadius}" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="Button.harFormatChip /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="Button.harFormatChip:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource HoverBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+        </Style>
+        <Style Selector="Button.harFormatChip:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource BorderBrush}" />
+        </Style>
+        <Style Selector="Button.harFormatChip.unchecked">
+            <Setter Property="Opacity" Value="0.58" />
+        </Style>
+        <Style Selector="Button.harFormatChip.unchecked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+        </Style>
     </UserControl.Styles>
 
     <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
@@ -93,39 +125,89 @@
             </Button>
         </Grid>
 
-        <!-- Barre de filtre et sélection en masse -->
-        <Grid Grid.Row="1"
-              IsVisible="{Binding HasEntries}"
-              ColumnDefinitions="*,Auto,Auto,Auto"
-              ColumnSpacing="8">
-            <TextBox x:Name="HarSearchTextBox"
-                     Grid.Column="0"
-                     Text="{Binding SearchText, Mode=TwoWay}"
-                     PlaceholderText="Filtrer par URL ou méthode (ex. /api/, POST, token)..."
-                     AutomationProperties.Name="Filtrer les requêtes HAR par URL ou méthode" />
+        <!-- Barre de filtre, sélection en masse et raccourcis de décochage par format -->
+        <StackPanel Grid.Row="1"
+                    IsVisible="{Binding HasEntries}"
+                    Spacing="6">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto"
+                  ColumnSpacing="8">
+                <TextBox x:Name="HarSearchTextBox"
+                         Grid.Column="0"
+                         Text="{Binding SearchText, Mode=TwoWay}"
+                         PlaceholderText="Filtrer par URL ou méthode (ex. /api/, POST, token)..."
+                         AutomationProperties.Name="Filtrer les requêtes HAR par URL ou méthode" />
 
-            <CheckBox Grid.Column="1"
-                      IsChecked="{Binding HideStaticAssets}"
-                      Content="Masquer assets statiques"
-                      ToolTip.Tip="Masquer CSS, JS, images, polices et vidéos"
-                      VerticalAlignment="Center"
-                      Margin="4,0"
-                      AutomationProperties.Name="Masquer les ressources statiques" />
+                <CheckBox Grid.Column="1"
+                          IsChecked="{Binding HideStaticAssets}"
+                          Content="Masquer assets statiques"
+                          ToolTip.Tip="Masquer CSS, JS, images, polices et vidéos de la liste (n'affecte pas les cases cochées)"
+                          VerticalAlignment="Center"
+                          Margin="4,0"
+                          AutomationProperties.Name="Masquer les ressources statiques" />
 
-            <Button Grid.Column="2"
-                    Classes="secondary"
-                    Content="Tout cocher"
-                    Command="{Binding SelectAllVisibleCommand}"
-                    ToolTip.Tip="Cocher toutes les requêtes affichées"
-                    AutomationProperties.Name="Cocher toutes les requêtes affichées" />
+                <Button Grid.Column="2"
+                        Classes="secondary"
+                        Content="Tout cocher"
+                        Command="{Binding SelectAllVisibleCommand}"
+                        ToolTip.Tip="Cocher toutes les requêtes affichées"
+                        AutomationProperties.Name="Cocher toutes les requêtes affichées" />
 
-            <Button Grid.Column="3"
-                    Classes="secondary"
-                    Content="Tout décocher"
-                    Command="{Binding DeselectAllVisibleCommand}"
-                    ToolTip.Tip="Décocher toutes les requêtes affichées"
-                    AutomationProperties.Name="Décocher toutes les requêtes affichées" />
-        </Grid>
+                <Button Grid.Column="3"
+                        Classes="secondary"
+                        Content="Tout décocher"
+                        Command="{Binding DeselectAllVisibleCommand}"
+                        ToolTip.Tip="Décocher toutes les requêtes affichées"
+                        AutomationProperties.Name="Décocher toutes les requêtes affichées" />
+            </Grid>
+
+            <Border IsVisible="{Binding HasFormatShortcuts}"
+                    Background="{DynamicResource SurfaceAltBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    Padding="8,4">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                    <TextBlock Grid.Column="0"
+                               Text="Décocher par format :"
+                               FontSize="{DynamicResource FontSizeCaption}"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextMutedBrush}"
+                               VerticalAlignment="Center" />
+
+                    <ItemsControl Grid.Column="1"
+                                  ItemsSource="{Binding FormatShortcuts}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:HarFormatShortcutItem">
+                                <Button Classes="harFormatChip"
+                                        Classes.unchecked="{Binding IsAllUnchecked}"
+                                        Margin="0,2,6,2"
+                                        Command="{Binding #HarImportRoot.ViewModel.ToggleFormatShortcutCommand}"
+                                        CommandParameter="{Binding}"
+                                        ToolTip.Tip="{Binding ToolTipText}"
+                                        AutomationProperties.Name="{Binding ToolTipText}">
+                                    <StackPanel Orientation="Horizontal" Spacing="5">
+                                        <TextBlock Text="{Binding Label}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding CountBadgeText}"
+                                                   FontFamily="{DynamicResource MonoFontFamily}"
+                                                   FontSize="{DynamicResource FontSizeCaption}"
+                                                   Opacity="0.8"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </Border>
+        </StackPanel>
 
         <!-- Corps : erreur ou liste des requêtes + aperçu détaillé -->
         <Panel Grid.Row="2">
@@ -206,7 +288,7 @@
                                      AutomationProperties.Name="Liste des requêtes du fichier HAR">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="models:HarEntryItem">
-                                        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto"
+                                        <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto"
                                               ColumnSpacing="8"
                                               Margin="0,4">
                                             <CheckBox Grid.Column="0"
@@ -254,6 +336,21 @@
                                                        VerticalAlignment="Center" />
 
                                             <Border Grid.Column="5"
+                                                    IsVisible="{Binding HasResponseFormatTag}"
+                                                    Background="{DynamicResource SurfaceBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{DynamicResource BadgeCornerRadius}"
+                                                    Padding="5,1"
+                                                    ToolTip.Tip="{Binding ResponseFormatTooltip}"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding ResponseFormatTag}"
+                                                           FontFamily="{DynamicResource MonoFontFamily}"
+                                                           FontSize="{DynamicResource FontSizeCaption}"
+                                                           Foreground="{DynamicResource TextMutedBrush}" />
+                                            </Border>
+
+                                            <Border Grid.Column="6"
                                                     IsVisible="{Binding HasResponseStatus}"
                                                     Classes="harStatusPill"
                                                     Classes.success="{Binding IsSuccessStatus}"
