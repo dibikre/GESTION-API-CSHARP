@@ -23,6 +23,9 @@ public partial class ExtractorViewModel : ViewModelBase
     private const int TreeSearchDebounceMs = 130;
     private const int MaxTrackedRegexOccurrences = 100;
     private const int IncrementalTreeMutationThreshold = 250;
+    private const int MaxResultPreviewChars = 1_500;
+    private const int MaxResultPreviewLines = 6;
+    private const int MaxInlineRegexSnippetChars = 240;
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
     private static readonly CultureInfo FrenchCulture = CultureInfo.GetCultureInfo("fr-FR");
@@ -43,6 +46,7 @@ public partial class ExtractorViewModel : ViewModelBase
     private CancellationTokenSource? _treeSearchCts;
     private CancellationTokenSource? _suggestionCts;
     private ExtractorNode? _activeTreeSearchNode;
+    private string? _fullTestResultText;
 
     private bool _hasCapturedSelection;
     private int _capturedStart;
@@ -353,9 +357,23 @@ public partial class ExtractorViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasTestResult))]
+    [NotifyPropertyChangedFor(nameof(CanEnlargeTestResult))]
+    [NotifyCanExecuteChangedFor(nameof(EnlargeTestResultCommand))]
     public partial string? TestResultText { get; set; }
 
     public bool HasTestResult => !string.IsNullOrWhiteSpace(TestResultText);
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanEnlargeTestResult))]
+    [NotifyCanExecuteChangedFor(nameof(EnlargeTestResultCommand))]
+    public partial bool IsTestResultTruncated { get; set; }
+
+    public bool CanEnlargeTestResult =>
+        HasTestResult &&
+        _overlayEditor is not null &&
+        (IsTestResultTruncated ||
+         (_fullTestResultText?.Length ?? 0) > 120 ||
+         (_fullTestResultText?.IndexOf('\n') ?? -1) >= 0);
 
     [ObservableProperty]
     public partial LiveTestStatus TestStatus { get; set; } = LiveTestStatus.None;
@@ -511,6 +529,21 @@ public partial class ExtractorViewModel : ViewModelBase
                 InputText = safeText;
                 _ = LoadAsync();
             }));
+    }
+
+    [RelayCommand(CanExecute = nameof(CanEnlargeTestResult))]
+    private void EnlargeTestResult()
+    {
+        if (string.IsNullOrEmpty(_fullTestResultText))
+        {
+            return;
+        }
+
+        _overlayEditor?.RequestOpen(new OverlayEditorRequest(
+            "Résultat complet du test",
+            _fullTestResultText,
+            IsReadOnly: true,
+            OnSave: null));
     }
 
     [RelayCommand(AllowConcurrentExecutions = true)]
@@ -1494,9 +1527,10 @@ public partial class ExtractorViewModel : ViewModelBase
                 {
                     var (count, hasMore) = CountMatchesBounded(sourceText, regex!, ct);
                     var countLabel = hasMore ? $"{count}+" : count.ToString();
+                    var snippet = TruncateInlineSnippet(regexOutcome.Value, MaxInlineRegexSnippetChars);
                     regexResult = count > 1
-                        ? $"Test regex : {countLabel} correspondances (1re capturée : « {regexOutcome.Value} »)"
-                        : $"Test regex : valeur capturée « {regexOutcome.Value} »";
+                        ? $"Test regex : {countLabel} correspondances (1re capturée : « {snippet} »)"
+                        : $"Test regex : valeur capturée « {snippet} »";
                 }
                 else
                 {
@@ -1661,7 +1695,9 @@ public partial class ExtractorViewModel : ViewModelBase
         InfoMessage = eval.InfoMessage;
         TestStatus = eval.TestStatus;
         TestStatusBadgeText = eval.TestStatusBadgeText;
-        TestResultText = eval.TestResultText;
+        _fullTestResultText = eval.TestResultText;
+        TestResultText = FormatResultPreview(eval.TestResultText, out var truncated);
+        IsTestResultTruncated = truncated;
         RegexTestResultText = eval.RegexTestResultText;
     }
 
@@ -1673,11 +1709,67 @@ public partial class ExtractorViewModel : ViewModelBase
         OccurrenceCount = 0;
         OccurrenceWarningText = null;
         InfoMessage = null;
+        _fullTestResultText = null;
+        IsTestResultTruncated = false;
         TestResultText = null;
         TestStatus = LiveTestStatus.None;
         TestStatusBadgeText = string.Empty;
         RegexTestResultText = null;
         CopyFeedbackText = null;
+    }
+
+    private static string? FormatResultPreview(string? text, out bool isTruncated)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            isTruncated = false;
+            return text;
+        }
+
+        var cutIndex = text.Length;
+        var lineCount = 1;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (i >= MaxResultPreviewChars)
+            {
+                cutIndex = i;
+                break;
+            }
+
+            if (text[i] == '\n')
+            {
+                lineCount++;
+                if (lineCount > MaxResultPreviewLines)
+                {
+                    cutIndex = i;
+                    break;
+                }
+            }
+        }
+
+        if (cutIndex >= text.Length)
+        {
+            isTruncated = false;
+            return text;
+        }
+
+        isTruncated = true;
+        var prefix = text[..cutIndex].TrimEnd('\r', '\n');
+        var totalChars = text.Length.ToString("N0", FrenchCulture).Replace('\u202F', ' ').Replace('\u00A0', ' ');
+        return $"{prefix}\n… [résultat tronqué : {totalChars} caractères au total]";
+    }
+
+    private static string TruncateInlineSnippet(string? text, int maxChars)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        var singleLine = text.Replace("\r\n", " ", StringComparison.Ordinal)
+                             .Replace('\n', ' ')
+                             .Replace('\r', ' ');
+        return singleLine.Length <= maxChars ? singleLine : $"{singleLine[..(maxChars - 1)]}…";
     }
 
     private void CancelPendingLoad()

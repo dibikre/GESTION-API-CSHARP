@@ -733,12 +733,16 @@
                                    Foreground="{DynamicResource WarningBrush}"
                                    TextWrapping="Wrap" />
 
-                        <TextBlock IsVisible="{Binding HasRegexTestResult}"
-                                   Text="{Binding RegexTestResultText}"
-                                   FontFamily="{DynamicResource MonoFontFamily}"
-                                   FontSize="{DynamicResource FontSizeCaption}"
-                                   Foreground="{DynamicResource TextMutedBrush}"
-                                   TextWrapping="Wrap" />
+                        <ScrollViewer IsVisible="{Binding HasRegexTestResult}"
+                                      MaxHeight="52"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <TextBlock Text="{Binding RegexTestResultText}"
+                                       FontFamily="{DynamicResource MonoFontFamily}"
+                                       FontSize="{DynamicResource FontSizeCaption}"
+                                       Foreground="{DynamicResource TextMutedBrush}"
+                                       TextWrapping="Wrap" />
+                        </ScrollViewer>
                     </StackPanel>
                 </Expander>
 
@@ -800,13 +804,37 @@
                                        FontWeight="SemiBold" />
                         </Border>
 
-                        <SelectableTextBlock Grid.Column="1"
-                                             Text="{Binding TestResultText}"
-                                             FontFamily="{DynamicResource MonoFontFamily}"
-                                             FontSize="{DynamicResource FontSizeSmall}"
-                                             Foreground="{DynamicResource TextBrush}"
-                                             TextWrapping="Wrap"
-                                             VerticalAlignment="Center" />
+                        <Grid Grid.Column="1"
+                              ColumnDefinitions="*,Auto"
+                              ColumnSpacing="4"
+                              VerticalAlignment="Center">
+                            <Border Grid.Column="0"
+                                    Background="{DynamicResource SurfaceAltBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                                    Padding="8,4"
+                                    MaxHeight="92">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled">
+                                    <SelectableTextBlock Text="{Binding TestResultText}"
+                                                         FontFamily="{DynamicResource MonoFontFamily}"
+                                                         FontSize="{DynamicResource FontSizeSmall}"
+                                                         Foreground="{DynamicResource TextBrush}"
+                                                         TextWrapping="Wrap" />
+                                </ScrollViewer>
+                            </Border>
+
+                            <Button Grid.Column="1"
+                                    Classes="icon"
+                                    IsVisible="{Binding CanEnlargeTestResult}"
+                                    Command="{Binding EnlargeTestResultCommand}"
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="Voir le résultat complet"
+                                    AutomationProperties.Name="Voir le résultat complet du test">
+                                <Path Classes="iconStroke" Data="{StaticResource IconExpand}" />
+                            </Button>
+                        </Grid>
                     </Grid>
 
                     <StackPanel Grid.Column="1"
