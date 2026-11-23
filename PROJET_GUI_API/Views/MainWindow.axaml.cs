@@ -15,6 +15,7 @@ namespace ApiTester.Views;
 public partial class MainWindow : Window
 {
     private OverlayEditorViewModel? _subscribedOverlay;
+    private HarImportViewModel? _subscribedHarImport;
 
     public MainWindow()
     {
@@ -37,10 +38,19 @@ public partial class MainWindow : Window
             _subscribedOverlay = null;
         }
 
+        if (_subscribedHarImport is not null)
+        {
+            _subscribedHarImport.PropertyChanged -= OnHarImportPropertyChanged;
+            _subscribedHarImport = null;
+        }
+
         if (DataContext is MainWindowViewModel vm)
         {
             _subscribedOverlay = vm.Overlay;
             _subscribedOverlay.PropertyChanged += OnOverlayPropertyChanged;
+
+            _subscribedHarImport = vm.HarImport;
+            _subscribedHarImport.PropertyChanged += OnHarImportPropertyChanged;
         }
     }
 
@@ -163,6 +173,16 @@ public partial class MainWindow : Window
             _subscribedOverlay.IsOpen)
         {
             Dispatcher.UIThread.Post(() => OverlayEditorTextBox.Focus(), DispatcherPriority.Loaded);
+        }
+    }
+
+    private void OnHarImportPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(HarImportViewModel.IsOpen) &&
+            _subscribedHarImport is { IsOpen: false } &&
+            DataContext is MainWindowViewModel { SelectedTabIndex: 2 })
+        {
+            Dispatcher.UIThread.Post(() => ChainTabView.FocusStepsList(), DispatcherPriority.Loaded);
         }
     }
 

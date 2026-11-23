@@ -33,7 +33,7 @@
             </TabItem>
 
             <TabItem Header="Chaîne">
-                <views:ChainView DataContext="{Binding Chain}" />
+                <views:ChainView x:Name="ChainTabView" DataContext="{Binding Chain}" />
             </TabItem>
 
             <TabItem Header="Extracteur">

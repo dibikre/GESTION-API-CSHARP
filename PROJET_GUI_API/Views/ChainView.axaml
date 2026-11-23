@@ -72,7 +72,8 @@
             </Grid.ColumnDefinitions>
 
             <!-- Colonne gauche : Étapes -->
-            <Border Grid.Column="0"
+            <Border x:Name="StepsPanel"
+                    Grid.Column="0"
                     Background="{DynamicResource SurfaceBrush}"
                     CornerRadius="{DynamicResource PanelCornerRadius}"
                     Padding="8">
@@ -113,10 +114,12 @@
                                VerticalAlignment="Center"
                                TextWrapping="Wrap" />
 
-                    <ListBox Grid.Row="1"
+                    <ListBox x:Name="StepsListBox"
+                             Grid.Row="1"
                              IsVisible="{Binding HasSteps}"
                              ItemsSource="{Binding Steps}"
                              SelectedItem="{Binding SelectedStep}"
+                             SelectionMode="Multiple"
                              ScrollViewer.AllowAutoHide="False"
                              AutomationProperties.Name="Liste des étapes de la chaîne">
                         <ListBox.ItemTemplate>
@@ -1147,7 +1150,8 @@
                                    VerticalAlignment="Center"
                                    TextWrapping="Wrap" />
 
-                        <ListBox Grid.Row="1"
+                        <ListBox x:Name="ResultsListBox"
+                                 Grid.Row="1"
                                  IsVisible="{Binding HasResults}"
                                  ItemsSource="{Binding Results}"
                                  SelectedItem="{Binding SelectedResult}"

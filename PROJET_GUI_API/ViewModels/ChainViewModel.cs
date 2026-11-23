@@ -548,6 +548,71 @@ public partial class ChainViewModel : ViewModelBase
         RefreshAllStepsAndPlan();
     }
 
+    public int RemoveSteps(IReadOnlyList<ChainStep> stepsToRemove)
+    {
+        ArgumentNullException.ThrowIfNull(stepsToRemove);
+        if (IsRunning || stepsToRemove.Count == 0 || Steps.Count == 0)
+        {
+            return 0;
+        }
+
+        var toRemoveSet = new HashSet<ChainStep>(stepsToRemove);
+        var firstRemovedIndex = -1;
+        var removedCount = 0;
+        var selectedStepWasRemoved = SelectedStep is not null && toRemoveSet.Contains(SelectedStep);
+
+        _isBulkUpdating = true;
+        try
+        {
+            if (Steps.All(toRemoveSet.Contains))
+            {
+                removedCount = Steps.Count;
+                foreach (var step in Steps)
+                {
+                    DetachStepHandlers(step);
+                }
+
+                Steps.Clear();
+                firstRemovedIndex = 0;
+            }
+            else
+            {
+                for (var i = Steps.Count - 1; i >= 0; i--)
+                {
+                    var step = Steps[i];
+                    if (!toRemoveSet.Contains(step))
+                    {
+                        continue;
+                    }
+
+                    firstRemovedIndex = i;
+                    DetachStepHandlers(step);
+                    Steps.RemoveAt(i);
+                    removedCount++;
+                }
+            }
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
+
+        if (removedCount == 0)
+        {
+            return 0;
+        }
+
+        if (selectedStepWasRemoved || (SelectedStep is not null && !Steps.Contains(SelectedStep)))
+        {
+            SelectedStep = Steps.Count > 0
+                ? Steps[Math.Min(Math.Max(0, firstRemovedIndex), Steps.Count - 1)]
+                : null;
+        }
+
+        RefreshAllStepsAndPlan();
+        return removedCount;
+    }
+
     private bool CanMoveStepUp(ChainStep? step) => !IsRunning && step is not null && step.CanMoveUp;
 
     [RelayCommand(CanExecute = nameof(CanMoveStepUp))]
