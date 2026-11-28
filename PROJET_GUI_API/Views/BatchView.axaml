@@ -780,6 +780,13 @@
                                    FontSize="12"
                                    FontWeight="Medium"
                                    TextWrapping="Wrap" />
+
+                        <TextBlock IsVisible="{Binding HasRunError}"
+                                   Text="{Binding RunError}"
+                                   Foreground="{DynamicResource DangerBrush}"
+                                   FontSize="12"
+                                   FontWeight="Medium"
+                                   TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 

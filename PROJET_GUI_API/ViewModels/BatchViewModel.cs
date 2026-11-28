@@ -12,6 +12,7 @@ using ApiTester.Models;
 using ApiTester.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Serilog;
 
 namespace ApiTester.ViewModels;
 
@@ -255,6 +256,12 @@ public partial class BatchViewModel : ViewModelBase
     public partial string? PlanError { get; set; }
 
     public bool HasPlanError => !string.IsNullOrWhiteSpace(PlanError);
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRunError))]
+    public partial string? RunError { get; set; }
+
+    public bool HasRunError => !string.IsNullOrWhiteSpace(RunError);
 
     public string TotalRequestsText => TotalRequests <= 1
         ? $"{TotalRequests} requête sera envoyée"
@@ -575,6 +582,7 @@ public partial class BatchViewModel : ViewModelBase
             HasParsed = !string.IsNullOrWhiteSpace(Url);
             IsConfirmed = false;
             OpenInSingleRequestWarning = null;
+            RunError = null;
             PreviewItems.Clear();
             IsPreviewOpen = false;
         }
@@ -630,6 +638,7 @@ public partial class BatchViewModel : ViewModelBase
             IsConfirmed = false;
             ExceedsHardLimit = false;
             PlanError = null;
+            RunError = null;
             ProgressCurrent = 0;
             ProgressTotal = 0;
             ResetRateLimitStats();
@@ -846,6 +855,7 @@ public partial class BatchViewModel : ViewModelBase
         SelectedResult = null;
         SelectedResponse.Clear();
         ResetRateLimitStats();
+        RunError = null;
         SaveError = null;
         SaveSummaryText = string.Empty;
         SavedCount = 0;
@@ -938,22 +948,29 @@ public partial class BatchViewModel : ViewModelBase
 
         var progress = new Progress<BatchProgressReport>(report =>
         {
-            ProgressCurrent = report.Index;
-            ProgressTotal = report.Total;
-            RetryCount = report.RetryCount;
+            try
+            {
+                ProgressCurrent = report.Index;
+                ProgressTotal = report.Total;
+                RetryCount = report.RetryCount;
 
-            if (!report.IsRetryUpdate)
-            {
-                Results.Add(report.Item);
-                if (SelectedResult is null)
+                if (!report.IsRetryUpdate)
                 {
-                    SelectedResult = report.Item;
+                    Results.Add(report.Item);
+                    if (SelectedResult is null)
+                    {
+                        SelectedResult = report.Item;
+                    }
+                    RecordBatchItemStats(report.Item);
                 }
-                RecordBatchItemStats(report.Item);
+                else
+                {
+                    NotifyRateLimitStatsChanged();
+                }
             }
-            else
+            catch (Exception ex)
             {
-                NotifyRateLimitStatsChanged();
+                Log.Error(ex, "Erreur lors de la mise à jour de l'interface du lot ({ErrorType}).", ex.GetType().Name);
             }
         });
 
@@ -977,15 +994,32 @@ public partial class BatchViewModel : ViewModelBase
         {
             // Annulation demandée par l'utilisateur : les résultats déjà reçus restent affichés.
         }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Erreur inattendue lors de l'exécution du lot ({ErrorType}).", ex.GetType().Name);
+            RunError = $"L'exécution du lot a rencontré une erreur : {ex.Message}";
+            if (SelectedResult is null)
+            {
+                SelectedResponse.SetError(RunError);
+            }
+        }
         finally
         {
             if (saveStarted)
             {
-                await _batchResultWriter.CompleteAsync();
-                LastOutputPath = _batchResultWriter.OutputPath;
-                SavedCount = _batchResultWriter.SavedCount;
-                SaveErrorCount = _batchResultWriter.ErrorCount;
-                SaveSummaryText = $"{SavedCount} enregistrées, {SaveErrorCount} en échec";
+                try
+                {
+                    await _batchResultWriter.CompleteAsync();
+                    LastOutputPath = _batchResultWriter.OutputPath;
+                    SavedCount = _batchResultWriter.SavedCount;
+                    SaveErrorCount = _batchResultWriter.ErrorCount;
+                    SaveSummaryText = $"{SavedCount} enregistrées, {SaveErrorCount} en échec";
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Erreur lors de la finalisation de l'enregistrement du lot ({ErrorType}).", ex.GetType().Name);
+                    SaveError = $"Erreur lors de la finalisation de l'enregistrement : {ex.Message}";
+                }
             }
 
             ActiveOutputPathText = string.Empty;
@@ -1175,7 +1209,14 @@ public partial class BatchViewModel : ViewModelBase
 
         if (!ct.IsCancellationRequested)
         {
-            SyncVariablesWithTemplate();
+            try
+            {
+                SyncVariablesWithTemplate();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Erreur lors de la synchronisation des variables du lot ({ErrorType}).", ex.GetType().Name);
+            }
         }
     }
 

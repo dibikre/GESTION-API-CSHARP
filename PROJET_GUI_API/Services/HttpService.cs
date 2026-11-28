@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -139,6 +140,46 @@ public class HttpService : IHttpService
                 IsSuccess = false,
                 DurationMs = stopwatch.ElapsedMilliseconds,
                 ErrorMessage = $"Invalid request configuration: {ex.Message}"
+            };
+        }
+        catch (IOException ex)
+        {
+            stopwatch.Stop();
+            var details = ex.InnerException is not null
+                ? $"{ex.Message} ({ex.InnerException.Message})"
+                : ex.Message;
+
+            Log.Error(ex, "Erreur réseau, flux ou décompression lors de la requête {Method} {Url} : {Details}",
+                request.Method, safeLogUrl, details);
+            return new ResponseModel
+            {
+                IsSuccess = false,
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                ErrorMessage = $"Network/IO error: {details}"
+            };
+        }
+        catch (Exception ex) when (ex is FormatException or ArgumentException or NotSupportedException)
+        {
+            stopwatch.Stop();
+            Log.Error(ex, "Erreur de format ou de paramètre pour la requête {Method} {Url}.",
+                request.Method, safeLogUrl);
+            return new ResponseModel
+            {
+                IsSuccess = false,
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                ErrorMessage = $"Invalid request or response format: {ex.Message}"
+            };
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            Log.Error(ex, "Erreur inattendue lors de la requête {Method} {Url}.",
+                request.Method, safeLogUrl);
+            return new ResponseModel
+            {
+                IsSuccess = false,
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                ErrorMessage = $"Unexpected error: {ex.Message}"
             };
         }
     }
@@ -290,7 +331,7 @@ public class HttpService : IHttpService
 
                 Log.Warning("En-tête HTTP ignoré ou refusé par .NET : {HeaderName}.", key);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+            catch (Exception ex) when (ex is InvalidOperationException or FormatException or ArgumentException)
             {
                 Log.Warning("En-tête HTTP refusé par .NET : {HeaderName} ({Reason}).", key, ex.Message);
             }

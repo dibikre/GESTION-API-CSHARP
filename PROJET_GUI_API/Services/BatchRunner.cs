@@ -154,19 +154,122 @@ public class BatchRunner : IBatchRunner
             ct.ThrowIfCancellationRequested();
             index++;
 
-            var requestWithQuery = BatchExecutionHelper.CloneRequestWithQuery(templateRequest, step.QueryItems);
-            var applyResult = _templateEngine.ApplyDetailed(requestWithQuery, step.VariableDictionary, index);
-
             BatchResultItem item;
             bool isFailure;
             var preemptiveWait = TimeSpan.Zero;
             var nextRequestAdaptationWait = TimeSpan.Zero;
             var usedSpecificWaitAfterExhaustion = false;
 
-            if (!applyResult.IsSuccess || applyResult.Request is null)
+            try
             {
-                var maskedUrlOnError = BatchExecutionHelper.BuildMaskedUrlWithTemplate(
-                    _templateEngine, templateRequest, step.QueryItems, step.VariableDictionary, index);
+                var requestWithQuery = BatchExecutionHelper.CloneRequestWithQuery(templateRequest, step.QueryItems);
+                var applyResult = _templateEngine.ApplyDetailed(requestWithQuery, step.VariableDictionary, index);
+
+                if (!applyResult.IsSuccess || applyResult.Request is null)
+                {
+                    var maskedUrlOnError = BatchExecutionHelper.BuildMaskedUrlWithTemplate(
+                        _templateEngine, templateRequest, step.QueryItems, step.VariableDictionary, index);
+                    item = new BatchResultItem
+                    {
+                        Index = index,
+                        ParamsText = step.ParamsText,
+                        StatusCode = 0,
+                        StatusCategory = ViewModels.StatusCategory.NetworkError,
+                        DurationMs = 0,
+                        SizeText = "0 B",
+                        SizeBytes = 0,
+                        ContentType = string.Empty,
+                        RequestUrl = maskedUrlOnError,
+                        VaryingParams = step.VaryingItems,
+                        VariableValues = step.VariableItems,
+                        OrderedAxisValues = step.OrderedAxisItems,
+                        QueryParams = step.QueryItems,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        ErrorMessage = applyResult.ErrorMessage ?? "Erreur de substitution des variables.",
+                        Response = null
+                    };
+                    isFailure = true;
+                }
+                else
+                {
+                    var finalRequest = applyResult.Request;
+                    var maskedUrl = BatchExecutionHelper.BuildMaskedUrlWithTemplate(
+                        _templateEngine, templateRequest, finalRequest.QueryParams, step.VariableDictionary, index);
+
+                    var execResult = await BatchExecutionHelper.SendWithRateLimitAsync(
+                        _httpService,
+                        _rateLimitDetector,
+                        finalRequest,
+                        policy,
+                        delayMs,
+                        index,
+                        total,
+                        hasMoreRequests: index < total,
+                        stopOnFailure: options.StopOnFailure,
+                        consecutiveRateLimitFailures,
+                        totalRetryCount,
+                        onRetryScheduled: (_, updatedTotalRetries) =>
+                        {
+                            progress.Report(new BatchProgressReport
+                            {
+                                Index = index - 1,
+                                Total = total,
+                                RetryCount = updatedTotalRetries,
+                                IsRetryUpdate = true
+                            });
+                        },
+                        onStateUpdated: (updatedConsecutive, updatedTotalRetries) =>
+                        {
+                            consecutiveRateLimitFailures = updatedConsecutive;
+                            totalRetryCount = updatedTotalRetries;
+                        },
+                        ct).ConfigureAwait(false);
+
+                    preemptiveWait = execResult.PreemptiveWait;
+                    nextRequestAdaptationWait = execResult.NextRequestAdaptationWait;
+                    usedSpecificWaitAfterExhaustion = execResult.UsedSpecificWaitAfterExhaustion;
+
+                    var response = execResult.Response;
+                    var itemErrorMessage = execResult.ItemErrorMessage;
+
+                    item = new BatchResultItem
+                    {
+                        Index = index,
+                        ParamsText = step.ParamsText,
+                        StatusCode = response.StatusCode,
+                        StatusCategory = BatchExecutionHelper.DetermineStatusCategory(response),
+                        DurationMs = response.DurationMs,
+                        SizeText = BatchExecutionHelper.FormatSize(response.SizeBytes),
+                        SizeBytes = response.SizeBytes,
+                        ContentType = response.ContentType,
+                        RequestUrl = maskedUrl,
+                        VaryingParams = step.VaryingItems,
+                        VariableValues = step.VariableItems,
+                        OrderedAxisValues = step.OrderedAxisItems,
+                        QueryParams = finalRequest.QueryParams,
+                        TimestampUtc = DateTimeOffset.UtcNow,
+                        ErrorMessage = itemErrorMessage,
+                        Response = response,
+                        WasRateLimited = execResult.WasRateLimited,
+                        RetryAttempts = execResult.RetryAttempts,
+                        FinalWaitMs = execResult.LastWaitMs
+                    };
+                    isFailure = response.StatusCode >= 400 || !string.IsNullOrEmpty(itemErrorMessage);
+                }
+
+                if (onResultAsync is not null)
+                {
+                    await onResultAsync(item, ct).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Erreur lors de l'exécution de la requête {Index}/{Total} ({ErrorType}).",
+                    index, total, ex.GetType().Name);
                 item = new BatchResultItem
                 {
                     Index = index,
@@ -177,87 +280,16 @@ public class BatchRunner : IBatchRunner
                     SizeText = "0 B",
                     SizeBytes = 0,
                     ContentType = string.Empty,
-                    RequestUrl = maskedUrlOnError,
+                    RequestUrl = templateRequest.Url,
                     VaryingParams = step.VaryingItems,
                     VariableValues = step.VariableItems,
                     OrderedAxisValues = step.OrderedAxisItems,
                     QueryParams = step.QueryItems,
                     TimestampUtc = DateTimeOffset.UtcNow,
-                    ErrorMessage = applyResult.ErrorMessage ?? "Erreur de substitution des variables.",
+                    ErrorMessage = $"Erreur lors de la requête : {ex.Message}",
                     Response = null
                 };
                 isFailure = true;
-            }
-            else
-            {
-                var finalRequest = applyResult.Request;
-                var maskedUrl = BatchExecutionHelper.BuildMaskedUrlWithTemplate(
-                    _templateEngine, templateRequest, finalRequest.QueryParams, step.VariableDictionary, index);
-
-                var execResult = await BatchExecutionHelper.SendWithRateLimitAsync(
-                    _httpService,
-                    _rateLimitDetector,
-                    finalRequest,
-                    policy,
-                    delayMs,
-                    index,
-                    total,
-                    hasMoreRequests: index < total,
-                    stopOnFailure: options.StopOnFailure,
-                    consecutiveRateLimitFailures,
-                    totalRetryCount,
-                    onRetryScheduled: (_, updatedTotalRetries) =>
-                    {
-                        progress.Report(new BatchProgressReport
-                        {
-                            Index = index - 1,
-                            Total = total,
-                            RetryCount = updatedTotalRetries,
-                            IsRetryUpdate = true
-                        });
-                    },
-                    onStateUpdated: (updatedConsecutive, updatedTotalRetries) =>
-                    {
-                        consecutiveRateLimitFailures = updatedConsecutive;
-                        totalRetryCount = updatedTotalRetries;
-                    },
-                    ct).ConfigureAwait(false);
-
-                preemptiveWait = execResult.PreemptiveWait;
-                nextRequestAdaptationWait = execResult.NextRequestAdaptationWait;
-                usedSpecificWaitAfterExhaustion = execResult.UsedSpecificWaitAfterExhaustion;
-
-                var response = execResult.Response;
-                var itemErrorMessage = execResult.ItemErrorMessage;
-
-                item = new BatchResultItem
-                {
-                    Index = index,
-                    ParamsText = step.ParamsText,
-                    StatusCode = response.StatusCode,
-                    StatusCategory = BatchExecutionHelper.DetermineStatusCategory(response),
-                    DurationMs = response.DurationMs,
-                    SizeText = BatchExecutionHelper.FormatSize(response.SizeBytes),
-                    SizeBytes = response.SizeBytes,
-                    ContentType = response.ContentType,
-                    RequestUrl = maskedUrl,
-                    VaryingParams = step.VaryingItems,
-                    VariableValues = step.VariableItems,
-                    OrderedAxisValues = step.OrderedAxisItems,
-                    QueryParams = finalRequest.QueryParams,
-                    TimestampUtc = DateTimeOffset.UtcNow,
-                    ErrorMessage = itemErrorMessage,
-                    Response = response,
-                    WasRateLimited = execResult.WasRateLimited,
-                    RetryAttempts = execResult.RetryAttempts,
-                    FinalWaitMs = execResult.LastWaitMs
-                };
-                isFailure = response.StatusCode >= 400 || !string.IsNullOrEmpty(itemErrorMessage);
-            }
-
-            if (onResultAsync is not null)
-            {
-                await onResultAsync(item, ct).ConfigureAwait(false);
             }
 
             if (!options.KeepBodies)
@@ -287,19 +319,19 @@ public class BatchRunner : IBatchRunner
                 {
                     if (nextRequestAdaptationWait > TimeSpan.Zero)
                     {
-                        await Task.Delay(nextRequestAdaptationWait, ct).ConfigureAwait(false);
+                        await BatchExecutionHelper.DelaySafeAsync(nextRequestAdaptationWait, ct).ConfigureAwait(false);
                     }
                 }
                 else
                 {
                     if (preemptiveWait > TimeSpan.Zero)
                     {
-                        await Task.Delay(preemptiveWait, ct).ConfigureAwait(false);
+                        await BatchExecutionHelper.DelaySafeAsync(preemptiveWait, ct).ConfigureAwait(false);
                     }
 
                     if (delayMs > 0)
                     {
-                        await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                        await BatchExecutionHelper.DelaySafeAsync(TimeSpan.FromMilliseconds(delayMs), ct).ConfigureAwait(false);
                     }
                 }
             }

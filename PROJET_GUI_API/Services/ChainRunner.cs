@@ -936,19 +936,19 @@ public sealed class ChainRunner : IChainRunner
                         {
                             if (nextRequestAdaptationWait > TimeSpan.Zero)
                             {
-                                await Task.Delay(nextRequestAdaptationWait, ct).ConfigureAwait(false);
+                                await BatchExecutionHelper.DelaySafeAsync(nextRequestAdaptationWait, ct).ConfigureAwait(false);
                             }
                         }
                         else
                         {
                             if (preemptiveWait > TimeSpan.Zero)
                             {
-                                await Task.Delay(preemptiveWait, ct).ConfigureAwait(false);
+                                await BatchExecutionHelper.DelaySafeAsync(preemptiveWait, ct).ConfigureAwait(false);
                             }
 
                             if (stepDelayMs > 0)
                             {
-                                await Task.Delay(stepDelayMs, ct).ConfigureAwait(false);
+                                await BatchExecutionHelper.DelaySafeAsync(TimeSpan.FromMilliseconds(stepDelayMs), ct).ConfigureAwait(false);
                             }
                         }
                     }

@@ -332,7 +332,7 @@ public partial class ResponseViewModel : ViewModelBase
             return rawBody ?? string.Empty;
         }
 
-        if (!contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+        if (!contentType.Contains("json", StringComparison.OrdinalIgnoreCase) || rawBody.Length > 4_000_000)
         {
             return rawBody;
         }
@@ -342,7 +342,7 @@ public partial class ResponseViewModel : ViewModelBase
             using var document = JsonDocument.Parse(rawBody.TrimStart('\uFEFF'), JsonParseOptions);
             return JsonSerializer.Serialize(document.RootElement, IndentedJsonOptions);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException or ArgumentException)
         {
             return rawBody;
         }

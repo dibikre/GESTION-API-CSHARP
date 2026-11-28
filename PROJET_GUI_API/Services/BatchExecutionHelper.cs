@@ -37,6 +37,18 @@ internal sealed class RateLimitExecutionResult
 internal static class BatchExecutionHelper
 {
     private const int ParamsPreviewMaxLength = 40;
+    private static readonly TimeSpan MaxTaskDelay = TimeSpan.FromMilliseconds(int.MaxValue - 1);
+
+    public static Task DelaySafeAsync(TimeSpan delay, CancellationToken ct)
+    {
+        if (delay <= TimeSpan.Zero)
+        {
+            return Task.CompletedTask;
+        }
+
+        var clamped = delay > MaxTaskDelay ? MaxTaskDelay : delay;
+        return Task.Delay(clamped, ct);
+    }
 
     public static bool IsSensitiveName(string? name)
     {
@@ -503,7 +515,7 @@ internal static class BatchExecutionHelper
 
                     if (waitDelay > TimeSpan.Zero)
                     {
-                        await Task.Delay(waitDelay, ct).ConfigureAwait(false);
+                        await DelaySafeAsync(waitDelay, ct).ConfigureAwait(false);
                     }
 
                     continue;

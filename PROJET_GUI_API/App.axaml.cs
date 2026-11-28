@@ -5,10 +5,12 @@ using System.Threading;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using ApiTester.Services;
 using ApiTester.ViewModels;
 using ApiTester.Views;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog;
 
 namespace ApiTester;
 
@@ -25,6 +27,17 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        Dispatcher.UIThread.UnhandledException += (_, eventArgs) =>
+        {
+            Log.Error(eventArgs.Exception, "Exception non gérée sur le thread UI ({ErrorType}).",
+                eventArgs.Exception.GetType().Name);
+
+            if (eventArgs.Exception is not OutOfMemoryException)
+            {
+                eventArgs.Handled = true;
+            }
+        };
+
         var services = new ServiceCollection();
         ConfigureServices(services);
         _serviceProvider = services.BuildServiceProvider();

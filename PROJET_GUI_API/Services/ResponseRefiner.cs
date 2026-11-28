@@ -466,7 +466,7 @@ public sealed class ResponseRefiner : IResponseRefiner
     private static string SerializeElementsAsIndentedArray(IReadOnlyList<JsonElement> elements)
     {
         using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
+        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true, MaxDepth = 2048 }))
         {
             writer.WriteStartArray();
             foreach (var element in elements)

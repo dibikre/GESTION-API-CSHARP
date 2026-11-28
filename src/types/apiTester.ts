@@ -829,3 +829,175 @@ export function createDefaultRequest(): RequestModel {
     timeoutSeconds: 30,
   };
 }
+
+// ============================================================================
+// Extended Models (HAR, Extractor, Batch & Chain Plans, Pipeline Serialization)
+// ============================================================================
+
+export type ResponseFormat = 'Auto' | 'Json' | 'Xml' | 'Html' | 'Text';
+
+export type ExtractorValueKind = 'Auto' | 'Digits' | 'NonWhitespace' | 'UntilEndOfLine' | 'Custom';
+
+export type ExtractorNodeKind = 'JsonObject' | 'JsonArray' | 'JsonValue' | 'XmlElement' | 'XmlAttribute';
+
+export type LiveTestStatus = 'None' | 'Success' | 'Warning' | 'Error';
+
+export interface ExtractorNode {
+  id: string;
+  label: string;
+  kindTag: string;
+  nodeKind: ExtractorNodeKind;
+  depth: number;
+  jsonPath?: string;
+  htmlPath?: string;
+  cssSelector?: string;
+  anchorName?: string;
+  elementTagName?: string;
+  attributeName?: string;
+  idAttribute?: string;
+  nameAttribute?: string;
+  propertyAttribute?: string;
+  relAttribute?: string;
+  jsonKind?: 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null';
+  rawScalarValue?: string;
+  isLeaf: boolean;
+  isSelectable: boolean;
+  children: ExtractorNode[];
+}
+
+export interface FormatAnalysisResult {
+  detectedFormat: ResponseFormat;
+  fallbackToText: boolean;
+  statusMessage?: string;
+  rootNodes: ExtractorNode[];
+}
+
+export interface ExtractionSuggestion {
+  jsonPath?: string;
+  regex?: string;
+  occurrenceCount: number;
+  occurrenceWarning?: string;
+  infoMessage?: string;
+  htmlPath?: string;
+  hasMoreOccurrences?: boolean;
+}
+
+export interface RealtimeExtractionSuggestion {
+  expression: string;
+  suggestedVariableName: string;
+  previewValue: string;
+  badgeText: string;
+  detailText: string;
+  suggestsList: boolean;
+  matchCount: number;
+  targetHeaderName?: string;
+}
+
+export interface HarEntryItem {
+  id: string;
+  index: number;
+  originalMethod: string;
+  method: HttpMethodType;
+  fullUrl: string;
+  baseUrl: string;
+  stepName: string;
+  responseStatus?: number;
+  responseMimeType: string;
+  responseFormatTag: string;
+  resourceType: string;
+  isStaticAsset: boolean;
+  queryParams: KeyValueItem[];
+  headers: KeyValueItem[];
+  bodyType: BodyType;
+  body: string;
+  formFields: KeyValueItem[];
+  warnings: string[];
+  isSelected: boolean;
+}
+
+export interface HarParseResult {
+  isSuccess: boolean;
+  errorMessage?: string;
+  fileName: string;
+  entries: HarEntryItem[];
+  ignoredNonHttpCount: number;
+  ignoredInvalidCount: number;
+}
+
+export interface BatchPreviewItem {
+  index: number;
+  variablesSummary: string;
+  method: HttpMethodType;
+  finalUrl: string;
+  headersText: string;
+  hasHeaders: boolean;
+  bodyText: string;
+  hasBody: boolean;
+  isInvalidJson: boolean;
+  errorMessage?: string;
+}
+
+export interface BatchPlanResult {
+  totalRequests: number;
+  exceedsHardLimit: boolean;
+  validationError?: string;
+  warnings: string[];
+}
+
+export interface ChainPlanResult {
+  totalRequests: number;
+  exceedsHardLimit: boolean;
+  hasDynamicCounts: boolean;
+  stepIterationCounts: number[];
+  stepHasDynamicCounts: boolean[];
+  validationError?: string;
+  warnings: string[];
+}
+
+export interface ChainRunOptions {
+  keepBodies: boolean;
+  continueOnError: boolean;
+  globalRateLimitPolicy: RateLimitPolicy;
+}
+
+export interface ChainRunResult {
+  status: ChainRunStatus;
+  totalDurationMs: number;
+  totalRetries: number;
+  results: ChainStepResult[];
+  accumulatedVariables: Record<string, string>;
+  accumulatedLists: Record<string, string[]>;
+  finalReturnValue?: string;
+}
+
+export interface DeclaredVariableItem {
+  key: string;
+  tokenName: string;
+  rawName: string;
+  sourceBadge: string;
+  contentText: string;
+  rawContentForCopy: string;
+  hasValue: boolean;
+  isSensitive: boolean;
+  valuesList?: string[];
+}
+
+export interface CurlParseResult {
+  isSuccess: boolean;
+  errorMessage?: string;
+  request?: RequestModel;
+  warnings: string[];
+}
+
+export interface ChainPipelineDocument {
+  format: string;
+  version: number;
+  savedAtUtc: string;
+  keepBodies: boolean;
+  continueOnError: boolean;
+  selectedCliLanguage: ChainCliLanguage;
+  globalRateLimitPolicy: RateLimitPolicy;
+  saveOptions: BatchSaveOptions;
+  steps: ChainStep[];
+}
+

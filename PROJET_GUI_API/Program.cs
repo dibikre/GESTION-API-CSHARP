@@ -1,6 +1,7 @@
 using Avalonia;
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using Serilog;
 
 namespace ApiTester;
@@ -21,6 +22,12 @@ sealed class Program
             {
                 Log.Fatal(ex, "Exception non gérée dans le domaine d'application.");
             }
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
+        {
+            Log.Error(eventArgs.Exception, "Exception de tâche asynchrone non observée.");
+            eventArgs.SetObserved();
         };
 
         try

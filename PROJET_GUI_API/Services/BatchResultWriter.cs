@@ -17,6 +17,13 @@ namespace ApiTester.Services;
 public sealed class BatchResultWriter : IBatchResultWriter
 {
     private const int MaxFileNameLength = 120;
+    private const int JsonParseMaxDepth = 1024;
+    private const int JsonWriteMaxDepth = 2048;
+
+    private static readonly JsonDocumentOptions JsonParseOptions = new()
+    {
+        MaxDepth = JsonParseMaxDepth
+    };
 
     private static readonly UTF8Encoding Utf8WithoutBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly UTF8Encoding Utf8WithBom = new(encoderShouldEmitUTF8Identifier: true);
@@ -122,6 +129,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
                     var writerOptions = new JsonWriterOptions
                     {
                         Indented = true,
+                        MaxDepth = JsonWriteMaxDepth,
                         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                     };
                     _groupedJsonWriter = new Utf8JsonWriter(_groupedStream, writerOptions);
@@ -245,7 +253,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
                 await writer.WriteAsync(item.Response!.Body).ConfigureAwait(false);
                 await writer.FlushAsync().ConfigureAwait(false);
             }
-            catch (Exception ex) when (IsFileSystemWriteException(ex))
+            catch (Exception ex) when (IsFileSystemWriteException(ex) || ex is InvalidOperationException)
             {
                 allOk = false;
                 savedFileName = string.Empty;
@@ -277,7 +285,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
                 await _csvWriter.WriteLineAsync(line).ConfigureAwait(false);
                 await _csvWriter.FlushAsync().ConfigureAwait(false);
             }
-            catch (Exception ex) when (IsFileSystemWriteException(ex))
+            catch (Exception ex) when (IsFileSystemWriteException(ex) || ex is InvalidOperationException)
             {
                 allOk = false;
                 Log.Error(ex, "Échec de l'écriture dans le fichier {FileName} ({ErrorType}).",
@@ -313,6 +321,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
             var lineWriterOptions = new JsonWriterOptions
             {
                 Indented = false,
+                MaxDepth = JsonWriteMaxDepth,
                 Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
             };
 
@@ -327,7 +336,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
             await _groupedStream.FlushAsync().ConfigureAwait(false);
             return true;
         }
-        catch (Exception ex) when (IsFileSystemWriteException(ex) || ex is JsonException)
+        catch (Exception ex) when (IsFileSystemWriteException(ex) || ex is JsonException or InvalidOperationException)
         {
             Log.Error(ex, "Échec de l'écriture dans le fichier {FileName} ({ErrorType}).",
                 _groupedFileName, ex.GetType().Name);
@@ -357,12 +366,12 @@ public sealed class BatchResultWriter : IBatchResultWriter
         }
         writer.WriteEndObject();
 
-        writer.WriteString("url", item.RequestUrl);
+        writer.WriteString("url", item.RequestUrl ?? string.Empty);
         writer.WriteString("timestamp", item.TimestampUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
         writer.WriteNumber("statusCode", item.StatusCode);
         writer.WriteNumber("durationMs", item.DurationMs);
         writer.WriteNumber("sizeBytes", item.SizeBytes);
-        writer.WriteString("contentType", item.ContentType);
+        writer.WriteString("contentType", item.ContentType ?? string.Empty);
 
         if (string.IsNullOrEmpty(item.ErrorMessage))
         {
@@ -576,10 +585,10 @@ public sealed class BatchResultWriter : IBatchResultWriter
 
         try
         {
-            document = JsonDocument.Parse(body);
+            document = JsonDocument.Parse(body.TrimStart('\uFEFF'), JsonParseOptions);
             return true;
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or ArgumentException)
         {
             return false;
         }
@@ -733,7 +742,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
                 await _groupedStream.FlushAsync().ConfigureAwait(false);
                 await _groupedStream.DisposeAsync().ConfigureAwait(false);
             }
-            catch (Exception ex) when (IsFileSystemWriteException(ex))
+            catch (Exception ex) when (IsFileSystemWriteException(ex) || ex is InvalidOperationException)
             {
                 Log.Error(ex, "Échec lors de la fermeture du flux {FileName} ({ErrorType}).",
                     _groupedFileName, ex.GetType().Name);
@@ -751,7 +760,7 @@ public sealed class BatchResultWriter : IBatchResultWriter
                 await _csvWriter.FlushAsync().ConfigureAwait(false);
                 await _csvWriter.DisposeAsync().ConfigureAwait(false);
             }
-            catch (Exception ex) when (IsFileSystemWriteException(ex))
+            catch (Exception ex) when (IsFileSystemWriteException(ex) || ex is InvalidOperationException)
             {
                 Log.Error(ex, "Échec lors de la fermeture du fichier {FileName} ({ErrorType}).",
                     _csvFileName, ex.GetType().Name);

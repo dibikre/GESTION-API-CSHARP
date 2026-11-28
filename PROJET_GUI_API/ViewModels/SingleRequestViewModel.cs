@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using ApiTester.Models;
 using ApiTester.Services;
 using CommunityToolkit.Mvvm.Input;
+using Serilog;
 
 namespace ApiTester.ViewModels;
 
@@ -73,6 +74,11 @@ public partial class SingleRequestViewModel : ViewModelBase
         catch (OperationCanceledException)
         {
             Response.SetCancelled("Requête annulée");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Erreur inattendue lors de l'envoi de la requête ({ErrorType}).", ex.GetType().Name);
+            Response.SetError($"Erreur inattendue : {ex.Message}");
         }
         finally
         {
