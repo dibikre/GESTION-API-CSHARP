@@ -32,6 +32,8 @@ public partial class App : Application
             Log.Error(eventArgs.Exception, "Exception non gérée sur le thread UI ({ErrorType}).",
                 eventArgs.Exception.GetType().Name);
 
+            SurfaceUnexpectedUiException(eventArgs.Exception);
+
             if (eventArgs.Exception is not OutOfMemoryException)
             {
                 eventArgs.Handled = true;
@@ -93,5 +95,46 @@ public partial class App : Application
         services.AddSingleton<ChainViewModel>();
         services.AddSingleton<ExtractorViewModel>();
         services.AddSingleton<MainWindowViewModel>();
+    }
+
+    private void SurfaceUnexpectedUiException(Exception exception)
+    {
+        try
+        {
+            var mainVm = _serviceProvider?.GetService<MainWindowViewModel>();
+            if (mainVm is null)
+            {
+                return;
+            }
+
+            var message = $"Erreur inattendue : {exception.Message}";
+            switch (mainVm.SelectedTabIndex)
+            {
+                case 0:
+                    mainVm.SingleRequest.Response.IsBusy = false;
+                    mainVm.SingleRequest.Response.SetError(message);
+                    break;
+                case 1:
+                    mainVm.Batch.ReportUnexpectedError(message);
+                    break;
+                case 2:
+                    mainVm.Chain.ReportUnexpectedError(message);
+                    break;
+                default:
+                    if (mainVm.Batch.IsRunning)
+                    {
+                        mainVm.Batch.ReportUnexpectedError(message);
+                    }
+                    else if (mainVm.Chain.IsRunning)
+                    {
+                        mainVm.Chain.ReportUnexpectedError(message);
+                    }
+                    break;
+            }
+        }
+        catch (Exception notifyEx)
+        {
+            Log.Error(notifyEx, "Impossible d'afficher l'exception UI dans l'interface.");
+        }
     }
 }

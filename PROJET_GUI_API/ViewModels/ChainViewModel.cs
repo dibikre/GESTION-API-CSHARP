@@ -224,11 +224,12 @@ public partial class ChainViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasFinalStatusText))]
+    [NotifyPropertyChangedFor(nameof(HasChainStats))]
     public partial string FinalStatusText { get; private set; } = string.Empty;
 
     public bool HasFinalStatusText => !string.IsNullOrWhiteSpace(FinalStatusText);
 
-    public bool HasChainStats => IsRunning || Results.Count > 0;
+    public bool HasChainStats => IsRunning || Results.Count > 0 || HasFinalStatusText;
 
     public string ChainStatsSummaryText =>
         $"{SuccessCount} {(SuccessCount <= 1 ? "réussie" : "réussies")}, " +
@@ -2063,182 +2064,226 @@ public partial class ChainViewModel : ViewModelBase
     [RelayCommand(IncludeCancelCommand = true, CanExecute = nameof(CanRun))]
     private async Task RunAsync(CancellationToken ct)
     {
-        CancelPendingLiveExtractionTest();
-        RefreshAllStepsAndPlan();
-        if (!CanRun())
-        {
-            return;
-        }
-
-        _rawResults.Clear();
-        Results.Clear();
-        _lastAccumulatedVariables.Clear();
-        _lastAccumulatedLists.Clear();
-        RefreshDeclaredVariables();
-        foreach (var step in Steps)
-        {
-            step.LastReturnValue = string.Empty;
-        }
-        SelectedResult = null;
-        SelectedResponse.Clear();
-        SuccessCount = 0;
-        FailedCount = 0;
-        SkippedCount = 0;
-        RetryCount = 0;
-        FinalStatusText = string.Empty;
-        SaveError = null;
-        SaveSummaryText = string.Empty;
-        LastOutputPath = string.Empty;
-        OnPropertyChanged(nameof(ChainStatsSummaryText));
-
-        var saveStarted = false;
-        if (SaveMode != SaveMode.None)
-        {
-            var saveOptions = new BatchSaveOptions
-            {
-                SaveMode = SaveMode,
-                OutputFolder = OutputFolder,
-                GroupedFormat = GroupedFormat,
-                CreateTimestampSubfolder = CreateTimestampSubfolder,
-                IncludeSummaryCsv = IncludeSummaryCsv
-            };
-
-            try
-            {
-                await _batchResultWriter.BeginAsync(saveOptions, TotalRequests, ct);
-                saveStarted = true;
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                SaveError = $"Impossible de préparer le dossier d'enregistrement : {ex.Message}";
-                return;
-            }
-        }
-
-        var stepByRank = Steps.ToList();
-        var snapshots = stepByRank.Select(s => s.SnapshotForRun()).ToList();
-        var runOptions = new ChainRunOptions
-        {
-            KeepBodies = KeepBodies,
-            ContinueOnError = ContinueOnError,
-            GlobalRateLimitPolicy = _sharedRateLimitPolicy.Clone()
-        };
-
-        ProgressCurrent = 0;
-        ProgressTotal = TotalRequests;
-        ProgressText = $"Étape 1/{snapshots.Count}";
-        IsRunning = true;
-
-        var progress = new Progress<ChainProgressReport>(report =>
-        {
-            try
-            {
-                ProgressCurrent = report.GlobalIndex;
-                ProgressTotal = report.GlobalTotal;
-                RetryCount = report.RetryCount;
-
-                ProgressText = report.StepTotalIterations > 1
-                    ? $"Étape {report.StepIndex}/{report.TotalSteps}, requête {report.Iteration}/{report.StepTotalIterations}"
-                    : $"Étape {report.StepIndex}/{report.TotalSteps}";
-
-                if (!report.IsRetryUpdate && report.Item is not null)
-                {
-                    report.Item.SequenceOrder = _rawResults.Count;
-                    _rawResults.Add(report.Item);
-                    InsertResultSorted(report.Item);
-                    if (SelectedResult is null)
-                    {
-                        SelectedResult = report.Item;
-                    }
-
-                    switch (report.Item.Status)
-                    {
-                        case ChainStepStatus.Success:
-                            SuccessCount++;
-                            break;
-                        case ChainStepStatus.Failed:
-                            FailedCount++;
-                            break;
-                        case ChainStepStatus.Skipped:
-                            SkippedCount++;
-                            break;
-                    }
-
-                    if (report.Item.StepIndex >= 1 &&
-                        report.Item.StepIndex <= stepByRank.Count)
-                    {
-                        var liveStep = stepByRank[report.Item.StepIndex - 1];
-                        if (report.Item.Response is not null && !report.Item.IsReturnOnly)
-                        {
-                            liveStep.LastResponse = report.Item.Response;
-                            liveStep.LastResponseSummary = report.Item.StatusCode > 0
-                                ? $"HTTP {report.Item.StatusCode} ({report.Item.DurationMs} ms)"
-                                : "Erreur réseau";
-                        }
-
-                        if (!string.IsNullOrEmpty(report.Item.ReturnValue))
-                        {
-                            liveStep.LastReturnValue = report.Item.ReturnValue;
-                        }
-                    }
-                }
-
-                if (report.AccumulatedVariables is not null)
-                {
-                    _lastAccumulatedVariables = new Dictionary<string, string>(
-                        report.AccumulatedVariables,
-                        StringComparer.Ordinal);
-                }
-
-                if (report.AccumulatedLists is not null)
-                {
-                    _lastAccumulatedLists = report.AccumulatedLists.ToDictionary(
-                        k => k.Key,
-                        v => (IReadOnlyList<string>)v.Value.ToList(),
-                        StringComparer.Ordinal);
-                }
-
-                if (report.AccumulatedVariables is not null || report.AccumulatedLists is not null)
-                {
-                    RefreshDeclaredVariables();
-                }
-
-                OnPropertyChanged(nameof(ChainStatsSummaryText));
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Erreur lors de la mise à jour de l'interface de chaîne ({ErrorType}).", ex.GetType().Name);
-            }
-        });
-
-        Func<ChainStepResult, CancellationToken, Task>? onResultAsync = saveStarted
-            ? (result, token) => _batchResultWriter.WriteAsync(result.ToBatchResultItem(), token)
-            : null;
+        Log.Information("Demande de lancement de la chaîne (Steps={StepCount}, TotalRequests={TotalRequests}, SaveMode={SaveMode}).",
+            Steps.Count, TotalRequests, SaveMode);
 
         try
         {
-            var runResult = await _chainRunner.RunAsync(snapshots, runOptions, progress, onResultAsync, ct);
-            _lastAccumulatedVariables = new Dictionary<string, string>(runResult.AllVariables, StringComparer.Ordinal);
-            _lastAccumulatedLists = runResult.AllLists.ToDictionary(
-                k => k.Key,
-                v => (IReadOnlyList<string>)v.Value.ToList(),
-                StringComparer.Ordinal);
-            RefreshDeclaredVariables();
-            FinalStatusText = runResult.FinalStatus switch
+            CancelPendingLiveExtractionTest();
+            RefreshAllStepsAndPlan();
+            if (!CanRun())
             {
-                ChainRunStatus.Success => $"Chaîne réussie ({runResult.TotalDurationMs} ms)",
-                ChainRunStatus.Failed => $"Chaîne terminée avec erreur ({runResult.TotalDurationMs} ms)",
-                ChainRunStatus.Cancelled => "Chaîne annulée",
-                _ => string.Empty
-            };
+                var reason = BuildCannotRunReason();
+                Log.Warning("Lancement de la chaîne bloqué : {Reason}", reason);
+                FinalStatusText = reason;
+                if (SelectedResult is null)
+                {
+                    SelectedResponse.SetError(reason);
+                }
+                return;
+            }
+
+            _rawResults.Clear();
+            Results.Clear();
+            _lastAccumulatedVariables.Clear();
+            _lastAccumulatedLists.Clear();
+            RefreshDeclaredVariables();
+            foreach (var step in Steps)
+            {
+                step.LastReturnValue = string.Empty;
+            }
+            SelectedResult = null;
+            SelectedResponse.Clear();
+            SuccessCount = 0;
+            FailedCount = 0;
+            SkippedCount = 0;
+            RetryCount = 0;
+            FinalStatusText = string.Empty;
+            SaveError = null;
+            SaveSummaryText = string.Empty;
+            LastOutputPath = string.Empty;
+            OnPropertyChanged(nameof(ChainStatsSummaryText));
+
+            var snapshots = Steps.Select(s => s.SnapshotForRun()).ToList();
+            ProgressCurrent = 0;
+            ProgressTotal = TotalRequests;
+            ProgressText = snapshots.Count > 0 ? $"Étape 1/{snapshots.Count}" : string.Empty;
+            IsRunning = true;
+
+            var saveStarted = false;
+            try
+            {
+                if (SaveMode != SaveMode.None)
+                {
+                    var saveOptions = new BatchSaveOptions
+                    {
+                        SaveMode = SaveMode,
+                        OutputFolder = OutputFolder,
+                        GroupedFormat = GroupedFormat,
+                        CreateTimestampSubfolder = CreateTimestampSubfolder,
+                        IncludeSummaryCsv = IncludeSummaryCsv
+                    };
+
+                    try
+                    {
+                        await _batchResultWriter.BeginAsync(saveOptions, TotalRequests, ct);
+                        saveStarted = true;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Impossible de préparer le dossier d'enregistrement de la chaîne ({ErrorType}).", ex.GetType().Name);
+                        var saveMessage = $"Impossible de préparer le dossier d'enregistrement : {ex.Message}";
+                        SaveError = saveMessage;
+                        FinalStatusText = saveMessage;
+                        if (SelectedResult is null)
+                        {
+                            SelectedResponse.SetError(saveMessage);
+                        }
+                        return;
+                    }
+                }
+
+                var stepByRank = Steps.ToList();
+                var runOptions = new ChainRunOptions
+                {
+                    KeepBodies = KeepBodies,
+                    ContinueOnError = ContinueOnError,
+                    GlobalRateLimitPolicy = _sharedRateLimitPolicy.Clone()
+                };
+
+                var progress = new Progress<ChainProgressReport>(report =>
+                {
+                    try
+                    {
+                        ProgressCurrent = report.GlobalIndex;
+                        ProgressTotal = report.GlobalTotal;
+                        RetryCount = report.RetryCount;
+
+                        ProgressText = report.StepTotalIterations > 1
+                            ? $"Étape {report.StepIndex}/{report.TotalSteps}, requête {report.Iteration}/{report.StepTotalIterations}"
+                            : $"Étape {report.StepIndex}/{report.TotalSteps}";
+
+                        if (!report.IsRetryUpdate && report.Item is not null)
+                        {
+                            report.Item.SequenceOrder = _rawResults.Count;
+                            _rawResults.Add(report.Item);
+                            InsertResultSorted(report.Item);
+                            if (SelectedResult is null)
+                            {
+                                SelectedResult = report.Item;
+                            }
+
+                            switch (report.Item.Status)
+                            {
+                                case ChainStepStatus.Success:
+                                    SuccessCount++;
+                                    break;
+                                case ChainStepStatus.Failed:
+                                    FailedCount++;
+                                    break;
+                                case ChainStepStatus.Skipped:
+                                    SkippedCount++;
+                                    break;
+                            }
+
+                            if (report.Item.StepIndex >= 1 &&
+                                report.Item.StepIndex <= stepByRank.Count)
+                            {
+                                var liveStep = stepByRank[report.Item.StepIndex - 1];
+                                if (report.Item.Response is not null && !report.Item.IsReturnOnly)
+                                {
+                                    liveStep.LastResponse = report.Item.Response;
+                                    liveStep.LastResponseSummary = report.Item.StatusCode > 0
+                                        ? $"HTTP {report.Item.StatusCode} ({report.Item.DurationMs} ms)"
+                                        : "Erreur réseau";
+                                }
+
+                                if (!string.IsNullOrEmpty(report.Item.ReturnValue))
+                                {
+                                    liveStep.LastReturnValue = report.Item.ReturnValue;
+                                }
+                            }
+                        }
+
+                        if (report.AccumulatedVariables is not null)
+                        {
+                            _lastAccumulatedVariables = new Dictionary<string, string>(
+                                report.AccumulatedVariables,
+                                StringComparer.Ordinal);
+                        }
+
+                        if (report.AccumulatedLists is not null)
+                        {
+                            _lastAccumulatedLists = report.AccumulatedLists.ToDictionary(
+                                k => k.Key,
+                                v => (IReadOnlyList<string>)v.Value.ToList(),
+                                StringComparer.Ordinal);
+                        }
+
+                        if (report.AccumulatedVariables is not null || report.AccumulatedLists is not null)
+                        {
+                            RefreshDeclaredVariables();
+                        }
+
+                        OnPropertyChanged(nameof(ChainStatsSummaryText));
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Erreur lors de la mise à jour de l'interface de chaîne ({ErrorType}).", ex.GetType().Name);
+                    }
+                });
+
+                Func<ChainStepResult, CancellationToken, Task>? onResultAsync = saveStarted
+                    ? (result, token) => _batchResultWriter.WriteAsync(result.ToBatchResultItem(), token)
+                    : null;
+
+                var runResult = await _chainRunner.RunAsync(snapshots, runOptions, progress, onResultAsync, ct);
+                _lastAccumulatedVariables = new Dictionary<string, string>(runResult.AllVariables, StringComparer.Ordinal);
+                _lastAccumulatedLists = runResult.AllLists.ToDictionary(
+                    k => k.Key,
+                    v => (IReadOnlyList<string>)v.Value.ToList(),
+                    StringComparer.Ordinal);
+                RefreshDeclaredVariables();
+                FinalStatusText = runResult.FinalStatus switch
+                {
+                    ChainRunStatus.Success => $"Chaîne réussie ({runResult.TotalDurationMs} ms)",
+                    ChainRunStatus.Failed => $"Chaîne terminée avec erreur ({runResult.TotalDurationMs} ms)",
+                    ChainRunStatus.Cancelled => "Chaîne annulée",
+                    _ => string.Empty
+                };
+            }
+            finally
+            {
+                if (saveStarted)
+                {
+                    try
+                    {
+                        await _batchResultWriter.CompleteAsync();
+                        LastOutputPath = _batchResultWriter.OutputPath;
+                        SaveSummaryText = $"{_batchResultWriter.SavedCount} enregistrées, {_batchResultWriter.ErrorCount} en échec";
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Erreur lors de la finalisation de l'enregistrement de chaîne ({ErrorType}).", ex.GetType().Name);
+                        SaveError = $"Erreur lors de la finalisation de l'enregistrement : {ex.Message}";
+                    }
+                }
+
+                IsRunning = false;
+                OnPropertyChanged(nameof(ChainStatsSummaryText));
+            }
         }
         catch (OperationCanceledException)
         {
             FinalStatusText = "Chaîne annulée";
+            if (Results.Count == 0 && SelectedResult is null)
+            {
+                SelectedResponse.SetCancelled("Chaîne annulée");
+            }
         }
         catch (Exception ex)
         {
@@ -2249,26 +2294,46 @@ public partial class ChainViewModel : ViewModelBase
                 SelectedResponse.SetError(FinalStatusText);
             }
         }
-        finally
-        {
-            if (saveStarted)
-            {
-                try
-                {
-                    await _batchResultWriter.CompleteAsync();
-                    LastOutputPath = _batchResultWriter.OutputPath;
-                    SaveSummaryText = $"{_batchResultWriter.SavedCount} enregistrées, {_batchResultWriter.ErrorCount} en échec";
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Erreur lors de la finalisation de l'enregistrement de chaîne ({ErrorType}).", ex.GetType().Name);
-                    SaveError = $"Erreur lors de la finalisation de l'enregistrement : {ex.Message}";
-                }
-            }
+    }
 
-            IsRunning = false;
-            OnPropertyChanged(nameof(ChainStatsSummaryText));
+    internal void ReportUnexpectedError(string message)
+    {
+        IsRunning = false;
+        FinalStatusText = message;
+        if (SelectedResult is null)
+        {
+            SelectedResponse.SetError(message);
         }
+    }
+
+    private string BuildCannotRunReason()
+    {
+        if (Steps.Count == 0)
+        {
+            return "Ajoute au moins une étape avant de lancer la chaîne.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(PlanError))
+        {
+            return PlanError!;
+        }
+
+        if (ExceedsHardLimit)
+        {
+            return $"Le nombre total de requêtes ({TotalRequests:N0}) dépasse la limite maximale autorisée.";
+        }
+
+        if (TotalRequests <= 0)
+        {
+            return "Aucune requête à exécuter (vérifie la configuration des étapes).";
+        }
+
+        if (NeedsConfirmation && !IsConfirmed)
+        {
+            return "Coche la case « Confirmer (> 500 requêtes) » avant de lancer la chaîne.";
+        }
+
+        return "Impossible de lancer la chaîne dans l'état actuel.";
     }
 
     private void InsertResultSorted(ChainStepResult item)

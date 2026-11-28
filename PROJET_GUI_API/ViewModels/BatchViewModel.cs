@@ -807,27 +807,39 @@ public partial class BatchViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanPreview))]
     private void Preview()
     {
-        SyncVariablesWithTemplate();
-        if (!CanPreview())
+        try
         {
-            return;
+            SyncVariablesWithTemplate();
+            if (!CanPreview())
+            {
+                var reason = BuildCannotRunReason();
+                Log.Warning("Aperçu du lot bloqué : {Reason}", reason);
+                RunError = reason;
+                return;
+            }
+
+            RunError = null;
+            var preview = _batchRunner.GeneratePreview(
+                BuildTemplateRequest(),
+                VaryingParams.ToList(),
+                Variables.ToList(),
+                Axes.ToList(),
+                SelectedMode,
+                maxCount: 3);
+
+            PreviewItems.Clear();
+            foreach (var item in preview)
+            {
+                PreviewItems.Add(item);
+            }
+
+            IsPreviewOpen = PreviewItems.Count > 0;
         }
-
-        var preview = _batchRunner.GeneratePreview(
-            BuildTemplateRequest(),
-            VaryingParams.ToList(),
-            Variables.ToList(),
-            Axes.ToList(),
-            SelectedMode,
-            maxCount: 3);
-
-        PreviewItems.Clear();
-        foreach (var item in preview)
+        catch (Exception ex)
         {
-            PreviewItems.Add(item);
+            Log.Error(ex, "Erreur lors de la génération de l'aperçu du lot ({ErrorType}).", ex.GetType().Name);
+            RunError = $"Impossible de générer l'aperçu : {ex.Message}";
         }
-
-        IsPreviewOpen = PreviewItems.Count > 0;
     }
 
     private bool CanRun() =>
@@ -844,155 +856,202 @@ public partial class BatchViewModel : ViewModelBase
     [RelayCommand(IncludeCancelCommand = true, CanExecute = nameof(CanRun))]
     private async Task RunAsync(CancellationToken ct)
     {
-        SyncVariablesWithTemplate();
-        ValidateAndSyncRateLimitPolicy();
-        if (!CanRun())
-        {
-            return;
-        }
-
-        Results.Clear();
-        SelectedResult = null;
-        SelectedResponse.Clear();
-        ResetRateLimitStats();
-        RunError = null;
-        SaveError = null;
-        SaveSummaryText = string.Empty;
-        SavedCount = 0;
-        SaveErrorCount = 0;
-        LastOutputPath = string.Empty;
-        ActiveOutputPathText = string.Empty;
-
-        var saveStarted = false;
-        if (SaveMode != SaveMode.None)
-        {
-            var saveOptions = new BatchSaveOptions
-            {
-                SaveMode = SaveMode,
-                OutputFolder = OutputFolder,
-                GroupedFormat = GroupedFormat,
-                CreateTimestampSubfolder = CreateTimestampSubfolder,
-                IncludeSummaryCsv = IncludeSummaryCsv
-            };
-
-            try
-            {
-                await _batchResultWriter.BeginAsync(saveOptions, TotalRequests, ct);
-                saveStarted = true;
-                ActiveOutputPathText = $"Enregistrement dans : {_batchResultWriter.OutputPath}";
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                SaveError = $"Impossible de préparer le dossier d'enregistrement : {ex.Message}";
-                return;
-            }
-        }
-
-        var templateRequest = BuildTemplateRequest();
-        var paramMap = new Dictionary<VaryingParam, VaryingParam>(VaryingParams.Count);
-        var paramsSnapshot = new List<VaryingParam>(VaryingParams.Count);
-        foreach (var p in VaryingParams)
-        {
-            var cloned = new VaryingParam
-            {
-                Name = p.Name,
-                Value = p.Value,
-                IsEnabled = p.IsEnabled,
-                IsVarying = p.IsVarying,
-                Start = p.Start,
-                End = p.End,
-                Step = p.Step
-            };
-            paramMap[p] = cloned;
-            paramsSnapshot.Add(cloned);
-        }
-
-        var variableMap = new Dictionary<BatchVariable, BatchVariable>(Variables.Count);
-        var variablesSnapshot = new List<BatchVariable>(Variables.Count);
-        foreach (var v in Variables)
-        {
-            var cloned = v.Clone();
-            variableMap[v] = cloned;
-            variablesSnapshot.Add(cloned);
-        }
-
-        var axesSnapshot = new List<BatchAxis>(Axes.Count);
-        foreach (var axis in Axes)
-        {
-            VaryingParam? snapParam = axis.SourceParam is not null && paramMap.TryGetValue(axis.SourceParam, out var sp)
-                ? sp
-                : null;
-            BatchVariable? snapVar = axis.SourceVariable is not null && variableMap.TryGetValue(axis.SourceVariable, out var sv)
-                ? sv
-                : null;
-            axesSnapshot.Add(axis.CloneWithSources(snapParam, snapVar));
-        }
-
-        var options = new BatchRunOptions
-        {
-            Mode = SelectedMode,
-            DelayMs = Math.Max(0, DelayMs),
-            StopOnFailure = StopOnFailure,
-            KeepBodies = KeepBodies,
-            RateLimitPolicy = RateLimitPolicy.Clone()
-        };
-
-        ProgressCurrent = 0;
-        ProgressTotal = TotalRequests;
-        IsRunning = true;
-        NotifyRateLimitStatsChanged();
-
-        var progress = new Progress<BatchProgressReport>(report =>
-        {
-            try
-            {
-                ProgressCurrent = report.Index;
-                ProgressTotal = report.Total;
-                RetryCount = report.RetryCount;
-
-                if (!report.IsRetryUpdate)
-                {
-                    Results.Add(report.Item);
-                    if (SelectedResult is null)
-                    {
-                        SelectedResult = report.Item;
-                    }
-                    RecordBatchItemStats(report.Item);
-                }
-                else
-                {
-                    NotifyRateLimitStatsChanged();
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Erreur lors de la mise à jour de l'interface du lot ({ErrorType}).", ex.GetType().Name);
-            }
-        });
-
-        Func<BatchResultItem, CancellationToken, Task>? onResultAsync = saveStarted
-            ? (item, token) => _batchResultWriter.WriteAsync(item, token)
-            : null;
+        Log.Information("Demande de lancement du lot (TotalRequests={TotalRequests}, SaveMode={SaveMode}).",
+            TotalRequests, SaveMode);
 
         try
         {
-            await _batchRunner.RunAsync(
-                templateRequest,
-                paramsSnapshot,
-                variablesSnapshot,
-                axesSnapshot,
-                options,
-                progress,
-                onResultAsync,
-                ct);
+            SyncVariablesWithTemplate();
+            ValidateAndSyncRateLimitPolicy();
+            if (!CanRun())
+            {
+                var reason = BuildCannotRunReason();
+                Log.Warning("Lancement du lot bloqué : {Reason}", reason);
+                RunError = reason;
+                if (SelectedResult is null)
+                {
+                    SelectedResponse.SetError(reason);
+                }
+                return;
+            }
+
+            Results.Clear();
+            SelectedResult = null;
+            SelectedResponse.Clear();
+            ResetRateLimitStats();
+            RunError = null;
+            SaveError = null;
+            SaveSummaryText = string.Empty;
+            SavedCount = 0;
+            SaveErrorCount = 0;
+            LastOutputPath = string.Empty;
+            ActiveOutputPathText = string.Empty;
+
+            ProgressCurrent = 0;
+            ProgressTotal = TotalRequests;
+            IsRunning = true;
+            NotifyRateLimitStatsChanged();
+
+            var saveStarted = false;
+            try
+            {
+                if (SaveMode != SaveMode.None)
+                {
+                    var saveOptions = new BatchSaveOptions
+                    {
+                        SaveMode = SaveMode,
+                        OutputFolder = OutputFolder,
+                        GroupedFormat = GroupedFormat,
+                        CreateTimestampSubfolder = CreateTimestampSubfolder,
+                        IncludeSummaryCsv = IncludeSummaryCsv
+                    };
+
+                    try
+                    {
+                        await _batchResultWriter.BeginAsync(saveOptions, TotalRequests, ct);
+                        saveStarted = true;
+                        ActiveOutputPathText = $"Enregistrement dans : {_batchResultWriter.OutputPath}";
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Impossible de préparer le dossier d'enregistrement du lot ({ErrorType}).", ex.GetType().Name);
+                        var saveMessage = $"Impossible de préparer le dossier d'enregistrement : {ex.Message}";
+                        SaveError = saveMessage;
+                        RunError = saveMessage;
+                        if (SelectedResult is null)
+                        {
+                            SelectedResponse.SetError(saveMessage);
+                        }
+                        return;
+                    }
+                }
+
+                var templateRequest = BuildTemplateRequest();
+                var paramMap = new Dictionary<VaryingParam, VaryingParam>(VaryingParams.Count);
+                var paramsSnapshot = new List<VaryingParam>(VaryingParams.Count);
+                foreach (var p in VaryingParams)
+                {
+                    var cloned = new VaryingParam
+                    {
+                        Name = p.Name,
+                        Value = p.Value,
+                        IsEnabled = p.IsEnabled,
+                        IsVarying = p.IsVarying,
+                        Start = p.Start,
+                        End = p.End,
+                        Step = p.Step
+                    };
+                    paramMap[p] = cloned;
+                    paramsSnapshot.Add(cloned);
+                }
+
+                var variableMap = new Dictionary<BatchVariable, BatchVariable>(Variables.Count);
+                var variablesSnapshot = new List<BatchVariable>(Variables.Count);
+                foreach (var v in Variables)
+                {
+                    var cloned = v.Clone();
+                    variableMap[v] = cloned;
+                    variablesSnapshot.Add(cloned);
+                }
+
+                var axesSnapshot = new List<BatchAxis>(Axes.Count);
+                foreach (var axis in Axes)
+                {
+                    VaryingParam? snapParam = axis.SourceParam is not null && paramMap.TryGetValue(axis.SourceParam, out var sp)
+                        ? sp
+                        : null;
+                    BatchVariable? snapVar = axis.SourceVariable is not null && variableMap.TryGetValue(axis.SourceVariable, out var sv)
+                        ? sv
+                        : null;
+                    axesSnapshot.Add(axis.CloneWithSources(snapParam, snapVar));
+                }
+
+                var options = new BatchRunOptions
+                {
+                    Mode = SelectedMode,
+                    DelayMs = Math.Max(0, DelayMs),
+                    StopOnFailure = StopOnFailure,
+                    KeepBodies = KeepBodies,
+                    RateLimitPolicy = RateLimitPolicy.Clone()
+                };
+
+                var progress = new Progress<BatchProgressReport>(report =>
+                {
+                    try
+                    {
+                        ProgressCurrent = report.Index;
+                        ProgressTotal = report.Total;
+                        RetryCount = report.RetryCount;
+
+                        if (!report.IsRetryUpdate)
+                        {
+                            Results.Add(report.Item);
+                            if (SelectedResult is null)
+                            {
+                                SelectedResult = report.Item;
+                            }
+                            RecordBatchItemStats(report.Item);
+                        }
+                        else
+                        {
+                            NotifyRateLimitStatsChanged();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Erreur lors de la mise à jour de l'interface du lot ({ErrorType}).", ex.GetType().Name);
+                    }
+                });
+
+                Func<BatchResultItem, CancellationToken, Task>? onResultAsync = saveStarted
+                    ? (item, token) => _batchResultWriter.WriteAsync(item, token)
+                    : null;
+
+                await _batchRunner.RunAsync(
+                    templateRequest,
+                    paramsSnapshot,
+                    variablesSnapshot,
+                    axesSnapshot,
+                    options,
+                    progress,
+                    onResultAsync,
+                    ct);
+            }
+            finally
+            {
+                if (saveStarted)
+                {
+                    try
+                    {
+                        await _batchResultWriter.CompleteAsync();
+                        LastOutputPath = _batchResultWriter.OutputPath;
+                        SavedCount = _batchResultWriter.SavedCount;
+                        SaveErrorCount = _batchResultWriter.ErrorCount;
+                        SaveSummaryText = $"{SavedCount} enregistrées, {SaveErrorCount} en échec";
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Erreur lors de la finalisation de l'enregistrement du lot ({ErrorType}).", ex.GetType().Name);
+                        SaveError = $"Erreur lors de la finalisation de l'enregistrement : {ex.Message}";
+                    }
+                }
+
+                ActiveOutputPathText = string.Empty;
+                IsRunning = false;
+                NotifyRateLimitStatsChanged();
+            }
         }
         catch (OperationCanceledException)
         {
-            // Annulation demandée par l'utilisateur : les résultats déjà reçus restent affichés.
+            Log.Information("Exécution du lot annulée.");
+            if (Results.Count == 0 && SelectedResult is null)
+            {
+                SelectedResponse.SetCancelled("Lot annulé");
+            }
         }
         catch (Exception ex)
         {
@@ -1003,29 +1062,62 @@ public partial class BatchViewModel : ViewModelBase
                 SelectedResponse.SetError(RunError);
             }
         }
-        finally
-        {
-            if (saveStarted)
-            {
-                try
-                {
-                    await _batchResultWriter.CompleteAsync();
-                    LastOutputPath = _batchResultWriter.OutputPath;
-                    SavedCount = _batchResultWriter.SavedCount;
-                    SaveErrorCount = _batchResultWriter.ErrorCount;
-                    SaveSummaryText = $"{SavedCount} enregistrées, {SaveErrorCount} en échec";
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Erreur lors de la finalisation de l'enregistrement du lot ({ErrorType}).", ex.GetType().Name);
-                    SaveError = $"Erreur lors de la finalisation de l'enregistrement : {ex.Message}";
-                }
-            }
+    }
 
-            ActiveOutputPathText = string.Empty;
-            IsRunning = false;
-            NotifyRateLimitStatsChanged();
+    internal void ReportUnexpectedError(string message)
+    {
+        IsRunning = false;
+        ActiveOutputPathText = string.Empty;
+        RunError = message;
+        if (SelectedResult is null)
+        {
+            SelectedResponse.SetError(message);
         }
+    }
+
+    private string BuildCannotRunReason()
+    {
+        if (!HasParsed)
+        {
+            return "Analyse d'abord une commande curl valide avant de lancer le lot.";
+        }
+
+        if (HasVariablesError)
+        {
+            return VariablesError!;
+        }
+
+        if (HasRateLimitError)
+        {
+            return RateLimitValidationError!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(PlanError))
+        {
+            return PlanError!;
+        }
+
+        if (ExceedsHardLimit)
+        {
+            return $"Le nombre total de requêtes ({TotalRequests:N0}) dépasse la limite maximale autorisée.";
+        }
+
+        if (TotalRequests <= 0)
+        {
+            return "Aucune requête à exécuter (vérifie les paramètres et variables).";
+        }
+
+        if (NeedsConfirmation && !IsConfirmed)
+        {
+            return "Coche la case « Confirmer (> 500 requêtes) » avant de lancer le lot.";
+        }
+
+        if (NeedsLowPauseConfirmation && !IsLowPauseConfirmed)
+        {
+            return "Coche la case de confirmation pour une pause inférieure à 100 ms avant de lancer le lot.";
+        }
+
+        return "Impossible de lancer le lot dans l'état actuel.";
     }
 
     private RequestModel BuildTemplateRequest()

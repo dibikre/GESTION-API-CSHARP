@@ -455,6 +455,20 @@
                             </StackPanel>
                         </Grid>
 
+                        <TextBlock IsVisible="{Binding HasPlanError}"
+                                   Text="{Binding PlanError}"
+                                   Foreground="{DynamicResource DangerBrush}"
+                                   FontSize="12"
+                                   FontWeight="Medium"
+                                   TextWrapping="Wrap" />
+
+                        <TextBlock IsVisible="{Binding HasRunError}"
+                                   Text="{Binding RunError}"
+                                   Foreground="{DynamicResource DangerBrush}"
+                                   FontSize="12"
+                                   FontWeight="Medium"
+                                   TextWrapping="Wrap" />
+
                         <!-- Seconde ligne : Enregistrement des réponses -->
                         <Border BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="0,1,0,0"
@@ -773,20 +787,6 @@
                                 </StackPanel>
                             </Expander>
                         </Border>
-
-                        <TextBlock IsVisible="{Binding HasPlanError}"
-                                   Text="{Binding PlanError}"
-                                   Foreground="{DynamicResource DangerBrush}"
-                                   FontSize="12"
-                                   FontWeight="Medium"
-                                   TextWrapping="Wrap" />
-
-                        <TextBlock IsVisible="{Binding HasRunError}"
-                                   Text="{Binding RunError}"
-                                   Foreground="{DynamicResource DangerBrush}"
-                                   FontSize="12"
-                                   FontWeight="Medium"
-                                   TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
