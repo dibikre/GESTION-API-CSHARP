@@ -144,6 +144,11 @@ public partial class BatchAxis : ObservableObject
         bool uppercaseHex = true,
         bool usePrefix = false)
     {
+        if (!Enum.IsDefined(numberBase) || (int)numberBase < 2)
+        {
+            throw new ArgumentOutOfRangeException(nameof(numberBase), numberBase, "Base numérique invalide.");
+        }
+
         if (width < 0 || width > BatchVariable.MaxWidth)
         {
             throw new ArgumentException($"La largeur doit être comprise entre 0 et {BatchVariable.MaxWidth}.", nameof(width));

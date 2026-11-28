@@ -16,6 +16,11 @@ public static class NumberCodec
 {
     public static NumberParseResult Parse(string? text, NumberBase numberBase)
     {
+        if (!Enum.IsDefined(numberBase) || (int)numberBase < 2)
+        {
+            return NumberParseResult.Fail("Base numérique invalide.");
+        }
+
         if (string.IsNullOrWhiteSpace(text))
         {
             return NumberParseResult.Fail("Saisie vide.");
@@ -99,6 +104,11 @@ public static class NumberCodec
 
     public static string Format(BigInteger value, NumberBase numberBase, int width, bool upper, bool prefix)
     {
+        if (!Enum.IsDefined(numberBase) || (int)numberBase < 2)
+        {
+            throw new ArgumentOutOfRangeException(nameof(numberBase), numberBase, "Base numérique invalide.");
+        }
+
         var isNegative = value.Sign < 0;
         var magnitude = isNegative ? BigInteger.Negate(value) : value;
         var radix = (int)numberBase;

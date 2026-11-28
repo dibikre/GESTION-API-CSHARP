@@ -1493,7 +1493,7 @@ public partial class BatchViewModel : ViewModelBase
                 Kind = BatchAxisKind.UrlParam,
                 Name = name,
                 SourceParam = param,
-                ApplyConfig = axis => axis.ConfigureRange(capturedStart, capturedEnd, capturedStep, 0)
+                ApplyConfig = axis => axis.ConfigureRange(capturedStart, capturedEnd, capturedStep, NumberBase.Decimal, width: 0)
             });
         }
 
